@@ -54,3 +54,6 @@ PG_BACKEND_BUCKET(extension_modules, PgBackendInitializeExtensionModuleState(&ba
 PG_BACKEND_BUCKET(pending_interrupts, PG_RUNTIME_NOOP, PgBackendAdoptEarlyPendingInterrupts(backend), PG_RUNTIME_NOOP)
 PG_BACKEND_BUCKET(interrupt_holdoffs, PG_RUNTIME_NOOP, PgBackendAdoptEarlyInterruptHoldoffs(backend), PG_RUNTIME_NOOP)
 PG_BACKEND_BUCKET(scheduler, PgBackendSchedulerInitialize(&backend->scheduler), PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
+PG_BACKEND_BUCKET(postmaster_child, backend->postmaster_child = NULL, PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
+PG_BACKEND_BUCKET(postmaster_latch, backend->postmaster_latch = NULL, PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
+PG_BACKEND_BUCKET(postmaster_exit_published, pg_atomic_init_u32(&backend->postmaster_exit_published, 0), PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)

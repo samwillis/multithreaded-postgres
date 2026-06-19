@@ -73,6 +73,7 @@ typedef struct LogicalDecodingContext LogicalDecodingContext;
 typedef struct PgSession PgSession;
 typedef struct PgConnection PgConnection;
 typedef struct PgExecution PgExecution;
+typedef struct PMChild PMChild;
 typedef struct PQcommMethods PQcommMethods;
 typedef struct WaitEventSet WaitEventSet;
 typedef struct WritebackContext WritebackContext;
@@ -207,6 +208,7 @@ typedef struct PgBackendSchedulerState
 	dlist_node	node;
 	pg_atomic_uint32 state;
 	uint64		enqueue_generation;
+	struct Latch *wake_latch;
 } PgBackendSchedulerState;
 
 typedef struct PgRuntimeSchedulerSocketWait
@@ -2325,6 +2327,7 @@ struct PgRuntime
 	 * without returning to the cleaned-up backend stack.
 	 */
 	PgBackendExitContinuation exit_backend;
+	PgBackendExitContinuation exit_carrier;
 
 	PgRuntimeServerGUCState server_guc;
 	PgRuntimeExtensionModuleState extension_modules;
@@ -2338,7 +2341,14 @@ struct PgCarrier
 	PgBackend  *current_backend;
 	PgSession  *current_session;
 	PgExecution *current_execution;
+	PgBackend  *scheduler_home_backend;
 	MemoryContext scheduler_context;
+	Latch		scheduler_latch;
+	bool		scheduler_latch_initialized;
+	sigjmp_buf *scheduler_exit_jump;
+	PgBackend  *scheduler_exiting_backend;
+	int			scheduler_exit_code;
+	pg_atomic_uint32 scheduler_carrier_exit_requested;
 	void	   *backend_thread_start;
 	bool		is_under_postmaster;
 	volatile sig_atomic_t wait_event_waiting;
@@ -2402,6 +2412,9 @@ struct PgBackend
 
 	BackendType backend_type;
 	PgBackendSchedulerState scheduler;
+	PMChild    *postmaster_child;
+	struct Latch *postmaster_latch;
+	pg_atomic_uint32 postmaster_exit_published;
 };
 
 struct PgSession
@@ -3146,6 +3159,9 @@ extern void InitializePgThreadBackendRuntime(PgThreadBackendRuntimeState *state,
 											 BackendType backend_type,
 											 struct Port *port,
 											 struct Latch *interrupt_latch);
+extern void PgBackendSetPostmasterChildOwner(PgBackend *backend,
+											 PMChild *pmchild,
+											 struct Latch *postmaster_latch);
 extern void PgSetCurrentRuntime(PgRuntime *runtime);
 extern void PgSetCurrentCarrier(PgCarrier *carrier);
 extern void PgSetCurrentBackend(PgBackend *backend);
@@ -3417,6 +3433,11 @@ extern uint32 PgRuntimeSchedulerSnapshotWaits(PgRuntime *runtime,
 											  PgRuntimeSchedulerWaitSnapshot *snapshot);
 extern void PgRuntimeSchedulerSetWakeLatch(PgRuntime *runtime,
 										   struct Latch *wake_latch);
+extern void PgRuntimeSchedulerWake(PgRuntime *runtime);
+extern void PgCarrierRequestSchedulerExit(PgCarrier *carrier);
+extern void PgBackendSchedulerSetWakeLatch(PgBackend *backend,
+										   struct Latch *wake_latch);
+extern void PgBackendSchedulerWake(PgBackend *backend);
 extern uint64 PgRuntimeSchedulerWakeGeneration(PgRuntime *runtime);
 extern void PgRuntimeSchedulerCounts(PgRuntime *runtime, uint32 *runnable_count,
 									 uint32 *waiting_count);

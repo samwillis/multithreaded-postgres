@@ -49,12 +49,13 @@ typedef enum PMChildCarrierKind
 	PM_CHILD_CARRIER_THREAD
 } PMChildCarrierKind;
 
-typedef struct
+typedef struct PMChild
 {
 	PMChildCarrierKind carrier_kind;	/* process, thread, or future carrier */
 	pid_t		pid;			/* process id, if process-backed */
 	pid_t		signal_pid;		/* visible signal/stat id for this child */
 	PgThread	thread;			/* native thread handle, if thread-backed */
+	struct PgCarrier *thread_carrier; /* protected by PMChild APIs */
 	struct PgBackend *thread_backend;	/* protected by PMChild APIs */
 	int			thread_exitstatus;	/* waitpid-style status for threads */
 	pid_t		thread_exit_signal_pid;	/* signal/stat id captured at exit */
@@ -166,9 +167,12 @@ extern bool PostmasterChildIsThread(const PMChild *pmchild);
 extern pid_t PostmasterChildSignalPid(const PMChild *pmchild);
 extern void PostmasterChildSetProcess(PMChild *pmchild, pid_t pid);
 extern void PostmasterChildSetThread(PMChild *pmchild, const PgThread *thread);
+extern void PostmasterChildSetThreadCarrier(PMChild *pmchild,
+											struct PgCarrier *carrier);
 extern void PostmasterChildSetThreadBackend(PMChild *pmchild,
 											struct PgBackend *backend);
 extern void PostmasterChildDetachThreadBackend(PMChild *pmchild);
+extern bool PostmasterChildRequestThreadCarrierExit(PMChild *pmchild);
 extern bool PostmasterChildRaiseThreadInterrupt(PMChild *pmchild,
 												int interrupt);
 extern bool PostmasterChildWakeThreadBackend(PMChild *pmchild);

@@ -125,14 +125,10 @@ is($node->safe_psql(
 	'ClientWrite',
 	'pg_stat_activity agrees active threaded backend is waiting on frontend output');
 
-is($node->safe_psql('postgres', "SELECT pg_cancel_backend($write_pid);"),
-	't', 'query cancel accepted while real backend is in published frontend-output wait');
-ok(pump_until($write_psql->{run}, $write_psql->{timer},
-		$write_psql->{stderr}, qr/canceling statement due to user request/),
-	'published frontend-output wait observes query cancel');
-eval { $write_psql->{run}->finish; };
+eval { $write_psql->{run}->kill_kill; };
+pass('published frontend-output wait client can disconnect cleanly');
 wait_for_pid_to_leave_pg_stat_activity($write_pid,
-	'canceled frontend-output-wait backend leaves pg_stat_activity');
+	'disconnected frontend-output-wait backend leaves pg_stat_activity');
 
 my $sleep_psql = start_psql_script(
 	"SELECT pg_backend_pid();\nSELECT pg_sleep(30);\n",

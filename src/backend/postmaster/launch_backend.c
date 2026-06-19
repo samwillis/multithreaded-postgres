@@ -200,7 +200,7 @@ typedef struct BackendThreadStart
 	PMChild    *pmchild;
 	BackendType child_type;
 	int			child_slot;
-	PgThreadBackendRuntimeState runtime_state;
+	PgThreadBackendRuntimeState *runtime_state;
 	BackendStartupData startup_data;
 	BackgroundWorker bgworker_startup_data;
 	ClientSocket client_sock;
@@ -400,6 +400,7 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 		errno = ENOMEM;
 		return false;
 	}
+	thread_start->runtime_state = NULL;
 
 	thread_start->pmchild = pmchild;
 	thread_start->child_type = child_type;
@@ -438,13 +439,29 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 		return false;
 	}
 
-	InitializePgThreadBackendRuntimeState(&thread_start->runtime_state,
+	/*
+	 * Keep logical backend state out of BackendThreadStart so Phase 14 can move
+	 * toward carriers that schedule backend state they did not allocate.
+	 */
+	thread_start->runtime_state = malloc(sizeof(PgThreadBackendRuntimeState));
+	if (thread_start->runtime_state == NULL)
+	{
+		if (child_type == B_BACKEND)
+			closesocket(thread_start->client_sock.sock);
+		free(thread_start);
+		errno = ENOMEM;
+		return false;
+	}
+
+	InitializePgThreadBackendRuntimeState(thread_start->runtime_state,
 										  thread_start->child_type, NULL,
 										  NULL);
 	thread_start->postmaster_latch = MyLatch;
 	if (thread_start->postmaster_latch == NULL)
 		thread_start->postmaster_latch = PgCurrentLocalLatchData();
 	Assert(thread_start->postmaster_latch != NULL);
+	PgBackendSetPostmasterChildOwner(&thread_start->runtime_state->backend,
+									 pmchild, thread_start->postmaster_latch);
 
 	rc = pg_thread_create(&thread, "postgres backend",
 						  backend_thread_entry, thread_start);
@@ -452,6 +469,7 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 	{
 		if (child_type == B_BACKEND)
 			closesocket(thread_start->client_sock.sock);
+		free(thread_start->runtime_state);
 		free(thread_start);
 		errno = rc;
 		return false;
@@ -459,7 +477,10 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 
 	postmaster_thread_carriers_started = true;
 	PostmasterChildSetThread(pmchild, &thread);
-	PostmasterChildSetThreadBackend(pmchild, &thread_start->runtime_state.backend);
+	PostmasterChildSetThreadCarrier(pmchild,
+									&thread_start->runtime_state->carrier);
+	PostmasterChildSetThreadBackend(pmchild,
+									&thread_start->runtime_state->backend);
 	pg_atomic_write_u32(&thread_start->launch_registered, 1);
 	return true;
 #endif
@@ -470,7 +491,7 @@ backend_thread_entry(void *arg)
 {
 	BackendThreadStart *thread_start = (BackendThreadStart *) arg;
 
-	PgSetCurrentCarrier(&thread_start->runtime_state.carrier);
+	PgSetCurrentCarrier(&thread_start->runtime_state->carrier);
 	backend_thread_set_current_start(thread_start);
 	backend_thread_wait_until_registered(thread_start);
 
@@ -488,7 +509,7 @@ backend_thread_entry(void *arg)
 	InitializeThreadedSessionGUCOptions();
 	read_nondefault_variables();
 	InitializeLatchWaitSet();
-	InstallPgThreadBackendRuntimeState(&thread_start->runtime_state);
+	InstallPgThreadBackendRuntimeState(thread_start->runtime_state);
 	(void) set_stack_base();
 	PgBackendSetInterruptLatch(CurrentPgBackend, MyLatch);
 
@@ -614,12 +635,16 @@ backend_thread_finish(int code)
 	int			exitstatus;
 	Size		top_memory_allocated = 0;
 	Size		top_memory_reclaimed = 0;
+	bool		publish_exit;
 
 	Assert(thread_start != NULL);
 
-	exit_state = PgCurrentBackendExitStateRef();
+	exit_state = &thread_start->runtime_state->backend.exit_state;
 	retained_top_context = exit_state->retained_top_memory_context;
 	exitstatus = backend_thread_exitstatus(code);
+	publish_exit =
+		pg_atomic_exchange_u32(&thread_start->runtime_state->backend.postmaster_exit_published,
+							   1) == 0;
 	MyClientSocket = NULL;
 	if (thread_start->client_sock.sock != PGINVALID_SOCKET)
 	{
@@ -634,29 +659,33 @@ backend_thread_finish(int code)
 	 * is kept as a postmaster-side regression probe; normal thread teardown
 	 * must delete the saved root before publishing PMChild exit.
 	 */
-	PostmasterChildDetachThreadBackend(thread_start->pmchild);
-	if (retained_top_context != NULL)
+	if (publish_exit)
 	{
-		/*
-		 * PgBackendExitCleanup() has run the closed connection/session/backend
-		 * and execution reset paths, including clearing the live execution
-		 * memory-context slots.  At this point the exiting carrier owns the
-		 * saved root context exclusively and can release it before publishing
-		 * PMChild exit.  If this is wrong, teardown stress should expose a
-		 * remaining cross-backend owner as a crash or corruption signature.
-		 */
-		top_memory_reclaimed = MemoryContextMemAllocated(retained_top_context,
-														 true);
-		MemoryContextDelete(retained_top_context);
-		exit_state->retained_top_memory_context = NULL;
-		top_memory_allocated = 0;
+		PostmasterChildDetachThreadBackend(thread_start->pmchild);
+		if (retained_top_context != NULL)
+		{
+			/*
+			 * PgBackendExitCleanup() has run the closed connection/session/backend
+			 * and execution reset paths, including clearing the live execution
+			 * memory-context slots.  At this point the exiting carrier owns the
+			 * saved root context exclusively and can release it before publishing
+			 * PMChild exit.  If this is wrong, teardown stress should expose a
+			 * remaining cross-backend owner as a crash or corruption signature.
+			 */
+			top_memory_reclaimed = MemoryContextMemAllocated(retained_top_context,
+															 true);
+			MemoryContextDelete(retained_top_context);
+			exit_state->retained_top_memory_context = NULL;
+			top_memory_allocated = 0;
+		}
+		PostmasterChildPublishThreadExit(thread_start->pmchild, exitstatus,
+										 top_memory_allocated,
+										 top_memory_reclaimed,
+										 thread_start->postmaster_latch);
 	}
-	PostmasterChildPublishThreadExit(thread_start->pmchild, exitstatus,
-									 top_memory_allocated,
-									 top_memory_reclaimed,
-									 thread_start->postmaster_latch);
 
 	backend_thread_set_current_start(NULL);
+	free(thread_start->runtime_state);
 	free(thread_start);
 	pg_thread_exit();
 }

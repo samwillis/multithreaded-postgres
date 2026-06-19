@@ -20,7 +20,9 @@ closed the scoped core thread-per-session state-migration gate, and Phase 13
 has added the scheduler-visible wait-completion substrate. The active direction
 is Phase 14: building pooled carrier scheduling on top of those explicit wait
 boundaries while keeping process mode and thread-per-session fallback behavior
-healthy.
+healthy.  The current Phase 14 work proves the scheduler-visible wait plumbing
+under pooled mode, but it is not yet the final many-sessions-on-fewer-carriers
+design.
 
 Important constraints:
 
@@ -38,9 +40,20 @@ Current status:
   condition variables, heavyweight locks, and PGPROC semaphore-backed waits
   including LWLocks.
 - Phase 14 is active. The branch now has pooled scheduler queue/requeue
-  scaffolding, carrier current-work switching, and a publish-only wait parking
-  primitive. Remaining Phase 14 work is to wire real scheduler loops, event
-  readiness, and frontend wait boundaries through that substrate.
+  scaffolding, carrier current-work switching, a carrier scheduler loop,
+  frontend-input parking/resume, scheduler wait-set dispatch for parked
+  sockets, and pooled-mode exit handoff.
+- The pooled scheduler TAP now covers idle frontend input, frontend-output
+  backpressure and disconnect cleanup, latch waits, statement-timeout delivery
+  while waiting, advisory-lock cancellation, and a small lost-wakeup stress.
+  These tests prove wait visibility and wake/cancel behavior in pooled mode
+  where the frontend/backend protocol can safely surface the wake.
+- Remaining Phase 14 work is substantial: regular client launch still creates
+  one physical carrier per client connection, and deep `PgSuspend()` waits such
+  as lock waits and frontend output still publish wait-completion records while
+  blocking the current carrier. Completing Phase 14 requires the real carrier
+  pool and a safe suspension model for waits below the top-level frontend-input
+  boundary.
 - Process mode remains supported.
 - Thread-per-session mode runs regular client backends and normal SQL paths.
 - Core backend/session/connection/execution/carrier state has explicit runtime
@@ -63,10 +76,15 @@ Current validation baseline:
 - `gmake check-global-lifetimes`
 - `git diff --check`
 
-These Gate E2-Core validation targets are currently green in the local WSL
-development tree as of June 19, 2026. Re-run the full set before claiming a new
-release-quality checkpoint, because this branch intentionally keeps changing
-runtime ownership boundaries.
+The current dirty Phase 14 tree passed `gmake check`, `gmake check-threaded`,
+`gmake check-threaded-workers`, `gmake check-threaded-world-core`, both static
+runtime scans, and `git diff --check` in the local WSL development tree on
+June 19, 2026. The threaded-world core run included 245 threaded-worker
+regression tests, 13 PL/pgSQL tests, 129 isolation tests, the backend-runtime
+SQL check, all five backend-runtime TAP files / 273 TAP assertions, lifecycle
+checking, and global-lifetime scanning. Re-run the full set before claiming a
+new release-quality checkpoint, because this branch intentionally keeps
+changing runtime ownership boundaries.
 
 Performance guidance:
 

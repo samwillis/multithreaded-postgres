@@ -306,8 +306,12 @@ RegisterPostmasterChildActive(void)
 	Assert(PMSignalState->PMChildFlags[slot] == PM_CHILD_ASSIGNED);
 	PMSignalState->PMChildFlags[slot] = PM_CHILD_ACTIVE;
 
-	/* Arrange to clean up at exit. */
-	on_shmem_exit(MarkPostmasterChildInactive, 0);
+	/*
+	 * Arrange to clean up at exit.  Remember the slot explicitly so the
+	 * callback does not depend on ambient backend-current state during logical
+	 * backend teardown.
+	 */
+	on_shmem_exit(MarkPostmasterChildInactive, Int32GetDatum(MyPMChildSlot));
 }
 
 /*
@@ -335,7 +339,7 @@ MarkPostmasterChildWalSender(void)
 static void
 MarkPostmasterChildInactive(int code, Datum arg)
 {
-	int			slot = MyPMChildSlot;
+	int			slot = DatumGetInt32(arg);
 
 	Assert(slot > 0 && slot <= PMSignalState->num_child_flags);
 	slot--;

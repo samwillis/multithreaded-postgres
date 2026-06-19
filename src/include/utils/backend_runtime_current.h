@@ -276,9 +276,13 @@ variable##MaybeRef(type *(*fallback) (void)) \
 { \
 	PgRuntimeCurrentBridge *bridge = &PgRuntimeCurrentBridgeState; \
 	type	   *slot; \
+	const void *slot_owner; \
  \
 	slot = bridge->variable; \
-	if (likely(slot != NULL)) \
+	slot_owner = bridge->variable##Owner; \
+	if (likely(slot != NULL && \
+			   slot_owner == \
+			   (const void *) PG_RUNTIME_HOT_FIELD_CURRENT_OWNER(owner))) \
 		return slot; \
  \
 	PG_RUNTIME_BRIDGE_COUNT_FALLBACK(hot_field); \

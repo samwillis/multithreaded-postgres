@@ -134,6 +134,7 @@ PMChildResetThreadPublicationState(PMChild *pmchild, pid_t signal_pid)
 {
 	PMChildThreadBackendLock();
 	pmchild->signal_pid = signal_pid;
+	pmchild->thread_carrier = NULL;
 	pmchild->thread_backend = NULL;
 	pmchild->thread_exitstatus = 0;
 	pmchild->thread_exit_signal_pid = 0;
@@ -230,6 +231,7 @@ InitPostmasterChildSlots(void)
 			slots[slotno].carrier_kind = PM_CHILD_CARRIER_PROCESS;
 			slots[slotno].pid = 0;
 			slots[slotno].signal_pid = 0;
+			slots[slotno].thread_carrier = NULL;
 			slots[slotno].thread_backend = NULL;
 			slots[slotno].thread_exitstatus = 0;
 			slots[slotno].thread_exit_signal_pid = 0;
@@ -320,6 +322,7 @@ AllocDeadEndChild(void)
 		pmchild->carrier_kind = PM_CHILD_CARRIER_PROCESS;
 		pmchild->pid = 0;
 		pmchild->signal_pid = 0;
+		pmchild->thread_carrier = NULL;
 		pmchild->thread_backend = NULL;
 		pmchild->thread_exitstatus = 0;
 		pmchild->thread_exit_signal_pid = 0;
@@ -402,6 +405,16 @@ PostmasterChildSetThreadBackend(PMChild *pmchild, struct PgBackend *backend)
 }
 
 void
+PostmasterChildSetThreadCarrier(PMChild *pmchild, struct PgCarrier *carrier)
+{
+	Assert(PostmasterChildIsThread(pmchild));
+
+	PMChildThreadBackendLock();
+	pmchild->thread_carrier = carrier;
+	PMChildThreadBackendUnlock();
+}
+
+void
 PostmasterChildDetachThreadBackend(PMChild *pmchild)
 {
 	Assert(PostmasterChildIsThread(pmchild));
@@ -414,6 +427,24 @@ PostmasterChildDetachThreadBackend(PMChild *pmchild)
 }
 
 bool
+PostmasterChildRequestThreadCarrierExit(PMChild *pmchild)
+{
+	bool		requested = false;
+
+	Assert(PostmasterChildIsThread(pmchild));
+
+	PMChildThreadBackendLock();
+	if (pmchild->thread_carrier != NULL)
+	{
+		PgCarrierRequestSchedulerExit(pmchild->thread_carrier);
+		requested = true;
+	}
+	PMChildThreadBackendUnlock();
+
+	return requested;
+}
+
+bool
 PostmasterChildRaiseThreadInterrupt(PMChild *pmchild,
 									int interrupt)
 {
@@ -422,6 +453,12 @@ PostmasterChildRaiseThreadInterrupt(PMChild *pmchild,
 	Assert(PostmasterChildIsThread(pmchild));
 
 	PMChildThreadBackendLock();
+	if (interrupt == PG_BACKEND_INTERRUPT_PROC_DIE &&
+		pmchild->thread_carrier != NULL)
+	{
+		PgCarrierRequestSchedulerExit(pmchild->thread_carrier);
+		raised = true;
+	}
 	if (pmchild->thread_backend != NULL)
 	{
 		SendInterrupt(pmchild->thread_backend, interrupt);
@@ -488,6 +525,7 @@ PostmasterChildPublishThreadExit(PMChild *pmchild, int exitstatus,
 	 * visible, so later postmaster signal routing cannot race with teardown.
 	 */
 	PMChildThreadBackendLock();
+	pmchild->thread_carrier = NULL;
 	if (pmchild->thread_backend != NULL || pmchild->signal_pid != 0)
 	{
 		pmchild->thread_exit_signal_pid = pmchild->signal_pid;

@@ -116,9 +116,13 @@ PgBackendRaiseInterrupt(PgBackend *backend,
 static void
 PgBackendWakeForInterrupt(PgBackend *backend)
 {
-	if (PgRuntimeIsPooledScheduler(backend->runtime) &&
-		PgBackendWakeWaitCompletion(backend, 0))
-		return;
+	if (PgRuntimeIsPooledScheduler(backend->runtime))
+	{
+		if (PgBackendWakeWaitCompletion(backend, 0))
+			return;
+
+		PgBackendSchedulerWake(backend);
+	}
 
 	/*
 	 * Process mode has one logical backend per address space, so waking the

@@ -390,7 +390,7 @@ module_needs_session_init(DynamicFileList *file_scanner)
 	List	  **dynamic_library_inits;
 
 	if (CurrentPgRuntime == NULL ||
-		CurrentPgRuntime->kind != PG_RUNTIME_THREAD_PER_SESSION ||
+		!PgRuntimeUsesLogicalBackends(CurrentPgRuntime) ||
 		CurrentPgSession == NULL)
 		return false;
 
@@ -405,7 +405,7 @@ remember_module_session_init(DynamicFileList *file_scanner)
 	MemoryContext oldcontext;
 
 	if (CurrentPgRuntime == NULL ||
-		CurrentPgRuntime->kind != PG_RUNTIME_THREAD_PER_SESSION ||
+		!PgRuntimeUsesLogicalBackends(CurrentPgRuntime) ||
 		CurrentPgSession == NULL)
 		return;
 

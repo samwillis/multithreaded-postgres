@@ -189,10 +189,10 @@ PgBackendResetBufferClosedState(PgBackendBufferState *buffers)
 	 */
 	if (PgBackendExitInProgress())
 	{
-		if (CurrentPgRuntime != NULL &&
-			CurrentPgRuntime->kind == PG_RUNTIME_THREAD_PER_SESSION &&
-			CurrentPgBackend != NULL &&
-			CurrentPgBackend->backend_type == B_BACKEND)
+			if (CurrentPgRuntime != NULL &&
+				PgRuntimeUsesLogicalBackends(CurrentPgRuntime) &&
+				CurrentPgBackend != NULL &&
+				CurrentPgBackend->backend_type == B_BACKEND)
 		{
 			if (buffers->local_buffer_descriptors != NULL)
 				free(buffers->local_buffer_descriptors);

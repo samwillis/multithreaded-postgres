@@ -189,6 +189,8 @@ static void PgSessionLoopStateInit(PgSessionLoopState *state);
 static void PgSessionRecoverError(PgSession *session);
 static pg_attribute_always_inline PgStepResult PgSessionStepUnprotected(PgSession *session,
 																		PgStepBudget budget);
+static void PgPooledCarrierCheckInterrupts(PgCarrier *carrier);
+static pg_noreturn void PgPooledSessionRun(PgSession *session);
 static void log_disconnections(int code, Datum arg);
 static void enable_statement_timeout(void);
 static void disable_statement_timeout(void);
@@ -232,6 +234,13 @@ ClientInterruptsPending(PgBackend *backend,
 #endif
 	return unlikely(pending_state->interrupt_pending ||
 					ClientBackendInterruptsPending(backend));
+}
+
+static inline void
+ClientApplyPendingBackendInterrupts(PgBackend *backend)
+{
+	if (unlikely(ClientBackendInterruptsPending(backend)))
+		PgCurrentBackendApplyInterrupts();
 }
 
 static inline bool
@@ -471,28 +480,29 @@ SocketBackend(PgSession *session, StringInfo inBuf)
 		unsigned char qtype_byte;
 		int			read_result;
 
-		read_result = pq_startmsgread_getbyte_if_available(&qtype_byte);
-		if (read_result == 0)
-		{
-			PgWaitSpec	wait_spec;
+			read_result = pq_startmsgread_getbyte_if_available(&qtype_byte);
+			if (read_result == 0)
+			{
+				PgWaitSpec	wait_spec;
 
-			Assert(*query_cancel_holdoff_count > 0);
-			(*query_cancel_holdoff_count)--;
+				Assert(*query_cancel_holdoff_count > 0);
+				(*query_cancel_holdoff_count)--;
 
-			wait_spec.kind = PG_WAIT_KIND_EVENT_SET;
-			wait_spec.wait_event_info = WAIT_EVENT_CLIENT_READ;
-			wait_spec.wake_events =
-				WL_SOCKET_READABLE | WL_LATCH_SET | WL_POSTMASTER_DEATH;
-			wait_spec.socket = MyProcPort != NULL ? MyProcPort->sock :
-				PGINVALID_SOCKET;
-			wait_spec.timeout = -1;
-			wait_spec.timeout_at = 0;
+				MemSet(&wait_spec, 0, sizeof(wait_spec));
+				wait_spec.kind = PG_WAIT_KIND_EVENT_SET;
+				wait_spec.wait_event_info = WAIT_EVENT_CLIENT_READ;
+				wait_spec.wake_events =
+					WL_SOCKET_READABLE | WL_LATCH_SET | WL_POSTMASTER_DEATH;
+				wait_spec.socket = MyProcPort != NULL ? MyProcPort->sock :
+					PGINVALID_SOCKET;
+				wait_spec.timeout = -1;
+				wait_spec.timeout_at = 0;
 
-			if (PgBackendPublishWaitCompletion(CurrentPgBackend, &wait_spec))
-				return READ_COMMAND_WOULD_BLOCK;
+				if (PgBackendPublishWaitCompletion(CurrentPgBackend, &wait_spec))
+					return READ_COMMAND_WOULD_BLOCK;
 
-			(*query_cancel_holdoff_count)++;
-			qtype = pq_startmsgread_getbyte();
+				(*query_cancel_holdoff_count)++;
+				qtype = pq_startmsgread_getbyte();
 		}
 		else if (read_result == EOF)
 			qtype = EOF;
@@ -650,6 +660,7 @@ ProcessClientReadInterrupt(bool blocked)
 
 	backend = CurrentPgBackend;
 	pending_state = ClientPendingInterruptState(backend);
+	ClientApplyPendingBackendInterrupts(backend);
 
 	if (ClientReadDoingCommandRead())
 	{
@@ -705,6 +716,7 @@ ProcessClientWriteInterrupt(bool blocked)
 
 	backend = CurrentPgBackend;
 	pending_state = ClientPendingInterruptState(backend);
+	ClientApplyPendingBackendInterrupts(backend);
 
 	if (pending_state->proc_die_pending)
 	{
@@ -5138,6 +5150,125 @@ PgSessionStep(PgSession *session, PgStepBudget budget)
 	return result;
 }
 
+static void
+PgPooledCarrierCheckInterrupts(PgCarrier *carrier)
+{
+	PgBackend  *backend;
+	PgBackendInterruptMask pending;
+	struct Latch *interrupt_latch;
+	bool		carrier_exit_requested;
+
+	if (carrier == NULL)
+		return;
+	if (carrier->current_backend != NULL)
+		return;
+
+	backend = carrier->scheduler_home_backend;
+	if (backend == NULL)
+		return;
+
+	pending = pg_atomic_read_u32(&backend->interrupts.pending_mask);
+	carrier_exit_requested =
+		pg_atomic_read_u32(&carrier->scheduler_carrier_exit_requested) != 0;
+	if (!carrier_exit_requested &&
+		(pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_PROC_DIE)) == 0)
+	{
+		/*
+		 * The physical carrier's interrupt latch may have been set for an
+		 * interrupt the detached scheduler does not service.  Clear stale
+		 * wakeups before entering the scheduler wait set, then recheck the
+		 * mailbox so a concurrent shutdown is not lost.
+		 */
+		interrupt_latch = backend->interrupt_latch;
+		if (interrupt_latch != NULL)
+		{
+			ResetLatch(interrupt_latch);
+			pending = pg_atomic_read_u32(&backend->interrupts.pending_mask);
+			carrier_exit_requested =
+				pg_atomic_read_u32(&carrier->scheduler_carrier_exit_requested) != 0;
+		}
+		if (!carrier_exit_requested &&
+			(pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_PROC_DIE)) == 0)
+			return;
+	}
+
+	if (carrier_exit_requested &&
+		(pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_PROC_DIE)) == 0)
+	{
+		if (carrier->runtime != NULL &&
+			carrier->runtime->exit_carrier != NULL)
+		{
+			carrier->scheduler_exit_jump = NULL;
+			carrier->runtime->exit_carrier(0);
+			pg_unreachable();
+		}
+	}
+
+	if (backend->interrupt_latch != NULL)
+		ResetLatch(backend->interrupt_latch);
+
+	pg_atomic_write_u32(&carrier->scheduler_carrier_exit_requested, 1);
+	PgCarrierAttachBackend(carrier, backend);
+	PgBackendExit(1);
+}
+
+static pg_noreturn void
+PgPooledSessionRun(PgSession *session)
+{
+	PgRuntime  *runtime;
+	PgCarrier  *carrier;
+	PgBackend  *backend;
+	PgStepBudget budget;
+	sigjmp_buf scheduler_exit_jump;
+	struct Latch *wake_latch;
+	PgRuntimeSchedulerSocketWait socket_waits[1024];
+
+	Assert(session != NULL);
+	backend = session->backend;
+	Assert(backend != NULL);
+	runtime = backend->runtime;
+	carrier = CurrentPgCarrier;
+	Assert(PgRuntimeIsPooledScheduler(runtime));
+	Assert(carrier != NULL);
+	Assert(carrier->runtime == runtime);
+	Assert(CurrentPgBackend == backend);
+
+	budget.max_messages = 1;
+	Assert(carrier->scheduler_latch_initialized);
+	wake_latch = &carrier->scheduler_latch;
+	carrier->scheduler_home_backend = backend;
+
+	PgBackendSchedulerSetWakeLatch(backend, wake_latch);
+	if (!PgBackendSchedulerEnqueueRunnable(backend))
+		elog(ERROR, "could not enqueue backend for pooled scheduler");
+	PgCarrierDetachBackend(carrier);
+
+	carrier->scheduler_exit_jump = &scheduler_exit_jump;
+	for (;;)
+	{
+		if (sigsetjmp(scheduler_exit_jump, 1) != 0)
+		{
+			PgBackend  *exiting_backend = carrier->scheduler_exiting_backend;
+
+			carrier->scheduler_exiting_backend = NULL;
+			if (exiting_backend != NULL)
+			{
+				PgBackendClearPublishedWaitCompletion(exiting_backend);
+				PgBackendSchedulerMarkDetached(exiting_backend);
+			}
+			PgCarrierDetachBackend(carrier);
+		}
+
+		PgPooledCarrierCheckInterrupts(carrier);
+		PgBackendSchedulerSetWakeLatch(backend, wake_latch);
+		(void) PgRuntimeSchedulerDispatchOnce(runtime, carrier, budget,
+											  socket_waits,
+											  lengthof(socket_waits),
+											  -1,
+											  NULL);
+	}
+}
+
 pg_noreturn void
 PgSessionRun(PgSession *session)
 {
@@ -5185,8 +5316,7 @@ PgSessionBootstrap(const char *dbname, const char *username)
 	Assert(username != NULL);
 
 	Assert(GetProcessingMode() == InitProcessing);
-	threaded_backend = (CurrentPgRuntime != NULL &&
-						CurrentPgRuntime->kind == PG_RUNTIME_THREAD_PER_SESSION);
+	threaded_backend = PgRuntimeUsesLogicalBackends(CurrentPgRuntime);
 
 	/*
 	 * Set up signal handlers.  (InitPostmasterChild or InitStandaloneProcess
@@ -5394,6 +5524,8 @@ PostgresMain(const char *dbname, const char *username)
 	PgSession  *session;
 
 	session = PgSessionBootstrap(dbname, username);
+	if (PgRuntimeIsPooledScheduler(CurrentPgRuntime))
+		PgPooledSessionRun(session);
 	PgSessionRun(session);
 }
 

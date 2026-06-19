@@ -44,6 +44,7 @@
 #include "jit/jit.h"
 #include "lib/dshash.h"
 #include "libpq/crypt.h"
+#include "libpq/libpq.h"
 #include "miscadmin.h"
 #include "nodes/queryjumble.h"
 #include "optimizer/cost.h"
@@ -130,6 +131,7 @@ PG_THREAD_LOCAL PG_GLOBAL_CARRIER const void *variable##ThreadOwner = NULL;
 
 static PG_GLOBAL_RUNTIME PgRuntime process_runtime;
 static PG_GLOBAL_RUNTIME PgRuntime thread_runtime;
+static PG_GLOBAL_RUNTIME PgRuntime pooled_scheduler_runtime;
 static PG_GLOBAL_RUNTIME bool thread_runtime_initialized = false;
 static PG_GLOBAL_CARRIER PgCarrier process_carrier = {
 	.wait_event_signal_fd = -1,
@@ -578,7 +580,7 @@ PgRuntimeInitializeRuntimeObject(PgRuntime *runtime)
 #undef PG_RUNTIME_BUCKET
 }
 
-static void
+void
 PgCarrierEnsureSchedulerContext(PgCarrier *carrier)
 {
 	MemoryContext oldcontext;
@@ -587,7 +589,7 @@ PgCarrierEnsureSchedulerContext(PgCarrier *carrier)
 
 	if (carrier->scheduler_context != NULL)
 		return;
-	if (CurrentPgExecution == NULL || TopMemoryContext == NULL)
+	if (TopMemoryContext == NULL)
 		return;
 
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
@@ -601,16 +603,77 @@ PgCarrierEnsureSchedulerContext(PgCarrier *carrier)
 static void
 PgCarrierEnsureWaitEventSupport(PgCarrier *carrier)
 {
+	PgRuntime  *old_runtime = CurrentPgRuntime;
+	PgCarrier  *old_carrier = CurrentPgCarrier;
+	PgBackend  *old_backend = CurrentPgBackend;
+	PgSession  *old_session = CurrentPgSession;
+	PgConnection *old_connection = CurrentPgConnection;
+	PgExecution *old_execution = CurrentPgExecution;
+	bool		use_scheduler_identity;
+	bool		wait_event_support_initialized = false;
+
 	Assert(carrier != NULL);
 	Assert(CurrentPgCarrier == carrier);
 
 #ifndef WIN32
 	if (carrier->wait_event_selfpipe_readfd >= 0 ||
 		carrier->wait_event_signal_fd >= 0)
-		return;
+		wait_event_support_initialized = true;
 #endif
 
-	InitializeWaitEventSupport();
+	use_scheduler_identity = PgRuntimeIsPooledScheduler(carrier->runtime);
+	if (use_scheduler_identity && old_backend != NULL &&
+		old_backend->core.proc_pid != 0)
+		PgBackendSetEarlyFallbackProcPid(old_backend->core.proc_pid);
+	if (use_scheduler_identity)
+		PgRuntimeSetCurrentWork(carrier->runtime, carrier, NULL, NULL, NULL,
+								NULL, false);
+
+	PG_TRY();
+	{
+		if (!wait_event_support_initialized)
+			InitializeWaitEventSupport();
+		if (use_scheduler_identity && !carrier->scheduler_latch_initialized)
+		{
+			InitLatch(&carrier->scheduler_latch);
+			carrier->scheduler_latch_initialized = true;
+		}
+	}
+	PG_CATCH();
+	{
+		if (use_scheduler_identity)
+			PgRuntimeSetCurrentWork(old_runtime, old_carrier, old_backend,
+									old_session, old_connection, old_execution,
+									false);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	if (use_scheduler_identity)
+		PgRuntimeSetCurrentWork(old_runtime, old_carrier, old_backend,
+								old_session, old_connection, old_execution,
+								false);
+}
+
+static void
+PgCarrierInstallSchedulerLatch(PgCarrier *carrier, PgBackend *backend)
+{
+	struct Latch *scheduler_latch;
+
+	Assert(carrier != NULL);
+	Assert(backend != NULL);
+	Assert(PgRuntimeIsPooledScheduler(carrier->runtime));
+
+	if (!carrier->scheduler_latch_initialized)
+		return;
+
+	scheduler_latch = &carrier->scheduler_latch;
+	backend->core.latch = scheduler_latch;
+	PgBackendSetInterruptLatch(backend, scheduler_latch);
+
+	if (FeBeWaitSet != NULL)
+		ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetLatchPos, WL_LATCH_SET,
+						scheduler_latch);
 }
 
 static void
@@ -727,35 +790,63 @@ InitializePgProcessRuntime(void)
 		MyProc->backendId = process_backend.id;
 }
 
+static void
+PgThreadRuntimeInstallSharedState(PgRuntime *runtime)
+{
+	PgRuntimeServerGUCState *early_server_guc;
+
+	Assert(runtime != NULL);
+
+	early_server_guc = PgEarlyRuntimeServerGUCState();
+	if (PgRuntimeServerGUCStateHasConfigPaths(&process_runtime.server_guc))
+		runtime->server_guc = process_runtime.server_guc;
+	else if (PgRuntimeServerGUCStateHasConfigPaths(early_server_guc))
+		runtime->server_guc = *early_server_guc;
+	else if (process_runtime.server_guc.initialized)
+		runtime->server_guc = process_runtime.server_guc;
+	else
+		PgRuntimeInitializeServerGUCState(&runtime->server_guc);
+
+	runtime->extension_modules = process_runtime.extension_modules;
+	PgRuntimeEnsureExtensionModuleMemoryContext(&runtime->extension_modules);
+}
+
+static PgRuntime *
+PgThreadRuntimeForBackendType(BackendType backend_type)
+{
+	if (backend_type == B_BACKEND && multithreaded_pooled_scheduler)
+		return &pooled_scheduler_runtime;
+
+	return &thread_runtime;
+}
+
 void
 InitializePgThreadRuntime(PgBackendExitContinuation exit_backend)
 {
 	if (!thread_runtime_initialized)
 	{
-		PgRuntimeServerGUCState *early_server_guc;
-
 		MemSet(&thread_runtime, 0, sizeof(thread_runtime));
 		PgRuntimeInitializeRuntimeObject(&thread_runtime);
 
 		thread_runtime.kind = PG_RUNTIME_THREAD_PER_SESSION;
 		thread_runtime.extension_backend_model =
 			PG_BACKEND_MODEL_THREAD_PER_SESSION;
-		early_server_guc = PgEarlyRuntimeServerGUCState();
-		if (PgRuntimeServerGUCStateHasConfigPaths(&process_runtime.server_guc))
-			thread_runtime.server_guc = process_runtime.server_guc;
-		else if (PgRuntimeServerGUCStateHasConfigPaths(early_server_guc))
-			thread_runtime.server_guc = *early_server_guc;
-		else if (process_runtime.server_guc.initialized)
-			thread_runtime.server_guc = process_runtime.server_guc;
-		else
-			PgRuntimeInitializeServerGUCState(&thread_runtime.server_guc);
-		thread_runtime.extension_modules = process_runtime.extension_modules;
-		PgRuntimeEnsureExtensionModuleMemoryContext(&thread_runtime.extension_modules);
+		PgThreadRuntimeInstallSharedState(&thread_runtime);
+
+		MemSet(&pooled_scheduler_runtime, 0, sizeof(pooled_scheduler_runtime));
+		PgRuntimeInitializeRuntimeObject(&pooled_scheduler_runtime);
+		pooled_scheduler_runtime.kind = PG_RUNTIME_POOLED_SCHEDULER;
+		pooled_scheduler_runtime.extension_backend_model =
+			PG_BACKEND_MODEL_POOLED_SCHEDULER;
+		PgThreadRuntimeInstallSharedState(&pooled_scheduler_runtime);
+
 		PgBackendInitializeIdCounter();
 		thread_runtime_initialized = true;
 	}
 
 	thread_runtime.exit_backend = exit_backend;
+	pooled_scheduler_runtime.exit_backend = PgRuntimePooledBackendExit;
+	pooled_scheduler_runtime.exit_carrier = exit_backend;
 }
 
 bool
@@ -788,19 +879,23 @@ InitializePgThreadBackendRuntimeState(PgThreadBackendRuntimeState *state,
 									  struct Port *port,
 									  struct Latch *interrupt_latch)
 {
+	PgRuntime  *runtime;
+
 	Assert(state != NULL);
 	Assert(thread_runtime_initialized);
+
+	runtime = PgThreadRuntimeForBackendType(backend_type);
 
 	MemSet(state, 0, sizeof(*state));
 	PgCarrierInitializeRuntimeObject(&state->carrier);
 
 	state->carrier.kind = PG_CARRIER_THREAD;
-	state->carrier.runtime = &thread_runtime;
+	state->carrier.runtime = runtime;
 	state->carrier.current_backend = &state->backend;
 	state->carrier.current_session = &state->session;
 	state->carrier.current_execution = &state->execution;
 
-	PgBackendInitializeRuntimeObject(&state->backend, &thread_runtime,
+	PgBackendInitializeRuntimeObject(&state->backend, runtime,
 									 &state->carrier, &state->session,
 									 &state->connection, &state->execution,
 									 backend_type, interrupt_latch);
@@ -930,9 +1025,6 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend)
 		old_carrier->current_execution = NULL;
 	}
 
-	if (PgRuntimeIsPooledScheduler(runtime))
-		PgCarrierEnsureSchedulerContext(carrier);
-
 	carrier->current_backend = backend;
 	carrier->current_session = session;
 	carrier->current_execution = execution;
@@ -943,7 +1035,11 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend)
 							execution, true);
 
 	if (PgRuntimeIsPooledScheduler(runtime))
+	{
+		PgCarrierEnsureSchedulerContext(carrier);
 		PgCarrierEnsureWaitEventSupport(carrier);
+		PgCarrierInstallSchedulerLatch(carrier, backend);
+	}
 }
 
 void
@@ -961,7 +1057,11 @@ PgCarrierDetachBackend(PgCarrier *carrier)
 	execution = carrier->current_execution;
 
 	if (backend != NULL && backend->carrier == carrier)
+	{
+		if (backend->core.proc_pid != 0)
+			PgBackendSetEarlyFallbackProcPid(backend->core.proc_pid);
 		backend->carrier = NULL;
+	}
 	if (execution != NULL && execution->carrier == carrier)
 		execution->carrier = NULL;
 

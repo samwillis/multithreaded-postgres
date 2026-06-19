@@ -450,10 +450,10 @@ socket_close(int code, Datum arg)
 		 * allows clients to perform a synchronous close.  Threaded backends
 		 * cannot rely on process exit to release the accepted descriptor.
 		 */
-		if (CurrentPgRuntime != NULL &&
-			CurrentPgRuntime->kind == PG_RUNTIME_THREAD_PER_SESSION &&
-			MyProcPort->sock != PGINVALID_SOCKET)
-			closesocket(MyProcPort->sock);
+			if (CurrentPgRuntime != NULL &&
+				PgRuntimeUsesLogicalBackends(CurrentPgRuntime) &&
+				MyProcPort->sock != PGINVALID_SOCKET)
+				closesocket(MyProcPort->sock);
 
 		/* Prevent any further I/O through this Port. */
 		MyProcPort->sock = PGINVALID_SOCKET;

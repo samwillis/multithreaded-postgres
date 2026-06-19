@@ -817,6 +817,24 @@ Exit gate:
   suites plus stress tests for lock waits, cancellation of waiting and running
   tasks, output backpressure, timeout delivery while waiting, and lost wakeups.
 
+Current Phase 14 implementation note:
+
+- The branch has the pooled scheduler queue/requeue machinery, carrier
+  current-work switching, frontend-input parking/resume, and focused pooled TAP
+  coverage for output backpressure, latch waits, statement-timeout delivery,
+  advisory-lock cancellation, and lost-wakeup stress.
+- This proves wait visibility and wake/cancel routing under the pooled runtime,
+  but it does not yet satisfy the full pooled-carrier goal. Regular backend
+  launch still creates one physical carrier per client connection, and deep
+  `PgSuspend()` waits still call the blocking callback after publishing the
+  wait-completion record.
+- Completing Phase 14 therefore requires a deliberate suspension design before
+  Phase 15 yield-point work: either a stack-preserving task/fiber mechanism that
+  can resume a backend inside arbitrary wait call stacks, or explicit
+  state-machine conversions for every wait/yield boundary that should release a
+  carrier. The latter is simpler locally but makes "all waits below the command
+  loop release the carrier" a much larger, family-by-family rewrite.
+
 ## Phase 15: Executor And Utility Yield Points
 
 Goal: improve fairness and latency for long-running commands under pooled

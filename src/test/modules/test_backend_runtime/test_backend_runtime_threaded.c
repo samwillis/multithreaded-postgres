@@ -29,9 +29,10 @@
 PG_MODULE_MAGIC_EXT(
 					.name = "test_backend_runtime_threaded",
 					.version = PG_VERSION,
-					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+					PG_MODULE_MAGIC_BACKEND_MODEL_POOLED_SCHEDULER
 );
 
+PG_FUNCTION_INFO_V1(test_backend_runtime_current_runtime_kind);
 PG_FUNCTION_INFO_V1(test_backend_runtime_request_autovacuum_worker);
 PG_FUNCTION_INFO_V1(test_backend_runtime_rejects_process_bgworker);
 PG_FUNCTION_INFO_V1(test_backend_runtime_launch_thread_bgworker);
@@ -60,6 +61,35 @@ static pg_atomic_uint32 test_backend_runtime_restart_count;
 static pg_atomic_uint32 test_backend_runtime_crash_count;
 static PG_THREAD_LOCAL char *test_backend_runtime_custom_guc = NULL;
 static PG_THREAD_LOCAL int test_backend_runtime_custom_guc_init_counter = 0;
+
+Datum
+test_backend_runtime_current_runtime_kind(PG_FUNCTION_ARGS)
+{
+	const char *kind;
+
+	if (CurrentPgRuntime == NULL)
+		kind = "none";
+	else
+	{
+		switch (CurrentPgRuntime->kind)
+		{
+			case PG_RUNTIME_PROCESS:
+				kind = "process";
+				break;
+			case PG_RUNTIME_THREAD_PER_SESSION:
+				kind = "thread-per-session";
+				break;
+			case PG_RUNTIME_POOLED_SCHEDULER:
+				kind = "pooled-scheduler";
+				break;
+			default:
+				kind = "unknown";
+				break;
+		}
+	}
+
+	PG_RETURN_TEXT_P(cstring_to_text(kind));
+}
 
 static const char *
 test_backend_runtime_wait_kind_name(PgWaitKind kind)

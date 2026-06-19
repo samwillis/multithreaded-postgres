@@ -1087,6 +1087,7 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 	bool		found_wait_socket = false;
 	bool		multiple_wait_sockets = false;
 
+	MemSet(&wait_spec, 0, sizeof(wait_spec));
 	for (int i = 0; i < set->nevents; i++)
 	{
 		wake_events |= set->events[i].events;

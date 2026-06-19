@@ -2135,6 +2135,7 @@ ProcWaitOnSemaphore(PGPROC *proc, uint32 wait_event_info)
 
 	Assert(proc != NULL);
 
+	MemSet(&wait_spec, 0, sizeof(wait_spec));
 	args.proc = proc;
 	wait_spec.kind = PG_WAIT_KIND_SEMAPHORE;
 	wait_spec.wait_event_info = wait_event_info;

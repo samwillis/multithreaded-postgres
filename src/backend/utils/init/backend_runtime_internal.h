@@ -164,6 +164,8 @@ extern void PgRuntimeReloadCurrentHotMirrors(void);
 extern void PgRuntimeFlushCurrentHotCells(void);
 extern void PgRuntimeReloadCurrentHotCells(void);
 extern void PgBackendInitializeIdCounter(void);
+extern void PgCarrierEnsureSchedulerContext(PgCarrier *carrier);
+pg_noreturn extern void PgRuntimePooledBackendExit(int code);
 extern void PgBackendInitializeRuntimeObject(PgBackend *backend,
 											 PgRuntime *runtime,
 											 PgCarrier *carrier,
@@ -173,6 +175,7 @@ extern void PgBackendInitializeRuntimeObject(PgBackend *backend,
 											 BackendType backend_type,
 											 struct Latch *interrupt_latch);
 extern void PgBackendResetEarlyFallbackAfterFork(int proc_pid);
+extern void PgBackendSetEarlyFallbackProcPid(int proc_pid);
 extern PgSession *PgProcessSessionState(void);
 extern PgSession *PgCurrentOrEarlySession(void);
 extern void PgSessionInitializeRuntimeObject(PgSession *session,

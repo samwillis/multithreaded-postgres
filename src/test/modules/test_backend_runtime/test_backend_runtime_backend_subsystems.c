@@ -1132,6 +1132,7 @@ test_backend_wait_completion_publication(PG_FUNCTION_ARGS)
 	fake_backend.wait_state.wait_event_info_ptr =
 		&fake_backend.wait_state.local_wait_event_info;
 
+	MemSet(&wait_spec, 0, sizeof(wait_spec));
 	wait_spec.kind = PG_WAIT_KIND_EVENT_SET;
 	wait_spec.wait_event_info = 0x0A0B0C0D;
 	wait_spec.wake_events = WL_LATCH_SET | WL_TIMEOUT;
@@ -1241,6 +1242,7 @@ test_backend_wait_completion_publication_policy(PG_FUNCTION_ARGS)
 	pg_atomic_init_u32(&thread_backend.wait_state.completion.ready_events, 0);
 	pg_atomic_init_u32(&thread_backend.wait_state.completion.interrupt_events, 0);
 
+	MemSet(&wait_spec, 0, sizeof(wait_spec));
 	wait_spec.kind = PG_WAIT_KIND_EVENT_SET;
 	wait_spec.wait_event_info = 0x01020304;
 	wait_spec.wake_events = WL_LATCH_SET;

@@ -26,6 +26,7 @@
 #include "miscadmin.h"
 #include "postmaster/pgarch.h"
 #include "postmaster/interrupt.h"
+#include "postmaster/postmaster.h"
 #include "replication/logical.h"
 #include "replication/reorderbuffer.h"
 #include "replication/logicalworker.h"
@@ -206,6 +207,7 @@ static void PgBackendClearWaitCompletionState(PgBackendWaitState *wait_state);
 static void PgBackendWakeForWaitCompletion(PgBackend *backend);
 static bool PgBackendShouldPublishWaitCompletion(PgBackend *backend,
 												 const PgWaitSpec *wait_spec);
+static void PgRuntimeRequestPooledLogicalBackendCarrierExit(PgBackend *backend);
 static void PgBackendSchedulerDetachLocked(PgRuntimeSchedulerState *scheduler,
 										   PgBackend *backend,
 										   PgSchedulerBackendState state);
@@ -785,6 +787,7 @@ PgBackendSchedulerInitialize(PgBackendSchedulerState *scheduler)
 	pg_atomic_init_u32(&scheduler->state,
 					   PG_SCHEDULER_BACKEND_DETACHED);
 	scheduler->enqueue_generation = 0;
+	scheduler->wake_latch = NULL;
 }
 
 static void
@@ -906,7 +909,9 @@ PgBackendSchedulerEnqueueRunnable(PgBackend *backend)
 		dlist_push_tail(&scheduler->runnable_queue, &backend->scheduler.node);
 		scheduler->runnable_count++;
 		scheduler->wake_generation++;
-		wake_latch = scheduler->wake_latch;
+		wake_latch = backend->scheduler.wake_latch;
+		if (wake_latch == NULL)
+			wake_latch = scheduler->wake_latch;
 		pg_atomic_write_u32(&backend->scheduler.state,
 							PG_SCHEDULER_BACKEND_RUNNABLE);
 		queued = true;
@@ -948,6 +953,88 @@ PgRuntimeSchedulerPopRunnable(PgRuntime *runtime)
 	return backend;
 }
 
+static void
+PgRuntimeRequestPooledLogicalBackendCarrierExit(PgBackend *backend)
+{
+	PMChild    *pmchild;
+
+	Assert(backend != NULL);
+
+	pmchild = backend->postmaster_child;
+	if (pmchild == NULL)
+		return;
+
+	PostmasterChildDetachThreadBackend(pmchild);
+	(void) PostmasterChildRequestThreadCarrierExit(pmchild);
+}
+
+void
+PgRuntimePooledBackendExit(int code)
+{
+	PgCarrier  *carrier = CurrentPgCarrier;
+	PgBackend  *backend = CurrentPgBackend;
+
+	if (carrier == NULL ||
+		!PgRuntimeIsPooledScheduler(carrier->runtime) ||
+		carrier->scheduler_exit_jump == NULL)
+		elog(PANIC, "pooled backend exit without scheduler handoff");
+
+	/*
+	 * Phase 14 launches one physical carrier for each client connection.  A
+	 * terminal exit from that carrier's home backend must therefore retire the
+	 * carrier too; otherwise short-lived clients leave idle scheduler threads
+	 * behind until postmaster shutdown.
+	 */
+	if (backend == carrier->scheduler_home_backend &&
+		carrier->runtime->exit_carrier != NULL)
+	{
+		carrier->scheduler_exit_jump = NULL;
+		carrier->runtime->exit_carrier(code);
+		pg_unreachable();
+	}
+
+	if (backend != NULL)
+		PgRuntimeRequestPooledLogicalBackendCarrierExit(backend);
+
+	carrier->scheduler_exiting_backend = backend;
+	carrier->scheduler_exit_code = code;
+	siglongjmp(*carrier->scheduler_exit_jump, 1);
+}
+
+static PgBackend *
+PgRuntimeSchedulerPopRunnableForCarrier(PgRuntime *runtime, PgCarrier *carrier)
+{
+	PgRuntimeSchedulerState *scheduler;
+	PgBackend  *backend;
+
+	if (carrier == NULL || carrier->scheduler_home_backend == NULL)
+		return PgRuntimeSchedulerPopRunnable(runtime);
+
+	if (!PgRuntimeIsPooledScheduler(runtime) ||
+		carrier->scheduler_home_backend->runtime != runtime)
+		return NULL;
+
+	backend = NULL;
+	scheduler = &runtime->scheduler;
+	Assert(scheduler->initialized);
+
+	SpinLockAcquire(&scheduler->lock);
+	if (!dlist_is_empty(&scheduler->runnable_queue))
+	{
+		dlist_node *node = dlist_head_node(&scheduler->runnable_queue);
+
+		dlist_delete_thoroughly(node);
+		Assert(scheduler->runnable_count > 0);
+		scheduler->runnable_count--;
+		backend = dlist_container(PgBackend, scheduler.node, node);
+		pg_atomic_write_u32(&backend->scheduler.state,
+							PG_SCHEDULER_BACKEND_RUNNING);
+	}
+	SpinLockRelease(&scheduler->lock);
+
+	return backend;
+}
+
 void
 PgRuntimeSchedulerSetWakeLatch(PgRuntime *runtime, struct Latch *wake_latch)
 {
@@ -962,6 +1049,78 @@ PgRuntimeSchedulerSetWakeLatch(PgRuntime *runtime, struct Latch *wake_latch)
 	SpinLockAcquire(&scheduler->lock);
 	scheduler->wake_latch = wake_latch;
 	SpinLockRelease(&scheduler->lock);
+}
+
+void
+PgRuntimeSchedulerWake(PgRuntime *runtime)
+{
+	PgRuntimeSchedulerState *scheduler;
+	struct Latch *wake_latch;
+
+	if (!PgRuntimeIsPooledScheduler(runtime))
+		return;
+
+	scheduler = &runtime->scheduler;
+	Assert(scheduler->initialized);
+
+	SpinLockAcquire(&scheduler->lock);
+	scheduler->wake_generation++;
+	wake_latch = scheduler->wake_latch;
+	SpinLockRelease(&scheduler->lock);
+
+	if (wake_latch != NULL)
+		SetLatch(wake_latch);
+}
+
+void
+PgCarrierRequestSchedulerExit(PgCarrier *carrier)
+{
+	if (carrier == NULL ||
+		!PgRuntimeIsPooledScheduler(carrier->runtime))
+		return;
+
+	pg_atomic_write_u32(&carrier->scheduler_carrier_exit_requested, 1);
+	if (carrier->scheduler_latch_initialized)
+		SetLatch(&carrier->scheduler_latch);
+}
+
+void
+PgBackendSchedulerSetWakeLatch(PgBackend *backend, struct Latch *wake_latch)
+{
+	PgRuntimeSchedulerState *scheduler;
+
+	if (backend == NULL || !PgRuntimeIsPooledScheduler(backend->runtime))
+		return;
+
+	scheduler = &backend->runtime->scheduler;
+	Assert(scheduler->initialized);
+
+	SpinLockAcquire(&scheduler->lock);
+	backend->scheduler.wake_latch = wake_latch;
+	SpinLockRelease(&scheduler->lock);
+}
+
+void
+PgBackendSchedulerWake(PgBackend *backend)
+{
+	PgRuntimeSchedulerState *scheduler;
+	struct Latch *wake_latch;
+
+	if (backend == NULL || !PgRuntimeIsPooledScheduler(backend->runtime))
+		return;
+
+	scheduler = &backend->runtime->scheduler;
+	Assert(scheduler->initialized);
+
+	SpinLockAcquire(&scheduler->lock);
+	scheduler->wake_generation++;
+	wake_latch = backend->scheduler.wake_latch;
+	if (wake_latch == NULL)
+		wake_latch = scheduler->wake_latch;
+	SpinLockRelease(&scheduler->lock);
+
+	if (wake_latch != NULL)
+		SetLatch(wake_latch);
 }
 
 uint64
@@ -1038,7 +1197,7 @@ PgRuntimeSchedulerRunNextWithCallback(PgRuntime *runtime, PgCarrier *carrier,
 		callback == NULL)
 		return false;
 
-	backend = PgRuntimeSchedulerPopRunnable(runtime);
+	backend = PgRuntimeSchedulerPopRunnableForCarrier(runtime, carrier);
 	if (backend == NULL)
 		return false;
 
@@ -1048,6 +1207,9 @@ PgRuntimeSchedulerRunNextWithCallback(PgRuntime *runtime, PgCarrier *carrier,
 
 		PgCarrierAttachBackend(carrier, backend);
 		attached = true;
+		if (carrier->scheduler_latch_initialized)
+			PgBackendSchedulerSetWakeLatch(backend,
+										   &carrier->scheduler_latch);
 		PgBackendClearPublishedWaitCompletion(backend);
 
 		result = callback(backend, budget, callback_arg);
@@ -1169,8 +1331,8 @@ PgRuntimeSchedulerDispatchOnce(PgRuntime *runtime, PgCarrier *carrier,
 }
 
 static PgBackend *
-PgRuntimeSchedulerFindSocketWait(PgRuntime *runtime, pgsocket socket,
-								 uint32 ready_events, uint32 *matched_events)
+PgRuntimeSchedulerClaimSocketWait(PgRuntime *runtime, pgsocket socket,
+								  uint32 ready_events, uint32 *matched_events)
 {
 	PgRuntimeSchedulerState *scheduler;
 	PgBackend  *backend = NULL;
@@ -1209,6 +1371,10 @@ PgRuntimeSchedulerFindSocketWait(PgRuntime *runtime, pgsocket socket,
 			spec->socket == socket &&
 			candidate_events != 0)
 		{
+			PgBackendSchedulerDetachLocked(scheduler, candidate,
+										   PG_SCHEDULER_BACKEND_WAITING);
+			pg_atomic_write_u32(&candidate->scheduler.state,
+								PG_SCHEDULER_BACKEND_RUNNING);
 			backend = candidate;
 			if (matched_events != NULL)
 				*matched_events = candidate_events;
@@ -1228,9 +1394,9 @@ PgRuntimeSchedulerWakeSocket(PgRuntime *runtime, pgsocket socket,
 	uint32		woken = 0;
 	uint32		matched_events;
 
-	while ((backend = PgRuntimeSchedulerFindSocketWait(runtime, socket,
-													  ready_events,
-													  &matched_events)) != NULL)
+	while ((backend = PgRuntimeSchedulerClaimSocketWait(runtime, socket,
+													   ready_events,
+													   &matched_events)) != NULL)
 	{
 		if (!PgBackendWakeWaitCompletion(backend, matched_events))
 			break;
@@ -1564,13 +1730,15 @@ PgRuntimeSchedulerWaitOnce(PgRuntime *runtime, PgCarrier *carrier,
 						   uint32 max_socket_waits, long max_wait)
 {
 	PgRuntimeSchedulerWaitSnapshot snapshot;
-	WaitEventSet *wait_set;
-	WaitEvent  *occurred_events;
+	WaitEventSet *volatile wait_set = NULL;
+	WaitEvent  *volatile occurred_events = NULL;
 	struct Latch *wake_latch;
 	MemoryContext *top_context_ref;
 	MemoryContext *current_context_ref;
+	MemoryContext *error_context_ref;
 	MemoryContext oldtopcontext;
 	MemoryContext oldcontext;
+	MemoryContext olderrorcontext;
 	TimestampTz now;
 	uint32		filled_sockets;
 	uint32		woken = 0;
@@ -1588,7 +1756,10 @@ PgRuntimeSchedulerWaitOnce(PgRuntime *runtime, PgCarrier *carrier,
 	if (woken > 0)
 		return woken;
 
-	wake_latch = PgRuntimeSchedulerGetWakeLatch(runtime);
+	if (carrier->scheduler_latch_initialized)
+		wake_latch = &carrier->scheduler_latch;
+	else
+		wake_latch = PgRuntimeSchedulerGetWakeLatch(runtime);
 	if (wake_latch != NULL)
 		ResetLatch(wake_latch);
 
@@ -1596,7 +1767,9 @@ PgRuntimeSchedulerWaitOnce(PgRuntime *runtime, PgCarrier *carrier,
 	filled_sockets = PgRuntimeSchedulerSnapshotWaits(runtime, socket_waits,
 													 max_socket_waits, now,
 													 &snapshot);
-	if (snapshot.runnable_count > 0 || snapshot.waiting_count == 0)
+	if (snapshot.runnable_count > 0)
+		return 0;
+	if (snapshot.waiting_count == 0 && wake_latch == NULL)
 		return 0;
 
 	if (snapshot.has_timeout && snapshot.timeout <= 0)
@@ -1605,57 +1778,74 @@ PgRuntimeSchedulerWaitOnce(PgRuntime *runtime, PgCarrier *carrier,
 	wait_timeout =
 		PgRuntimeSchedulerCombineWaitTimeout(snapshot.timeout, max_wait);
 	nevents = (int) filled_sockets + (wake_latch != NULL ? 1 : 0);
+	if (carrier->scheduler_context == NULL)
+		PgCarrierEnsureSchedulerContext(carrier);
 	if (nevents <= 0 || carrier->scheduler_context == NULL)
 		return 0;
 
 	top_context_ref = PgTopMemoryContextRef();
 	current_context_ref = PgCurrentMemoryContextRef();
+	error_context_ref = PgErrorContextRef();
 	oldtopcontext = *top_context_ref;
 	oldcontext = *current_context_ref;
+	olderrorcontext = *error_context_ref;
 	PG_TRY();
 	{
 		*top_context_ref = carrier->scheduler_context;
 		*current_context_ref = carrier->scheduler_context;
+		*error_context_ref = carrier->scheduler_context;
 		wait_set = CreateWaitEventSet(NULL, nevents);
 		occurred_events = palloc_array(WaitEvent, nevents);
+
+		if (wake_latch != NULL)
+			AddWaitEventToSet(wait_set, WL_LATCH_SET, PGINVALID_SOCKET,
+							  wake_latch, NULL);
+
+		for (uint32 i = 0; i < filled_sockets; i++)
+			AddWaitEventToSet(wait_set, socket_waits[i].wake_events,
+							  socket_waits[i].socket, NULL,
+							  &socket_waits[i]);
+
+		rc = WaitEventSetWait(wait_set, wait_timeout,
+							  (WaitEvent *) occurred_events, nevents, 0);
+		for (int i = 0; i < rc; i++)
+		{
+			WaitEvent  *event = &occurred_events[i];
+
+			if ((event->events & WL_SOCKET_MASK) != 0)
+			{
+				PgRuntimeSchedulerSocketWait *socket_wait;
+
+				socket_wait =
+					(PgRuntimeSchedulerSocketWait *) event->user_data;
+				if (socket_wait != NULL)
+					woken += PgRuntimeSchedulerWakeSocket(runtime,
+														  socket_wait->socket,
+														  event->events);
+			}
+		}
+
+		FreeWaitEventSet((WaitEventSet *) wait_set);
+		wait_set = NULL;
+		pfree((WaitEvent *) occurred_events);
+		occurred_events = NULL;
+
+		*error_context_ref = olderrorcontext;
 		*current_context_ref = oldcontext;
 		*top_context_ref = oldtopcontext;
 	}
 	PG_CATCH();
 	{
+		if (wait_set != NULL)
+			FreeWaitEventSet((WaitEventSet *) wait_set);
+		if (occurred_events != NULL)
+			pfree((WaitEvent *) occurred_events);
+		*error_context_ref = olderrorcontext;
 		*current_context_ref = oldcontext;
 		*top_context_ref = oldtopcontext;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (wake_latch != NULL)
-		AddWaitEventToSet(wait_set, WL_LATCH_SET, PGINVALID_SOCKET,
-						  wake_latch, NULL);
-
-	for (uint32 i = 0; i < filled_sockets; i++)
-		AddWaitEventToSet(wait_set, socket_waits[i].wake_events,
-						  socket_waits[i].socket, NULL, &socket_waits[i]);
-
-	rc = WaitEventSetWait(wait_set, wait_timeout, occurred_events, nevents, 0);
-	for (int i = 0; i < rc; i++)
-	{
-		WaitEvent  *event = &occurred_events[i];
-
-		if ((event->events & WL_SOCKET_MASK) != 0)
-		{
-			PgRuntimeSchedulerSocketWait *socket_wait;
-
-			socket_wait = (PgRuntimeSchedulerSocketWait *) event->user_data;
-			if (socket_wait != NULL)
-				woken += PgRuntimeSchedulerWakeSocket(runtime,
-													  socket_wait->socket,
-													  event->events);
-		}
-	}
-
-	FreeWaitEventSet(wait_set);
-	pfree(occurred_events);
 
 	woken += PgRuntimeSchedulerProcessDueTimeouts(runtime, carrier,
 												  GetCurrentTimestamp());
@@ -2158,10 +2348,27 @@ PgBackendInitializeRuntimeObject(PgBackend *backend,
 }
 
 void
+PgBackendSetPostmasterChildOwner(PgBackend *backend, PMChild *pmchild,
+								 struct Latch *postmaster_latch)
+{
+	Assert(backend != NULL);
+
+	backend->postmaster_child = pmchild;
+	backend->postmaster_latch = postmaster_latch;
+	pg_atomic_write_u32(&backend->postmaster_exit_published, 0);
+}
+
+void
 PgBackendResetEarlyFallbackAfterFork(int proc_pid)
 {
 	PgBackendInitializeRuntimeObject(&early_backend_fallback, NULL, NULL,
 								 NULL, NULL, NULL, B_INVALID, NULL);
+	early_backend_core.proc_pid = proc_pid;
+}
+
+void
+PgBackendSetEarlyFallbackProcPid(int proc_pid)
+{
 	early_backend_core.proc_pid = proc_pid;
 }
 
@@ -2537,8 +2744,7 @@ PgBackendWakeWaitCompletion(PgBackend *backend, uint32 ready_events)
 
 	if (completion->requeue != NULL)
 		completion->requeue(completion, completion->requeue_arg);
-	else
-		PgBackendWakeForWaitCompletion(backend);
+	PgBackendWakeForWaitCompletion(backend);
 
 	return true;
 }
