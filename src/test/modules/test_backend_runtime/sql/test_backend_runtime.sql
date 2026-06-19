@@ -10,6 +10,7 @@ SELECT test_backend_pooled_scheduler_queue_state();
 SELECT test_backend_pooled_scheduler_runs_backend();
 SELECT test_backend_pooled_wait_requeues_backend();
 SELECT test_backend_pooled_wait_parks_backend();
+SELECT test_backend_pooled_scheduler_wait_once();
 SELECT test_carrier_threaded_guc_lock_depth_is_carrier_local();
 SELECT test_carrier_misc_state_is_carrier_local();
 SELECT test_thread_install_adopts_backend_fallback_state();

@@ -2331,6 +2331,7 @@ struct PgCarrier
 	PgBackend  *current_backend;
 	PgSession  *current_session;
 	PgExecution *current_execution;
+	MemoryContext scheduler_context;
 	void	   *backend_thread_start;
 	bool		is_under_postmaster;
 	volatile sig_atomic_t wait_event_waiting;
@@ -3381,6 +3382,11 @@ extern uint32 PgRuntimeSchedulerWakeSocket(PgRuntime *runtime,
 extern uint32 PgRuntimeSchedulerProcessDueTimeouts(PgRuntime *runtime,
 												   PgCarrier *carrier,
 												   TimestampTz now);
+extern uint32 PgRuntimeSchedulerWaitOnce(PgRuntime *runtime,
+										 PgCarrier *carrier,
+										 PgRuntimeSchedulerSocketWait *socket_waits,
+										 uint32 max_socket_waits,
+										 long max_wait);
 extern uint32 PgRuntimeSchedulerSnapshotWaits(PgRuntime *runtime,
 											  PgRuntimeSchedulerSocketWait *socket_waits,
 											  uint32 max_socket_waits,

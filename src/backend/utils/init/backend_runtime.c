@@ -73,6 +73,7 @@
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/sinval.h"
+#include "storage/waiteventset.h"
 #include "tsearch/ts_cache.h"
 #include "utils/backend_runtime.h"
 #include "backend_runtime_internal.h"
@@ -577,7 +578,40 @@ PgRuntimeInitializeRuntimeObject(PgRuntime *runtime)
 #undef PG_RUNTIME_BUCKET
 }
 
+static void
+PgCarrierEnsureSchedulerContext(PgCarrier *carrier)
+{
+	MemoryContext oldcontext;
 
+	Assert(carrier != NULL);
+
+	if (carrier->scheduler_context != NULL)
+		return;
+	if (CurrentPgExecution == NULL || TopMemoryContext == NULL)
+		return;
+
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	carrier->scheduler_context =
+		AllocSetContextCreate(TopMemoryContext,
+							  "CarrierSchedulerContext",
+							  ALLOCSET_SMALL_SIZES);
+	MemoryContextSwitchTo(oldcontext);
+}
+
+static void
+PgCarrierEnsureWaitEventSupport(PgCarrier *carrier)
+{
+	Assert(carrier != NULL);
+	Assert(CurrentPgCarrier == carrier);
+
+#ifndef WIN32
+	if (carrier->wait_event_selfpipe_readfd >= 0 ||
+		carrier->wait_event_signal_fd >= 0)
+		return;
+#endif
+
+	InitializeWaitEventSupport();
+}
 
 static void
 PgCarrierInitializeRuntimeObject(PgCarrier *carrier)
@@ -896,6 +930,9 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend)
 		old_carrier->current_execution = NULL;
 	}
 
+	if (PgRuntimeIsPooledScheduler(runtime))
+		PgCarrierEnsureSchedulerContext(carrier);
+
 	carrier->current_backend = backend;
 	carrier->current_session = session;
 	carrier->current_execution = execution;
@@ -904,6 +941,9 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend)
 
 	PgRuntimeSetCurrentWork(runtime, carrier, backend, session, connection,
 							execution, true);
+
+	if (PgRuntimeIsPooledScheduler(runtime))
+		PgCarrierEnsureWaitEventSupport(carrier);
 }
 
 void

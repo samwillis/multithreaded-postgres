@@ -1458,6 +1458,141 @@ PgRuntimeSchedulerSnapshotWaits(PgRuntime *runtime,
 	return filled_sockets;
 }
 
+static struct Latch *
+PgRuntimeSchedulerGetWakeLatch(PgRuntime *runtime)
+{
+	PgRuntimeSchedulerState *scheduler;
+	struct Latch *wake_latch;
+
+	if (!PgRuntimeIsPooledScheduler(runtime))
+		return NULL;
+
+	scheduler = &runtime->scheduler;
+	Assert(scheduler->initialized);
+
+	SpinLockAcquire(&scheduler->lock);
+	wake_latch = scheduler->wake_latch;
+	SpinLockRelease(&scheduler->lock);
+
+	return wake_latch;
+}
+
+static long
+PgRuntimeSchedulerCombineWaitTimeout(long scheduler_timeout, long max_wait)
+{
+	if (max_wait < 0)
+		return scheduler_timeout;
+	if (scheduler_timeout < 0)
+		return max_wait;
+	if (max_wait < scheduler_timeout)
+		return max_wait;
+	return scheduler_timeout;
+}
+
+uint32
+PgRuntimeSchedulerWaitOnce(PgRuntime *runtime, PgCarrier *carrier,
+						   PgRuntimeSchedulerSocketWait *socket_waits,
+						   uint32 max_socket_waits, long max_wait)
+{
+	PgRuntimeSchedulerWaitSnapshot snapshot;
+	WaitEventSet *wait_set;
+	WaitEvent  *occurred_events;
+	struct Latch *wake_latch;
+	MemoryContext *top_context_ref;
+	MemoryContext *current_context_ref;
+	MemoryContext oldtopcontext;
+	MemoryContext oldcontext;
+	TimestampTz now;
+	uint32		filled_sockets;
+	uint32		woken = 0;
+	int			nevents = 0;
+	int			rc;
+	long		wait_timeout;
+
+	if (!PgRuntimeIsPooledScheduler(runtime) ||
+		carrier == NULL ||
+		carrier->runtime != runtime)
+		return 0;
+
+	now = GetCurrentTimestamp();
+	woken += PgRuntimeSchedulerProcessDueTimeouts(runtime, carrier, now);
+	if (woken > 0)
+		return woken;
+
+	wake_latch = PgRuntimeSchedulerGetWakeLatch(runtime);
+	if (wake_latch != NULL)
+		ResetLatch(wake_latch);
+
+	now = GetCurrentTimestamp();
+	filled_sockets = PgRuntimeSchedulerSnapshotWaits(runtime, socket_waits,
+													 max_socket_waits, now,
+													 &snapshot);
+	if (snapshot.runnable_count > 0 || snapshot.waiting_count == 0)
+		return 0;
+
+	if (snapshot.has_timeout && snapshot.timeout <= 0)
+		return PgRuntimeSchedulerProcessDueTimeouts(runtime, carrier, now);
+
+	wait_timeout =
+		PgRuntimeSchedulerCombineWaitTimeout(snapshot.timeout, max_wait);
+	nevents = (int) filled_sockets + (wake_latch != NULL ? 1 : 0);
+	if (nevents <= 0 || carrier->scheduler_context == NULL)
+		return 0;
+
+	top_context_ref = PgTopMemoryContextRef();
+	current_context_ref = PgCurrentMemoryContextRef();
+	oldtopcontext = *top_context_ref;
+	oldcontext = *current_context_ref;
+	PG_TRY();
+	{
+		*top_context_ref = carrier->scheduler_context;
+		*current_context_ref = carrier->scheduler_context;
+		wait_set = CreateWaitEventSet(NULL, nevents);
+		occurred_events = palloc_array(WaitEvent, nevents);
+		*current_context_ref = oldcontext;
+		*top_context_ref = oldtopcontext;
+	}
+	PG_CATCH();
+	{
+		*current_context_ref = oldcontext;
+		*top_context_ref = oldtopcontext;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	if (wake_latch != NULL)
+		AddWaitEventToSet(wait_set, WL_LATCH_SET, PGINVALID_SOCKET,
+						  wake_latch, NULL);
+
+	for (uint32 i = 0; i < filled_sockets; i++)
+		AddWaitEventToSet(wait_set, socket_waits[i].wake_events,
+						  socket_waits[i].socket, NULL, &socket_waits[i]);
+
+	rc = WaitEventSetWait(wait_set, wait_timeout, occurred_events, nevents, 0);
+	for (int i = 0; i < rc; i++)
+	{
+		WaitEvent  *event = &occurred_events[i];
+
+		if ((event->events & WL_SOCKET_MASK) != 0)
+		{
+			PgRuntimeSchedulerSocketWait *socket_wait;
+
+			socket_wait = (PgRuntimeSchedulerSocketWait *) event->user_data;
+			if (socket_wait != NULL)
+				woken += PgRuntimeSchedulerWakeSocket(runtime,
+													  socket_wait->socket,
+													  event->events);
+		}
+	}
+
+	FreeWaitEventSet(wait_set);
+	pfree(occurred_events);
+
+	woken += PgRuntimeSchedulerProcessDueTimeouts(runtime, carrier,
+												  GetCurrentTimestamp());
+	return woken;
+}
+
 static void
 PgBackendSchedulerRequeueWaitCompletion(PgWaitCompletion *completion,
 										void *arg)

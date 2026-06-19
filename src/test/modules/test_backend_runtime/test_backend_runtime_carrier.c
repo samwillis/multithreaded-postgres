@@ -16,6 +16,13 @@ PG_FUNCTION_INFO_V1(test_carrier_misc_state_is_carrier_local);
 Datum
 test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
 {
+#define CHECK_CARRIER_MISC(expr) \
+	do { \
+		if (!(expr)) \
+			elog(ERROR, "carrier miscellaneous state was not carrier-local: %s", \
+				 #expr); \
+	} while (0)
+
 	PgCarrier  *saved_carrier;
 	PgCarrier	fake_carrier1;
 	PgCarrier	fake_carrier2;
@@ -24,7 +31,6 @@ test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
 	void	   *thread_start1 = &fake_carrier1;
 	void	   *thread_start2 = &fake_carrier2;
 	bool		saved_is_under_postmaster;
-	bool		ok = true;
 
 	saved_carrier = CurrentPgCarrier;
 	saved_is_under_postmaster = IsUnderPostmaster;
@@ -52,14 +58,14 @@ test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
 		IsUnderPostmaster = true;
 
 		PgSetCurrentCarrier(&fake_carrier2);
-		ok = ok && *PgCurrentWaitEventWaitingRef() == false;
-		ok = ok && *PgCurrentWaitEventSignalFdRef() == -1;
-		ok = ok && *PgCurrentWaitEventSelfPipeReadFdRef() == -1;
-		ok = ok && *PgCurrentWaitEventSelfPipeWriteFdRef() == -1;
-		ok = ok && *PgCurrentWaitEventSelfPipeOwnerPidRef() == 0;
-		ok = ok && *PgCurrentStackBasePtrRef() == NULL;
-		ok = ok && *PgCurrentBackendThreadStartRef() == NULL;
-		ok = ok && !IsUnderPostmaster;
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventWaitingRef() == false);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSignalFdRef() == -1);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeReadFdRef() == -1);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeWriteFdRef() == -1);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeOwnerPidRef() == 0);
+		CHECK_CARRIER_MISC(*PgCurrentStackBasePtrRef() == NULL);
+		CHECK_CARRIER_MISC(*PgCurrentBackendThreadStartRef() == NULL);
+		CHECK_CARRIER_MISC(!IsUnderPostmaster);
 		*PgCurrentWaitEventWaitingRef() = false;
 		*PgCurrentWaitEventSignalFdRef() = 21;
 		*PgCurrentWaitEventSelfPipeReadFdRef() = 22;
@@ -70,24 +76,24 @@ test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
 		IsUnderPostmaster = false;
 
 		PgSetCurrentCarrier(&fake_carrier1);
-		ok = ok && *PgCurrentWaitEventWaitingRef() == true;
-		ok = ok && *PgCurrentWaitEventSignalFdRef() == 11;
-		ok = ok && *PgCurrentWaitEventSelfPipeReadFdRef() == 12;
-		ok = ok && *PgCurrentWaitEventSelfPipeWriteFdRef() == 13;
-		ok = ok && *PgCurrentWaitEventSelfPipeOwnerPidRef() == 14;
-		ok = ok && *PgCurrentStackBasePtrRef() == &stack_marker1;
-		ok = ok && *PgCurrentBackendThreadStartRef() == thread_start1;
-		ok = ok && IsUnderPostmaster;
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventWaitingRef() == true);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSignalFdRef() == 11);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeReadFdRef() == 12);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeWriteFdRef() == 13);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeOwnerPidRef() == 14);
+		CHECK_CARRIER_MISC(*PgCurrentStackBasePtrRef() == &stack_marker1);
+		CHECK_CARRIER_MISC(*PgCurrentBackendThreadStartRef() == thread_start1);
+		CHECK_CARRIER_MISC(IsUnderPostmaster);
 
 		PgSetCurrentCarrier(&fake_carrier2);
-		ok = ok && *PgCurrentWaitEventWaitingRef() == false;
-		ok = ok && *PgCurrentWaitEventSignalFdRef() == 21;
-		ok = ok && *PgCurrentWaitEventSelfPipeReadFdRef() == 22;
-		ok = ok && *PgCurrentWaitEventSelfPipeWriteFdRef() == 23;
-		ok = ok && *PgCurrentWaitEventSelfPipeOwnerPidRef() == 24;
-		ok = ok && *PgCurrentStackBasePtrRef() == &stack_marker2;
-		ok = ok && *PgCurrentBackendThreadStartRef() == thread_start2;
-		ok = ok && !IsUnderPostmaster;
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventWaitingRef() == false);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSignalFdRef() == 21);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeReadFdRef() == 22);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeWriteFdRef() == 23);
+		CHECK_CARRIER_MISC(*PgCurrentWaitEventSelfPipeOwnerPidRef() == 24);
+		CHECK_CARRIER_MISC(*PgCurrentStackBasePtrRef() == &stack_marker2);
+		CHECK_CARRIER_MISC(*PgCurrentBackendThreadStartRef() == thread_start2);
+		CHECK_CARRIER_MISC(!IsUnderPostmaster);
 
 		PgSetCurrentCarrier(saved_carrier);
 		IsUnderPostmaster = saved_is_under_postmaster;
@@ -100,9 +106,7 @@ test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
 	}
 	PG_END_TRY();
 
-	if (!ok)
-		elog(ERROR, "carrier miscellaneous state was not carrier-local");
-
+#undef CHECK_CARRIER_MISC
 	PG_RETURN_BOOL(true);
 }
 

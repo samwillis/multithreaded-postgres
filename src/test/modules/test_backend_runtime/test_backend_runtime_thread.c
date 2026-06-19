@@ -12,6 +12,10 @@
  */
 #include "test_backend_runtime.h"
 
+#ifndef WIN32
+#include <sys/socket.h>
+#endif
+
 static void test_pg_thread_routine(void *arg);
 static void test_pg_thread_exit_routine(void *arg);
 
@@ -1038,6 +1042,217 @@ test_backend_pooled_wait_parks_backend(PG_FUNCTION_ARGS)
 #undef CHECK_POOLED_PARK
 
 	PG_RETURN_BOOL(true);
+}
+
+PG_FUNCTION_INFO_V1(test_backend_pooled_scheduler_wait_once);
+Datum
+test_backend_pooled_scheduler_wait_once(PG_FUNCTION_ARGS)
+{
+#define CHECK_POOLED_WAIT_ONCE(expr) \
+	do { \
+		if (!(expr)) \
+			elog(ERROR, "pooled scheduler wait-once check failed: %s", \
+				 #expr); \
+	} while (0)
+
+#ifdef WIN32
+	PG_RETURN_BOOL(true);
+#else
+	PgRuntime  *saved_runtime;
+	PgCarrier  *saved_carrier;
+	PgBackend  *saved_backend;
+	PgSession  *saved_session;
+	PgConnection *saved_connection;
+	PgExecution *saved_execution;
+	PgRuntime	pooled_runtime;
+	PgThreadBackendRuntimeState state;
+	TestPooledSchedulerStepState step_state;
+	PgRuntimeSchedulerSocketWait socket_waits[1];
+	PgStepBudget budget;
+	PgStepResult result;
+	PgWaitSpec	wait_spec;
+	PgWaitCompletion *completion;
+	PgBackend  *popped;
+	Latch		fake_latch;
+	Latch		scheduler_latch;
+	TimestampTz now;
+	uint32		runnable_count;
+	uint32		waiting_count;
+	bool		wait_published = false;
+	int			socks[2] = {-1, -1};
+	char		byte = 'x';
+
+	saved_runtime = CurrentPgRuntime;
+	saved_carrier = CurrentPgCarrier;
+	saved_backend = CurrentPgBackend;
+	saved_session = CurrentPgSession;
+	saved_connection = CurrentPgConnection;
+	saved_execution = CurrentPgExecution;
+
+	MemSet(&state, 0, sizeof(state));
+	InitLatch(&fake_latch);
+	MemSet(&pooled_runtime, 0, sizeof(pooled_runtime));
+	PgRuntimeSchedulerInitialize(&pooled_runtime);
+	pooled_runtime.kind = PG_RUNTIME_POOLED_SCHEDULER;
+	pooled_runtime.extension_backend_model =
+		PG_BACKEND_MODEL_POOLED_SCHEDULER;
+	budget.max_messages = 1;
+
+	PG_TRY();
+	{
+		InitializePgThreadRuntime(NULL);
+		InitializePgThreadBackendRuntimeState(&state, B_BACKEND, NULL,
+											  &fake_latch);
+		state.carrier.runtime = &pooled_runtime;
+		state.backend.runtime = &pooled_runtime;
+		PgBackendSchedulerInitialize(&state.backend.scheduler);
+
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks) != 0)
+			elog(ERROR, "socketpair failed: %m");
+
+		PgCarrierAttachBackend(&state.carrier, &state.backend);
+		InitLatch(&scheduler_latch);
+		PgRuntimeSchedulerSetWakeLatch(&pooled_runtime, &scheduler_latch);
+		PgBackendSchedulerMarkRunning(&state.backend);
+
+		wait_spec.kind = PG_WAIT_KIND_EVENT_SET;
+		wait_spec.wait_event_info = WAIT_EVENT_CLIENT_READ;
+		wait_spec.wake_events = WL_SOCKET_READABLE;
+		wait_spec.socket = socks[0];
+		wait_spec.timeout = -1;
+		wait_spec.timeout_at = 0;
+		CHECK_POOLED_WAIT_ONCE(PgBackendPublishWaitCompletion(&state.backend,
+															  &wait_spec));
+		wait_published = true;
+		PgCarrierDetachBackend(&state.carrier);
+		PgRuntimeSchedulerCounts(&pooled_runtime, &runnable_count,
+								 &waiting_count);
+		CHECK_POOLED_WAIT_ONCE(runnable_count == 0);
+		CHECK_POOLED_WAIT_ONCE(waiting_count == 1);
+		CHECK_POOLED_WAIT_ONCE(PgRuntimeSchedulerWaitOnce(&pooled_runtime,
+														  &state.carrier,
+														  socket_waits,
+														  lengthof(socket_waits),
+														  0) == 0);
+
+		if (send(socks[1], &byte, 1, 0) != 1)
+			elog(ERROR, "socketpair send failed: %m");
+		CHECK_POOLED_WAIT_ONCE(PgRuntimeSchedulerWaitOnce(&pooled_runtime,
+														  &state.carrier,
+														  socket_waits,
+														  lengthof(socket_waits),
+														  1000) == 1);
+		PgRuntimeSchedulerCounts(&pooled_runtime, &runnable_count,
+								 &waiting_count);
+		completion = PgBackendCurrentWaitCompletion(&state.backend);
+		CHECK_POOLED_WAIT_ONCE(completion != NULL);
+		CHECK_POOLED_WAIT_ONCE(pg_atomic_read_u32(&completion->state) ==
+							   PG_WAIT_COMPLETION_READY);
+		CHECK_POOLED_WAIT_ONCE(pg_atomic_read_u32(&completion->ready_events) ==
+							   WL_SOCKET_READABLE);
+		CHECK_POOLED_WAIT_ONCE(runnable_count == 1);
+		CHECK_POOLED_WAIT_ONCE(waiting_count == 0);
+		CHECK_POOLED_WAIT_ONCE(scheduler_latch.is_set);
+		CHECK_POOLED_WAIT_ONCE(CurrentPgBackend == NULL);
+
+		MemSet(&step_state, 0, sizeof(step_state));
+		step_state.carrier = &state.carrier;
+		step_state.backend = &state.backend;
+		step_state.action = TEST_POOLED_SCHEDULER_STEP_CONTINUE;
+		step_state.expected_budget = budget.max_messages;
+		step_state.expect_cleared_wait = true;
+		CHECK_POOLED_WAIT_ONCE(PgRuntimeSchedulerRunNextWithCallback(&pooled_runtime,
+																	 &state.carrier,
+																	 budget,
+																	 test_pooled_scheduler_step,
+																	 &step_state,
+																	 &result));
+		CHECK_POOLED_WAIT_ONCE(result == PG_STEP_CONTINUE);
+		CHECK_POOLED_WAIT_ONCE(step_state.saw_cleared_wait);
+		wait_published = false;
+
+		popped = PgRuntimeSchedulerPopRunnable(&pooled_runtime);
+		CHECK_POOLED_WAIT_ONCE(popped == &state.backend);
+		PgCarrierAttachBackend(&state.carrier, &state.backend);
+
+		ResetLatch(&scheduler_latch);
+		now = GetCurrentTimestamp();
+		wait_spec.socket = PGINVALID_SOCKET;
+		wait_spec.timeout = 1;
+		wait_spec.timeout_at =
+			TimestampTzPlusMilliseconds(now, wait_spec.timeout);
+		CHECK_POOLED_WAIT_ONCE(PgBackendPublishWaitCompletion(&state.backend,
+															  &wait_spec));
+		wait_published = true;
+		PgCarrierDetachBackend(&state.carrier);
+		CHECK_POOLED_WAIT_ONCE(PgRuntimeSchedulerWaitOnce(&pooled_runtime,
+														  &state.carrier,
+														  socket_waits,
+														  lengthof(socket_waits),
+														  1000) == 1);
+		PgRuntimeSchedulerCounts(&pooled_runtime, &runnable_count,
+								 &waiting_count);
+		CHECK_POOLED_WAIT_ONCE(pg_atomic_read_u32(&completion->state) ==
+							   PG_WAIT_COMPLETION_READY);
+		CHECK_POOLED_WAIT_ONCE(pg_atomic_read_u32(&completion->ready_events) ==
+							   WL_TIMEOUT);
+		CHECK_POOLED_WAIT_ONCE(runnable_count == 1);
+		CHECK_POOLED_WAIT_ONCE(waiting_count == 0);
+		CHECK_POOLED_WAIT_ONCE(CurrentPgBackend == NULL);
+
+		popped = PgRuntimeSchedulerPopRunnable(&pooled_runtime);
+		CHECK_POOLED_WAIT_ONCE(popped == &state.backend);
+		PgCarrierAttachBackend(&state.carrier, &state.backend);
+		PgBackendClearPublishedWaitCompletion(&state.backend);
+		wait_published = false;
+		PgBackendSchedulerMarkDetached(&state.backend);
+		PgCarrierDetachBackend(&state.carrier);
+		if (state.carrier.scheduler_context != NULL)
+		{
+			MemoryContextDelete(state.carrier.scheduler_context);
+			state.carrier.scheduler_context = NULL;
+		}
+
+		closesocket(socks[0]);
+		closesocket(socks[1]);
+		socks[0] = -1;
+		socks[1] = -1;
+		PgSetCurrentRuntime(saved_runtime);
+		PgSetCurrentCarrier(saved_carrier);
+		PgSetCurrentBackend(saved_backend);
+		PgSetCurrentSession(saved_session);
+		PgSetCurrentConnection(saved_connection);
+		PgSetCurrentExecution(saved_execution);
+	}
+	PG_CATCH();
+	{
+		if (wait_published)
+			PgBackendClearPublishedWaitCompletion(&state.backend);
+		PgBackendSchedulerMarkDetached(&state.backend);
+		PgCarrierDetachBackend(&state.carrier);
+		if (socks[0] >= 0)
+			closesocket(socks[0]);
+		if (socks[1] >= 0)
+			closesocket(socks[1]);
+		if (state.carrier.scheduler_context != NULL)
+		{
+			MemoryContextDelete(state.carrier.scheduler_context);
+			state.carrier.scheduler_context = NULL;
+		}
+		PgSetCurrentRuntime(saved_runtime);
+		PgSetCurrentCarrier(saved_carrier);
+		PgSetCurrentBackend(saved_backend);
+		PgSetCurrentSession(saved_session);
+		PgSetCurrentConnection(saved_connection);
+		PgSetCurrentExecution(saved_execution);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+#undef CHECK_POOLED_WAIT_ONCE
+
+	PG_RETURN_BOOL(true);
+#endif
 }
 
 PG_FUNCTION_INFO_V1(test_backend_pgproc_has_logical_id);
