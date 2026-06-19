@@ -228,6 +228,13 @@ typedef struct PgRuntimeSchedulerWaitSnapshot
 	uint64		wake_generation;
 } PgRuntimeSchedulerWaitSnapshot;
 
+typedef struct PgRuntimeSchedulerDispatchResult
+{
+	bool		ran_backend;
+	PgStepResult step_result;
+	uint32		woken_waits;
+} PgRuntimeSchedulerDispatchResult;
+
 /*
  * Logical interrupts target a backend object first.  In process mode these are
  * bridged back to the historical volatile globals serviced by
@@ -3376,6 +3383,22 @@ extern bool PgRuntimeSchedulerRunNextWithCallback(PgRuntime *runtime,
 												  PgSchedulerStepCallback callback,
 												  void *callback_arg,
 												  PgStepResult *step_result);
+extern bool PgRuntimeSchedulerDispatchOnce(PgRuntime *runtime,
+										   PgCarrier *carrier,
+										   PgStepBudget budget,
+										   PgRuntimeSchedulerSocketWait *socket_waits,
+										   uint32 max_socket_waits,
+										   long max_wait,
+										   PgRuntimeSchedulerDispatchResult *dispatch_result);
+extern bool PgRuntimeSchedulerDispatchOnceWithCallback(PgRuntime *runtime,
+													   PgCarrier *carrier,
+													   PgStepBudget budget,
+													   PgRuntimeSchedulerSocketWait *socket_waits,
+													   uint32 max_socket_waits,
+													   long max_wait,
+													   PgSchedulerStepCallback callback,
+													   void *callback_arg,
+													   PgRuntimeSchedulerDispatchResult *dispatch_result);
 extern uint32 PgRuntimeSchedulerWakeSocket(PgRuntime *runtime,
 										   pgsocket socket,
 										   uint32 ready_events);

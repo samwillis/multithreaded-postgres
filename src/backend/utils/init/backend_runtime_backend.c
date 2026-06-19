@@ -1099,6 +1099,75 @@ PgRuntimeSchedulerRunNext(PgRuntime *runtime, PgCarrier *carrier,
 												NULL, step_result);
 }
 
+static void
+PgRuntimeSchedulerDispatchResultInit(PgRuntimeSchedulerDispatchResult *result)
+{
+	if (result == NULL)
+		return;
+
+	result->ran_backend = false;
+	result->step_result = PG_STEP_CONTINUE;
+	result->woken_waits = 0;
+}
+
+bool
+PgRuntimeSchedulerDispatchOnceWithCallback(PgRuntime *runtime,
+										   PgCarrier *carrier,
+										   PgStepBudget budget,
+										   PgRuntimeSchedulerSocketWait *socket_waits,
+										   uint32 max_socket_waits,
+										   long max_wait,
+										   PgSchedulerStepCallback callback,
+										   void *callback_arg,
+										   PgRuntimeSchedulerDispatchResult *dispatch_result)
+{
+	PgStepResult step_result = PG_STEP_CONTINUE;
+	uint32		woken_waits;
+
+	PgRuntimeSchedulerDispatchResultInit(dispatch_result);
+
+	if (!PgRuntimeIsPooledScheduler(runtime) ||
+		carrier == NULL ||
+		carrier->runtime != runtime ||
+		callback == NULL)
+		return false;
+
+	if (PgRuntimeSchedulerRunNextWithCallback(runtime, carrier, budget,
+											 callback, callback_arg,
+											 &step_result))
+	{
+		if (dispatch_result != NULL)
+		{
+			dispatch_result->ran_backend = true;
+			dispatch_result->step_result = step_result;
+		}
+		return true;
+	}
+
+	woken_waits = PgRuntimeSchedulerWaitOnce(runtime, carrier, socket_waits,
+											 max_socket_waits, max_wait);
+	if (dispatch_result != NULL)
+		dispatch_result->woken_waits = woken_waits;
+
+	return woken_waits > 0;
+}
+
+bool
+PgRuntimeSchedulerDispatchOnce(PgRuntime *runtime, PgCarrier *carrier,
+							   PgStepBudget budget,
+							   PgRuntimeSchedulerSocketWait *socket_waits,
+							   uint32 max_socket_waits, long max_wait,
+							   PgRuntimeSchedulerDispatchResult *dispatch_result)
+{
+	return PgRuntimeSchedulerDispatchOnceWithCallback(runtime, carrier, budget,
+													 socket_waits,
+													 max_socket_waits,
+													 max_wait,
+													 PgRuntimeSchedulerSessionStep,
+													 NULL,
+													 dispatch_result);
+}
+
 static PgBackend *
 PgRuntimeSchedulerFindSocketWait(PgRuntime *runtime, pgsocket socket,
 								 uint32 ready_events, uint32 *matched_events)
