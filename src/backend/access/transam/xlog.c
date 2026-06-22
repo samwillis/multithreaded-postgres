@@ -98,6 +98,7 @@
 #include "storage/spin.h"
 #include "storage/subsystems.h"
 #include "storage/sync.h"
+#include "utils/backend_runtime.h"
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
 #include "utils/injection_point.h"
@@ -118,36 +119,28 @@
 #define BootstrapTimeLineID		1
 
 /* User-settable parameters */
-int			max_wal_size_mb = 1024; /* 1 GB */
-int			min_wal_size_mb = 80;	/* 80 MB */
-int			wal_keep_size_mb = 0;
-int			XLOGbuffers = -1;
-int			XLogArchiveTimeout = 0;
-int			XLogArchiveMode = ARCHIVE_MODE_OFF;
-char	   *XLogArchiveCommand = NULL;
-bool		EnableHotStandby = false;
-bool		fullPageWrites = true;
-bool		wal_log_hints = false;
-int			wal_compression = WAL_COMPRESSION_NONE;
-char	   *wal_consistency_checking_string = NULL;
-bool	   *wal_consistency_checking = NULL;
-bool		wal_init_zero = true;
-bool		wal_recycle = true;
-bool		log_checkpoints = true;
-int			wal_sync_method = DEFAULT_WAL_SYNC_METHOD;
-int			wal_level = WAL_LEVEL_REPLICA;
-int			CommitDelay = 0;	/* precommit delay in microseconds */
-int			CommitSiblings = 5; /* # concurrent xacts needed to sleep */
-int			wal_retrieve_retry_interval = 5000;
-int			max_slot_wal_keep_size_mb = -1;
-int			wal_decode_buffer_size = 512 * 1024;
-bool		track_wal_io_timing = false;
+PG_GLOBAL_RUNTIME int max_wal_size_mb = 1024;	/* 1 GB */
+PG_GLOBAL_RUNTIME int min_wal_size_mb = 80; /* 80 MB */
+PG_GLOBAL_RUNTIME int wal_keep_size_mb = 0;
+PG_GLOBAL_RUNTIME int XLOGbuffers = -1;
+PG_GLOBAL_RUNTIME int XLogArchiveTimeout = 0;
+PG_GLOBAL_RUNTIME int XLogArchiveMode = ARCHIVE_MODE_OFF;
+PG_GLOBAL_RUNTIME char *XLogArchiveCommand = NULL;
+PG_GLOBAL_RUNTIME bool EnableHotStandby = false;
+PG_GLOBAL_RUNTIME bool fullPageWrites = true;
+PG_GLOBAL_RUNTIME bool wal_log_hints = false;
+/*
+ * Session-local WAL GUC state now lives in PgSessionAccessWalGUCState.  The
+ * public names remain available through compatibility macros in access/xlog.h.
+ */
+PG_GLOBAL_RUNTIME bool log_checkpoints = true;
+PG_GLOBAL_RUNTIME int wal_sync_method = DEFAULT_WAL_SYNC_METHOD;
+PG_GLOBAL_RUNTIME int wal_level = WAL_LEVEL_REPLICA;
+PG_GLOBAL_RUNTIME int wal_retrieve_retry_interval = 5000;
+PG_GLOBAL_RUNTIME int max_slot_wal_keep_size_mb = -1;
+PG_GLOBAL_RUNTIME int wal_decode_buffer_size = 512 * 1024;
 
-#ifdef WAL_DEBUG
-bool		XLOG_DEBUG = false;
-#endif
-
-int			wal_segment_size = DEFAULT_XLOG_SEG_SIZE;
+PG_GLOBAL_RUNTIME int wal_segment_size = DEFAULT_XLOG_SEG_SIZE;
 
 /*
  * Number of WAL insertion locks to use. A higher value allows more insertions
@@ -160,17 +153,17 @@ int			wal_segment_size = DEFAULT_XLOG_SEG_SIZE;
  * Max distance from last checkpoint, before triggering a new xlog-based
  * checkpoint.
  */
-int			CheckPointSegments;
+PG_GLOBAL_RUNTIME int CheckPointSegments;
 
 /* Estimated distance between checkpoints, in bytes */
-static double CheckPointDistanceEstimate = 0;
-static double PrevCheckPointDistance = 0;
+static PG_GLOBAL_RUNTIME double CheckPointDistanceEstimate = 0;
+static PG_GLOBAL_RUNTIME double PrevCheckPointDistance = 0;
 
 /*
  * Track whether there were any deferred checks for custom resource managers
  * specified in wal_consistency_checking.
  */
-static bool check_wal_consistency_checking_deferred = false;
+static PG_GLOBAL_RUNTIME bool check_wal_consistency_checking_deferred = false;
 
 /*
  * GUC support
@@ -213,7 +206,7 @@ const struct config_enum_entry archive_mode_options[] = {
  * Because only the checkpointer or a stand-alone backend can perform
  * checkpoints, this will be unused in normal backends.
  */
-CheckpointStatsData CheckpointStats;
+PG_GLOBAL_RUNTIME CheckpointStatsData CheckpointStats;
 
 /*
  * During recovery, lastFullPageWrites keeps track of full_page_writes that
@@ -221,14 +214,15 @@ CheckpointStatsData CheckpointStats;
  * that the recovery starting checkpoint record indicates, and then updated
  * each time XLOG_FPW_CHANGE record is replayed.
  */
-static bool lastFullPageWrites;
+static PG_GLOBAL_RUNTIME bool lastFullPageWrites;
 
 /*
  * Local copy of the state tracked by SharedRecoveryState in shared memory,
  * It is false if SharedRecoveryState is RECOVERY_STATE_DONE.  True actually
  * means "not known, need to check the shared state".
  */
-static bool LocalRecoveryInProgress = true;
+#define LocalRecoveryInProgress \
+	(PgCurrentXLogState()->local_recovery_in_progress)
 
 /*
  * Local state for XLogInsertAllowed():
@@ -240,7 +234,8 @@ static bool LocalRecoveryInProgress = true;
  * The coding in XLogInsertAllowed() depends on the first two of these states
  * being numerically the same as bool true and false.
  */
-static int	LocalXLogInsertAllowed = -1;
+#define LocalXLogInsertAllowed \
+	(PgCurrentXLogState()->local_xlog_insert_allowed)
 
 /*
  * ProcLastRecPtr points to the start of the last XLOG record inserted by the
@@ -257,10 +252,6 @@ static int	LocalXLogInsertAllowed = -1;
  * stored here.  The parallel leader advances its own copy, when necessary,
  * in WaitForParallelWorkersToFinish.
  */
-XLogRecPtr	ProcLastRecPtr = InvalidXLogRecPtr;
-XLogRecPtr	XactLastRecEnd = InvalidXLogRecPtr;
-XLogRecPtr	XactLastCommitEnd = InvalidXLogRecPtr;
-
 /*
  * RedoRecPtr is this backend's local copy of the REDO record pointer
  * (which is almost but not quite the same as a pointer to the most recent
@@ -277,7 +268,7 @@ XLogRecPtr	XactLastCommitEnd = InvalidXLogRecPtr;
  * which meant that most code that might use it could assume that it had a
  * real if perhaps stale value. That's no longer the case.
  */
-static XLogRecPtr RedoRecPtr;
+#define XLogLocalRedoRecPtr (PgCurrentXLogState()->redo_rec_ptr)
 
 /*
  * doPageWrites is this backend's local copy of (fullPageWrites ||
@@ -290,7 +281,7 @@ static XLogRecPtr RedoRecPtr;
  * and respond appropriately if it turns out that the previous value wasn't
  * accurate.
  */
-static bool doPageWrites;
+#define doPageWrites (PgCurrentXLogState()->do_page_writes)
 
 /*----------
  * Shared-memory data structures for XLOG control
@@ -395,7 +386,7 @@ typedef union WALInsertLockPadded
  * Session status of running backup, used for sanity checks in SQL-callable
  * functions to start and stop backups.
  */
-static SessionBackupState sessionBackupState = SESSION_BACKUP_NONE;
+#define sessionBackupState (*PgCurrentSessionBackupStateRef())
 
 /*
  * Shared state data for WAL insertion.
@@ -572,16 +563,16 @@ typedef enum
 	WALINSERT_SPECIAL_CHECKPOINT
 } WalInsertClass;
 
-static XLogCtlData *XLogCtl = NULL;
+static PG_GLOBAL_SHMEM XLogCtlData *XLogCtl = NULL;
 
 /* a private copy of XLogCtl->Insert.WALInsertLocks, for convenience */
-static WALInsertLockPadded *WALInsertLocks = NULL;
+static PG_GLOBAL_SHMEM WALInsertLockPadded *WALInsertLocks = NULL;
 
 /*
  * We maintain an image of pg_control in shared memory.
  */
-static ControlFileData *LocalControlFile = NULL;
-static ControlFileData *ControlFile = NULL;
+static PG_GLOBAL_RUNTIME ControlFileData *LocalControlFile = NULL;
+static PG_GLOBAL_SHMEM ControlFileData *ControlFile = NULL;
 
 static void XLOGShmemRequest(void *arg);
 static void XLOGShmemInit(void *arg);
@@ -623,13 +614,13 @@ const ShmemCallbacks XLOGShmemCallbacks = {
 #define ConvertToXSegs(x, segsize)	XLogMBVarToSegs((x), (segsize))
 
 /* The number of bytes in a WAL segment usable for WAL data. */
-static int	UsableBytesInSegment;
+static PG_GLOBAL_RUNTIME int UsableBytesInSegment;
 
 /*
  * Private, possibly out-of-date copy of shared LogwrtResult.
  * See discussion above.
  */
-static XLogwrtResult LogwrtResult = {0, 0};
+#define LogwrtResult (PgCurrentXLogState()->logwrt_result)
 
 /*
  * Update local copy of shared XLogCtl->log{Write,Flush}Result
@@ -652,9 +643,9 @@ static XLogwrtResult LogwrtResult = {0, 0};
  *
  * Note: call Reserve/ReleaseExternalFD to track consumption of this FD.
  */
-static int	openLogFile = -1;
-static XLogSegNo openLogSegNo = 0;
-static TimeLineID openLogTLI = 0;
+#define openLogFile (PgCurrentXLogState()->open_log_file)
+#define openLogSegNo (PgCurrentXLogState()->open_log_seg_no)
+#define openLogTLI (PgCurrentXLogState()->open_log_tli)
 
 /*
  * Local copies of equivalent fields in the control file.  When running
@@ -663,9 +654,12 @@ static TimeLineID openLogTLI = 0;
  * switched to false to prevent any updates while replaying records.
  * Those values are kept consistent as long as crash recovery runs.
  */
-static XLogRecPtr LocalMinRecoveryPoint;
-static TimeLineID LocalMinRecoveryPointTLI;
-static bool updateMinRecoveryPoint = true;
+#define LocalMinRecoveryPoint \
+	(PgCurrentXLogState()->local_min_recovery_point)
+#define LocalMinRecoveryPointTLI \
+	(PgCurrentXLogState()->local_min_recovery_point_tli)
+#define updateMinRecoveryPoint \
+	(PgCurrentXLogState()->update_min_recovery_point)
 
 /*
  * Local state for ControlFile data_checksum_version.  After initialization
@@ -674,20 +668,21 @@ static bool updateMinRecoveryPoint = true;
  * avoid locking for interrogating the data checksum state.  Possible values
  * are the data checksum versions defined in storage/checksum.h.
  */
-static ChecksumStateType LocalDataChecksumState = 0;
+#define LocalDataChecksumState \
+	(PgCurrentXLogState()->local_data_checksum_state)
 
 /*
  * Variable backing the GUC, keep it in sync with LocalDataChecksumState.
  * See SetLocalDataChecksumState().
  */
-int			data_checksums = 0;
+PG_GLOBAL_RUNTIME int data_checksums = 0;
 
 /* For WALInsertLockAcquire/Release functions */
-static int	MyLockNo = 0;
-static bool holdingAllLocks = false;
+#define MyLockNo (PgCurrentXLogState()->my_lock_no)
+#define holdingAllLocks (PgCurrentXLogState()->holding_all_locks)
 
 #ifdef WAL_DEBUG
-static MemoryContext walDebugCxt = NULL;
+#define walDebugCxt (PgCurrentXLogState()->wal_debug_context)
 #endif
 
 static void CleanupAfterArchiveRecovery(TimeLineID EndOfLogTLI,
@@ -875,16 +870,16 @@ XLogInsertRecord(XLogRecData *rdata,
 		 * just turned off, we could recompute the record without full pages,
 		 * but we choose not to bother.)
 		 */
-		if (RedoRecPtr != Insert->RedoRecPtr)
+		if (XLogLocalRedoRecPtr != Insert->RedoRecPtr)
 		{
-			Assert(RedoRecPtr < Insert->RedoRecPtr);
-			RedoRecPtr = Insert->RedoRecPtr;
+			Assert(XLogLocalRedoRecPtr < Insert->RedoRecPtr);
+			XLogLocalRedoRecPtr = Insert->RedoRecPtr;
 		}
 		doPageWrites = (Insert->fullPageWrites || Insert->runningBackups > 0);
 
 		if (doPageWrites &&
 			(!prevDoPageWrites ||
-			 (XLogRecPtrIsValid(fpw_lsn) && fpw_lsn <= RedoRecPtr)))
+			 (XLogRecPtrIsValid(fpw_lsn) && fpw_lsn <= XLogLocalRedoRecPtr)))
 		{
 			/*
 			 * Oops, some buffer now needs to be backed up that the caller
@@ -937,7 +932,7 @@ XLogInsertRecord(XLogRecData *rdata,
 		WALInsertLockAcquireExclusive();
 		ReserveXLogInsertLocation(rechdr->xl_tot_len, &StartPos, &EndPos,
 								  &rechdr->xl_prev);
-		RedoRecPtr = Insert->RedoRecPtr = StartPos;
+		XLogLocalRedoRecPtr = Insert->RedoRecPtr = StartPos;
 		inserted = true;
 	}
 
@@ -2302,7 +2297,7 @@ XLogCheckpointNeeded(XLogSegNo new_segno)
 {
 	XLogSegNo	old_segno;
 
-	XLByteToSeg(RedoRecPtr, old_segno, wal_segment_size);
+	XLByteToSeg(XLogLocalRedoRecPtr, old_segno, wal_segment_size);
 
 	if (new_segno >= old_segno + (uint64) (CheckPointSegments - 1))
 		return true;
@@ -2671,8 +2666,7 @@ XLogSetAsyncXactLSN(XLogRecPtr asyncXactLSN)
 
 	if (wakeup)
 	{
-		volatile PROC_HDR *procglobal = ProcGlobal;
-		ProcNumber	walwriterProc = procglobal->walwriterProc;
+		ProcNumber	walwriterProc = pg_atomic_read_u32(&ProcGlobal->walwriterProc);
 
 		if (walwriterProc != INVALID_PROC_NUMBER)
 			SetLatch(&GetPGProcByNumber(walwriterProc)->procLatch);
@@ -5200,7 +5194,9 @@ InitializeWalConsistencyChecking(void)
 
 		set_config_option_ext("wal_consistency_checking",
 							  wal_consistency_checking_string,
-							  guc->scontext, guc->source, guc->srole,
+							  ConfigOptionSetContext(guc),
+							  ConfigOptionSource(guc),
+							  ConfigOptionSetRole(guc),
 							  GUC_ACTION_SET, true, ERROR, false);
 
 		/* checking should not be deferred again */
@@ -6115,7 +6111,7 @@ StartupXLOG(void)
 
 	lastFullPageWrites = checkPoint.fullPageWrites;
 
-	RedoRecPtr = XLogCtl->RedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
+	XLogLocalRedoRecPtr = XLogCtl->RedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
 	doPageWrites = lastFullPageWrites;
 
 	/* REDO */
@@ -6948,10 +6944,10 @@ GetRedoRecPtr(void)
 	ptr = XLogCtl->RedoRecPtr;
 	SpinLockRelease(&XLogCtl->info_lck);
 
-	if (RedoRecPtr < ptr)
-		RedoRecPtr = ptr;
+	if (XLogLocalRedoRecPtr < ptr)
+		XLogLocalRedoRecPtr = ptr;
 
-	return RedoRecPtr;
+	return XLogLocalRedoRecPtr;
 }
 
 /*
@@ -6966,7 +6962,7 @@ GetRedoRecPtr(void)
 void
 GetFullPageWriteInfo(XLogRecPtr *RedoRecPtr_p, bool *doPageWrites_p)
 {
-	*RedoRecPtr_p = RedoRecPtr;
+	*RedoRecPtr_p = XLogLocalRedoRecPtr;
 	*doPageWrites_p = doPageWrites;
 }
 
@@ -7557,7 +7553,7 @@ CreateCheckPoint(int flags)
 		 * buffers must assume that their buffer changes are not included in
 		 * the checkpoint.
 		 */
-		RedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
+		XLogLocalRedoRecPtr = XLogCtl->Insert.RedoRecPtr = checkPoint.redo;
 	}
 
 	/*
@@ -7597,7 +7593,7 @@ CreateCheckPoint(int flags)
 		 * to copy that into the record that will be inserted when the
 		 * checkpoint is complete.
 		 */
-		checkPoint.redo = RedoRecPtr;
+		checkPoint.redo = XLogLocalRedoRecPtr;
 	}
 
 	/* Update the info_lck-protected copy of RedoRecPtr as well */
@@ -7838,7 +7834,7 @@ CreateCheckPoint(int flags)
 	 * exists.
 	 */
 	if (XLogRecPtrIsValid(PriorRedoPtr))
-		UpdateCheckPointDistanceEstimate(RedoRecPtr - PriorRedoPtr);
+		UpdateCheckPointDistanceEstimate(XLogLocalRedoRecPtr - PriorRedoPtr);
 
 	INJECTION_POINT("checkpoint-before-old-wal-removal", NULL);
 
@@ -7846,7 +7842,7 @@ CreateCheckPoint(int flags)
 	 * Delete old log files, those no longer needed for last checkpoint to
 	 * prevent the disk holding the xlog from growing full.
 	 */
-	XLByteToSeg(RedoRecPtr, _logSegNo, wal_segment_size);
+	XLByteToSeg(XLogLocalRedoRecPtr, _logSegNo, wal_segment_size);
 	KeepLogSeg(recptr, &_logSegNo);
 	if (InvalidateObsoleteReplicationSlots(RS_INVAL_WAL_REMOVED | RS_INVAL_IDLE_TIMEOUT,
 										   _logSegNo, InvalidOid,
@@ -7856,11 +7852,11 @@ CreateCheckPoint(int flags)
 		 * Some slots have been invalidated; recalculate the old-segment
 		 * horizon, starting again from RedoRecPtr.
 		 */
-		XLByteToSeg(RedoRecPtr, _logSegNo, wal_segment_size);
+		XLByteToSeg(XLogLocalRedoRecPtr, _logSegNo, wal_segment_size);
 		KeepLogSeg(recptr, &_logSegNo);
 	}
 	_logSegNo--;
-	RemoveOldXlogFiles(_logSegNo, RedoRecPtr, recptr,
+	RemoveOldXlogFiles(_logSegNo, XLogLocalRedoRecPtr, recptr,
 					   checkPoint.ThisTimeLineID);
 
 	/*
@@ -8201,7 +8197,7 @@ CreateRestartPoint(int flags)
 	 * happening.
 	 */
 	WALInsertLockAcquireExclusive();
-	RedoRecPtr = XLogCtl->Insert.RedoRecPtr = lastCheckPoint.redo;
+	XLogLocalRedoRecPtr = XLogCtl->Insert.RedoRecPtr = lastCheckPoint.redo;
 	WALInsertLockRelease();
 
 	/* Also update the info_lck-protected copy */
@@ -8296,13 +8292,13 @@ CreateRestartPoint(int flags)
 	 * prior checkpoint exists.
 	 */
 	if (XLogRecPtrIsValid(PriorRedoPtr))
-		UpdateCheckPointDistanceEstimate(RedoRecPtr - PriorRedoPtr);
+		UpdateCheckPointDistanceEstimate(XLogLocalRedoRecPtr - PriorRedoPtr);
 
 	/*
 	 * Delete old log files, those no longer needed for last restartpoint to
 	 * prevent the disk holding the xlog from growing full.
 	 */
-	XLByteToSeg(RedoRecPtr, _logSegNo, wal_segment_size);
+	XLByteToSeg(XLogLocalRedoRecPtr, _logSegNo, wal_segment_size);
 
 	/*
 	 * Retreat _logSegNo using the current end of xlog replayed or received,
@@ -8323,7 +8319,7 @@ CreateRestartPoint(int flags)
 		 * Some slots have been invalidated; recalculate the old-segment
 		 * horizon, starting again from RedoRecPtr.
 		 */
-		XLByteToSeg(RedoRecPtr, _logSegNo, wal_segment_size);
+		XLByteToSeg(XLogLocalRedoRecPtr, _logSegNo, wal_segment_size);
 		KeepLogSeg(endptr, &_logSegNo);
 	}
 	_logSegNo--;
@@ -8343,7 +8339,7 @@ CreateRestartPoint(int flags)
 	if (!RecoveryInProgress())
 		replayTLI = XLogCtl->InsertTimeLineID;
 
-	RemoveOldXlogFiles(_logSegNo, RedoRecPtr, endptr, replayTLI);
+	RemoveOldXlogFiles(_logSegNo, XLogLocalRedoRecPtr, endptr, replayTLI);
 
 	/*
 	 * Make more log segments if needed.  (Do this after recycling old log

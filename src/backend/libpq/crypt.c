@@ -27,10 +27,10 @@
 #include "utils/timestamp.h"
 
 /* Threshold for password expiration warnings. */
-int			password_expiration_warning_threshold = 604800;
+PG_GLOBAL_RUNTIME int password_expiration_warning_threshold = 604800;
 
 /* Enables deprecation warnings for MD5 passwords. */
-bool		md5_password_warnings = true;
+PG_GLOBAL_RUNTIME bool md5_password_warnings = true;
 
 /*
  * Fetch stored password for a user, for authentication.
@@ -103,20 +103,17 @@ get_role_password(const char *role, const char **logdetail)
 		 */
 		if (expire_time / USECS_PER_SEC < password_expiration_warning_threshold)
 		{
-			MemoryContext oldcontext;
 			int			days;
 			int			hours;
 			int			minutes;
-			char	   *warning;
+			const char *warning;
 			char	   *detail;
-
-			oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 
 			days = expire_time / USECS_PER_DAY;
 			hours = (expire_time % USECS_PER_DAY) / USECS_PER_HOUR;
 			minutes = (expire_time % USECS_PER_HOUR) / USECS_PER_MINUTE;
 
-			warning = pstrdup(_("role password will expire soon"));
+			warning = _("role password will expire soon");
 
 			if (days > 0)
 				detail = psprintf(ngettext("The password for role \"%s\" will expire in %d day.",
@@ -138,8 +135,7 @@ get_role_password(const char *role, const char **logdetail)
 								  role);
 
 			StoreConnectionWarning(warning, detail);
-
-			MemoryContextSwitchTo(oldcontext);
+			pfree(detail);
 		}
 	}
 
@@ -300,17 +296,12 @@ md5_crypt_verify(const char *role, const char *shadow_pass,
 
 		if (md5_password_warnings)
 		{
-			MemoryContext oldcontext;
-			char	   *warning;
-			char	   *detail;
+			const char *warning;
+			const char *detail;
 
-			oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-
-			warning = pstrdup(_("authenticated with an MD5-encrypted password"));
-			detail = pstrdup(_("MD5 password support is deprecated and will be removed in a future release of PostgreSQL."));
+			warning = _("authenticated with an MD5-encrypted password");
+			detail = _("MD5 password support is deprecated and will be removed in a future release of PostgreSQL.");
 			StoreConnectionWarning(warning, detail);
-
-			MemoryContextSwitchTo(oldcontext);
 		}
 	}
 	else

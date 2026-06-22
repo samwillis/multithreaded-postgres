@@ -26,16 +26,11 @@
 #include "nodes/pg_list.h"
 #include "nodes/readfuncs.h"
 #include "nodes/value.h"
+#include "utils/backend_runtime.h"
 
 
 /* Static state for pg_strtok */
-static const char *pg_strtok_ptr = NULL;
-
-/* State flag that determines how readfuncs.c should treat location fields */
-#ifdef DEBUG_NODE_TESTS_ENABLED
-bool		restore_location_fields = false;
-#endif
-
+#define pg_strtok_ptr (*PgCurrentNodeReadStrtokPtrRef())
 
 /*
  * stringToNode -

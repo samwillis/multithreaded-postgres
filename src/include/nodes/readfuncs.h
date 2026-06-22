@@ -16,11 +16,11 @@
 
 #include "nodes/nodes.h"
 
-/*
- * variable in read.c that needs to be accessible to readfuncs.c
- */
 #ifdef DEBUG_NODE_TESTS_ENABLED
-extern PGDLLIMPORT bool restore_location_fields;
+#ifndef PgCurrentNodeRestoreLocationFieldsRef
+extern bool *PgCurrentNodeRestoreLocationFieldsRef(void);
+#endif
+#define restore_location_fields (*PgCurrentNodeRestoreLocationFieldsRef())
 #endif
 
 /*

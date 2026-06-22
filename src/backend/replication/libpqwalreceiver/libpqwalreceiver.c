@@ -39,7 +39,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "libpqwalreceiver",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 struct WalReceiverConn
@@ -95,7 +96,7 @@ static WalRcvExecResult *libpqrcv_exec(WalReceiverConn *conn,
 									   const Oid *retTypes);
 static void libpqrcv_disconnect(WalReceiverConn *conn);
 
-static WalReceiverFunctionsType PQWalReceiverFunctions = {
+static PG_GLOBAL_IMMUTABLE WalReceiverFunctionsType PQWalReceiverFunctions = {
 	.walrcv_connect = libpqrcv_connect,
 	.walrcv_check_conninfo = libpqrcv_check_conninfo,
 	.walrcv_get_conninfo = libpqrcv_get_conninfo,
@@ -125,7 +126,11 @@ void
 _PG_init(void)
 {
 	if (WalReceiverFunctions != NULL)
+	{
+		if (WalReceiverFunctions == &PQWalReceiverFunctions)
+			return;
 		elog(ERROR, "libpqwalreceiver already loaded");
+	}
 	WalReceiverFunctions = &PQWalReceiverFunctions;
 }
 

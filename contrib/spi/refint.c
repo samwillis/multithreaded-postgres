@@ -11,14 +11,18 @@
 
 #include "commands/trigger.h"
 #include "executor/spi.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
 PG_MODULE_MAGIC_EXT(
 					.name = "refint",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
+
+#define REFINT_SESSION_STATE_KEY "refint.session"
 
 typedef struct
 {
@@ -27,12 +31,35 @@ typedef struct
 	SPIPlanPtr *splan;
 } EPlan;
 
-static EPlan *FPlans = NULL;
-static int	nFPlans = 0;
-static EPlan *PPlans = NULL;
-static int	nPPlans = 0;
+typedef struct RefintSessionState
+{
+	EPlan	   *foreign_plans;
+	int			num_foreign_plans;
+	EPlan	   *primary_plans;
+	int			num_primary_plans;
+	bool		reset_registered;
+} RefintSessionState;
+
+static RefintSessionState *
+refint_session_state(void)
+{
+	return (RefintSessionState *)
+		PgSessionEnsureExtensionPrivateState(REFINT_SESSION_STATE_KEY,
+											 sizeof(RefintSessionState),
+											 NULL);
+}
+
+#define FPlans (refint_session_state()->foreign_plans)
+#define nFPlans (refint_session_state()->num_foreign_plans)
+#define PPlans (refint_session_state()->primary_plans)
+#define nPPlans (refint_session_state()->num_primary_plans)
+#define refint_reset_registered (refint_session_state()->reset_registered)
 
 static EPlan *find_plan(char *ident, EPlan **eplan, int *nplans);
+static MemoryContext refint_cache_context(void);
+static void refint_register_reset_callback(void);
+static void refint_reset_callback(void *arg);
+static void refint_free_plans(EPlan *plans, int nplans);
 
 /*
  * check_primary_key () -- check that key in tuple being inserted/updated
@@ -194,13 +221,13 @@ check_primary_key(PG_FUNCTION_ARGS)
 			elog(ERROR, "check_primary_key: SPI_prepare returned %s", SPI_result_code_string(SPI_result));
 
 		/*
-		 * Remember that SPI_prepare places plan in current memory context -
-		 * so, we have to save plan in TopMemoryContext for later use.
+		 * Remember that SPI_prepare places plan in current memory context,
+		 * so keep it and store the plan array in session-owned state.
 		 */
 		if (SPI_keepplan(pplan))
 			/* internal error */
 			elog(ERROR, "check_primary_key: SPI_keepplan failed");
-		plan->splan = (SPIPlanPtr *) MemoryContextAlloc(TopMemoryContext,
+		plan->splan = (SPIPlanPtr *) MemoryContextAlloc(refint_cache_context(),
 														sizeof(SPIPlanPtr));
 		*(plan->splan) = pplan;
 		plan->nplans = 1;
@@ -430,7 +457,7 @@ check_foreign_key(PG_FUNCTION_ARGS)
 		SPIPlanPtr	pplan;
 		char	  **args2 = args;
 
-		plan->splan = (SPIPlanPtr *) MemoryContextAlloc(TopMemoryContext,
+		plan->splan = (SPIPlanPtr *) MemoryContextAlloc(refint_cache_context(),
 														nrefs * sizeof(SPIPlanPtr));
 
 		for (r = 0; r < nrefs; r++)
@@ -625,7 +652,8 @@ find_plan(char *ident, EPlan **eplan, int *nplans)
 	 * All allocations done for the plans need to happen in a session-safe
 	 * context.
 	 */
-	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	refint_register_reset_callback();
+	oldcontext = MemoryContextSwitchTo(refint_cache_context());
 
 	if (*nplans > 0)
 	{
@@ -655,4 +683,65 @@ find_plan(char *ident, EPlan **eplan, int *nplans)
 
 	MemoryContextSwitchTo(oldcontext);
 	return newp;
+}
+
+static MemoryContext
+refint_cache_context(void)
+{
+	if (CurrentPgSession != NULL)
+		return PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession);
+
+	return TopMemoryContext;
+}
+
+static void
+refint_register_reset_callback(void)
+{
+	if (refint_reset_registered)
+		return;
+
+	PgSessionRegisterResetCallback(refint_reset_callback, NULL);
+	refint_reset_registered = true;
+}
+
+static void
+refint_reset_callback(void *arg)
+{
+	(void) arg;
+
+	refint_free_plans(FPlans, nFPlans);
+	refint_free_plans(PPlans, nPPlans);
+
+	FPlans = NULL;
+	nFPlans = 0;
+	PPlans = NULL;
+	nPPlans = 0;
+	refint_reset_registered = false;
+}
+
+static void
+refint_free_plans(EPlan *plans, int nplans)
+{
+	int			i;
+
+	if (plans == NULL)
+		return;
+
+	for (i = 0; i < nplans; i++)
+	{
+		int			j;
+
+		for (j = 0; j < plans[i].nplans; j++)
+		{
+			if (plans[i].splan[j] != NULL)
+				SPI_freeplan(plans[i].splan[j]);
+		}
+
+		if (plans[i].splan != NULL)
+			pfree(plans[i].splan);
+		if (plans[i].ident != NULL)
+			pfree(plans[i].ident);
+	}
+
+	pfree(plans);
 }

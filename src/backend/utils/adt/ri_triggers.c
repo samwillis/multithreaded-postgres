@@ -43,6 +43,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
 #include "utils/acl.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -254,13 +255,14 @@ typedef struct RI_FastPathEntry
 /*
  * Local data
  */
-static HTAB *ri_constraint_cache = NULL;
-static HTAB *ri_query_cache = NULL;
-static HTAB *ri_compare_cache = NULL;
-static dclist_head ri_constraint_cache_valid_list;
+#define ri_constraint_cache (*PgCurrentRIConstraintCacheRef())
+#define ri_query_cache (*PgCurrentRIQueryCacheRef())
+#define ri_compare_cache (*PgCurrentRICompareCacheRef())
+#define ri_constraint_cache_valid_list (*PgCurrentRIConstraintCacheValidListRef())
 
-static HTAB *ri_fastpath_cache = NULL;
-static bool ri_fastpath_callback_registered = false;
+#define ri_fastpath_cache (*PgCurrentRIFastPathCacheRef())
+#define ri_fastpath_callback_registered (*PgCurrentRIFastPathCallbackRegisteredRef())
+#define ri_fastpath_xact_callback_registered (*PgCurrentRIFastPathXactCallbackRegisteredRef())
 
 /*
  * Local function prototypes
@@ -4189,8 +4191,6 @@ ri_FastPathTeardown(void)
 	ri_fastpath_cache = NULL;
 	ri_fastpath_callback_registered = false;
 }
-
-static bool ri_fastpath_xact_callback_registered = false;
 
 static void
 ri_FastPathXactCallback(XactEvent event, void *arg)

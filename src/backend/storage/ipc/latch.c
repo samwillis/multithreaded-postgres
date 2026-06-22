@@ -22,10 +22,11 @@
 #include "port/atomics.h"
 #include "storage/latch.h"
 #include "storage/waiteventset.h"
+#include "utils/backend_runtime.h"
 #include "utils/resowner.h"
 
-/* A common WaitEventSet used to implement WaitLatch() */
-static WaitEventSet *LatchWaitSet;
+/* A backend-local WaitEventSet used to implement WaitLatch() */
+#define LatchWaitSet (*PgCurrentLatchWaitSetRef())
 
 /* The positions of the latch and PM death events in LatchWaitSet */
 #define LatchWaitSetLatchPos 0
@@ -56,6 +57,16 @@ InitializeLatchWaitSet(void)
 	}
 }
 
+void
+RefreshLatchWaitSetCurrentCarrier(void)
+{
+	if (LatchWaitSet == NULL || MyLatch == NULL)
+		return;
+
+	ModifyWaitEvent(LatchWaitSet, LatchWaitSetLatchPos, WL_LATCH_SET,
+					MyLatch);
+}
+
 /*
  * Initialize a process-local latch.
  */
@@ -65,6 +76,11 @@ InitLatch(Latch *latch)
 	latch->is_set = false;
 	latch->maybe_sleeping = false;
 	latch->owner_pid = MyProcPid;
+#ifndef WIN32
+	latch->owner_wakeup_fd = GetWaitEventSetLatchWakeupFd();
+	latch->owner_thread = pthread_self();
+	latch->owner_thread_valid = true;
+#endif
 	latch->is_shared = false;
 
 #ifdef WIN32
@@ -110,6 +126,10 @@ InitSharedLatch(Latch *latch)
 	latch->is_set = false;
 	latch->maybe_sleeping = false;
 	latch->owner_pid = 0;
+#ifndef WIN32
+	latch->owner_wakeup_fd = -1;
+	latch->owner_thread_valid = false;
+#endif
 	latch->is_shared = true;
 }
 
@@ -135,6 +155,32 @@ OwnLatch(Latch *latch)
 		elog(PANIC, "latch already owned by PID %d", owner_pid);
 
 	latch->owner_pid = MyProcPid;
+#ifndef WIN32
+	latch->owner_wakeup_fd = GetWaitEventSetLatchWakeupFd();
+	latch->owner_thread = pthread_self();
+	latch->owner_thread_valid = true;
+#endif
+}
+
+/*
+ * Refresh the same-process thread wakeup target for a shared latch.
+ *
+ * A pooled-protocol logical backend can move between carrier threads while
+ * retaining its PGPROC and procLatch.  The latch remains owned by this
+ * process, but SetLatch() must target the carrier thread that may currently
+ * sleep on it.
+ */
+void
+ReownLatchCurrentThread(Latch *latch)
+{
+	Assert(latch->is_shared);
+	Assert(latch->owner_pid == MyProcPid);
+
+#ifndef WIN32
+	latch->owner_wakeup_fd = GetWaitEventSetLatchWakeupFd();
+	latch->owner_thread = pthread_self();
+	latch->owner_thread_valid = true;
+#endif
 }
 
 /*
@@ -147,6 +193,10 @@ DisownLatch(Latch *latch)
 	Assert(latch->owner_pid == MyProcPid);
 
 	latch->owner_pid = 0;
+#ifndef WIN32
+	latch->owner_wakeup_fd = -1;
+	latch->owner_thread_valid = false;
+#endif
 }
 
 /*
@@ -291,6 +341,11 @@ SetLatch(Latch *latch)
 {
 #ifndef WIN32
 	pid_t		owner_pid;
+	int			owner_wakeup_fd;
+	pthread_t	owner_thread;
+	bool		owner_thread_valid;
+	bool		same_owner_thread;
+	bool		sibling_thread_owner;
 #else
 	HANDLE		handle;
 #endif
@@ -309,9 +364,6 @@ SetLatch(Latch *latch)
 	latch->is_set = true;
 
 	pg_memory_barrier();
-	if (!latch->maybe_sleeping)
-		return;
-
 #ifndef WIN32
 
 	/*
@@ -337,14 +389,35 @@ SetLatch(Latch *latch)
 	 * that happen before they enter the loop.
 	 */
 	owner_pid = latch->owner_pid;
+	owner_wakeup_fd = latch->owner_wakeup_fd;
+	owner_thread = latch->owner_thread;
+	owner_thread_valid = latch->owner_thread_valid;
+	same_owner_thread = (owner_thread_valid &&
+						 pthread_equal(owner_thread, pthread_self()));
+	sibling_thread_owner = (owner_pid == MyProcPid &&
+							!same_owner_thread &&
+							(owner_wakeup_fd >= 0 || owner_thread_valid));
+
+	if (!latch->maybe_sleeping && !sibling_thread_owner)
+		return;
 	if (owner_pid == 0)
 		return;
 	else if (owner_pid == MyProcPid)
-		WakeupMyProc();
+	{
+		if (!same_owner_thread && owner_wakeup_fd >= 0)
+			WakeupOtherProcFd(owner_wakeup_fd);
+		else if (!same_owner_thread && owner_thread_valid)
+			pthread_kill(owner_thread, SIGURG);
+		else
+			WakeupMyProc();
+	}
 	else
 		WakeupOtherProc(owner_pid);
 
 #else
+
+	if (!latch->maybe_sleeping)
+		return;
 
 	/*
 	 * See if anyone's waiting for the latch. It can be the current process if

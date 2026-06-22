@@ -65,6 +65,7 @@
 #include "storage/spin.h"
 #include "storage/subsystems.h"
 #include "utils/acl.h"
+#include "utils/backend_runtime.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/resowner.h"
@@ -142,7 +143,7 @@ typedef struct
 	CheckpointerRequest requests[FLEXIBLE_ARRAY_MEMBER];
 } CheckpointerShmemStruct;
 
-static CheckpointerShmemStruct *CheckpointerShmem;
+static PG_GLOBAL_SHMEM CheckpointerShmemStruct *CheckpointerShmem;
 
 static void CheckpointerShmemRequest(void *arg);
 static void CheckpointerShmemInit(void *arg);
@@ -164,23 +165,31 @@ const ShmemCallbacks CheckpointerShmemCallbacks = {
 /*
  * GUC parameters
  */
-int			CheckPointTimeout = 300;
-int			CheckPointWarning = 30;
-double		CheckPointCompletionTarget = 0.9;
+PG_GLOBAL_RUNTIME int CheckPointTimeout = 300;
+PG_GLOBAL_RUNTIME int CheckPointWarning = 30;
+PG_GLOBAL_RUNTIME double CheckPointCompletionTarget = 0.9;
 
 /*
  * Private state
  */
-static bool ckpt_active = false;
-static volatile sig_atomic_t ShutdownXLOGPending = false;
+#define ckpt_active \
+	(PgCurrentMaintenanceWorkerState()->ckpt_active)
 
 /* these values are valid when ckpt_active is true: */
-static pg_time_t ckpt_start_time;
-static XLogRecPtr ckpt_start_recptr;
-static double ckpt_cached_elapsed;
+#define ckpt_start_time \
+	(PgCurrentMaintenanceWorkerState()->ckpt_start_time)
+#define ckpt_start_recptr \
+	(PgCurrentMaintenanceWorkerState()->ckpt_start_recptr)
+#define ckpt_cached_elapsed \
+	(PgCurrentMaintenanceWorkerState()->ckpt_cached_elapsed)
 
-static pg_time_t last_checkpoint_time;
-static pg_time_t last_xlog_switch_time;
+#define last_checkpoint_time \
+	(PgCurrentMaintenanceWorkerState()->last_checkpoint_time)
+#define last_xlog_switch_time \
+	(PgCurrentMaintenanceWorkerState()->last_xlog_switch_time)
+
+#define checkpointer_context \
+	(PgCurrentMaintenanceWorkerState()->checkpointer_context)
 
 /* Prototypes for private functions */
 
@@ -205,11 +214,12 @@ void
 CheckpointerMain(const void *startup_data, size_t startup_data_len)
 {
 	sigjmp_buf	local_sigjmp_buf;
-	MemoryContext checkpointer_context;
+	bool		threaded_worker;
 
 	Assert(startup_data_len == 0);
 
 	AuxiliaryProcessMainCommon();
+	threaded_worker = PgRuntimeIsThreadBacked(CurrentPgRuntime);
 
 	CheckpointerShmem->checkpointer_pid = MyProcPid;
 
@@ -221,19 +231,22 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	 * want to wait for the backends to exit, whereupon the postmaster will
 	 * tell us it's okay to shut down (via SIGUSR2).
 	 */
-	pqsignal(SIGHUP, SignalHandlerForConfigReload);
-	pqsignal(SIGINT, ReqShutdownXLOG);
-	pqsignal(SIGTERM, PG_SIG_IGN);	/* ignore SIGTERM */
-	/* SIGQUIT handler was already set up by InitPostmasterChild */
-	pqsignal(SIGALRM, PG_SIG_IGN);
-	pqsignal(SIGPIPE, PG_SIG_IGN);
-	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
-	pqsignal(SIGUSR2, SignalHandlerForShutdownRequest);
+	if (!threaded_worker)
+	{
+		pqsignal(SIGHUP, SignalHandlerForConfigReload);
+		pqsignal(SIGINT, ReqShutdownXLOG);
+		pqsignal(SIGTERM, PG_SIG_IGN);	/* ignore SIGTERM */
+		/* SIGQUIT handler was already set up by InitPostmasterChild */
+		pqsignal(SIGALRM, PG_SIG_IGN);
+		pqsignal(SIGPIPE, PG_SIG_IGN);
+		pqsignal(SIGUSR1, procsignal_sigusr1_handler);
+		pqsignal(SIGUSR2, SignalHandlerForShutdownRequest);
 
-	/*
-	 * Reset some signals that are accepted by postmaster but not here
-	 */
-	pqsignal(SIGCHLD, PG_SIG_DFL);
+		/*
+		 * Reset some signals that are accepted by postmaster but not here
+		 */
+		pqsignal(SIGCHLD, PG_SIG_DFL);
+	}
 
 	/*
 	 * Initialize so that first time-driven event happens at the correct time.
@@ -259,9 +272,10 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	 * possible memory leaks.  Formerly this code just ran in
 	 * TopMemoryContext, but resetting that would be a really bad idea.
 	 */
-	checkpointer_context = AllocSetContextCreate(TopMemoryContext,
-												 "Checkpointer",
-												 ALLOCSET_DEFAULT_SIZES);
+	checkpointer_context =
+		PgRuntimeGetOwnedMemoryContextWithSizes(&checkpointer_context,
+												"Checkpointer",
+												ALLOCSET_DEFAULT_SIZES);
 	MemoryContextSwitchTo(checkpointer_context);
 
 	/*
@@ -350,19 +364,14 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	/*
 	 * Unblock signals (they were blocked when the postmaster forked us)
 	 */
-	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+	if (!threaded_worker)
+		sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
 
 	/*
 	 * Ensure all shared memory values are set correctly for the config. Doing
 	 * this here ensures no race conditions from other concurrent updaters.
 	 */
 	UpdateSharedMemoryConfig();
-
-	/*
-	 * Advertise our proc number that backends can use to wake us up while
-	 * we're sleeping.
-	 */
-	ProcGlobal->checkpointerProc = MyProcNumber;
 
 	/*
 	 * Loop until we've been asked to write the shutdown checkpoint or
@@ -387,7 +396,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 		AbsorbSyncRequests();
 
 		ProcessCheckpointerInterrupts();
-		if (ShutdownXLOGPending || ShutdownRequestPending)
+		if (CheckpointerShutdownXLOGPending || ShutdownRequestPending)
 			break;
 
 		/*
@@ -564,7 +573,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 			 * latch might have been reset (e.g. in CheckpointWriteDelay).
 			 */
 			ProcessCheckpointerInterrupts();
-			if (ShutdownXLOGPending || ShutdownRequestPending)
+			if (CheckpointerShutdownXLOGPending || ShutdownRequestPending)
 				break;
 		}
 
@@ -617,7 +626,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	 */
 	ExitOnAnyError = true;
 
-	if (ShutdownXLOGPending)
+	if (CheckpointerShutdownXLOGPending)
 	{
 		/*
 		 * Close down the database.
@@ -635,7 +644,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 		 * Tell postmaster that we're done.
 		 */
 		SendPostmasterSignal(PMSIGNAL_XLOG_IS_SHUTDOWN);
-		ShutdownXLOGPending = false;
+		CheckpointerShutdownXLOGPending = false;
 	}
 
 	/*
@@ -669,13 +678,20 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 static void
 ProcessCheckpointerInterrupts(void)
 {
+	PgCurrentBackendApplyInterrupts();
+
 	if (ProcSignalBarrierPending)
 		ProcessProcSignalBarrier();
+
+	if (ProcDiePending)
+		proc_exit(1);
 
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		ProcessConfigFile(PGC_SIGHUP);
+		if (CurrentPgRuntime == NULL ||
+			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
+			ProcessConfigFile(PGC_SIGHUP);
 
 		/*
 		 * Checkpointer is the last process to shut down, so we ask it to hold
@@ -810,7 +826,7 @@ CheckpointWriteDelay(int flags, double progress)
 	 * in which case we just try to catch up as quickly as possible.
 	 */
 	if (!(flags & CHECKPOINT_FAST) &&
-		!ShutdownXLOGPending &&
+	!CheckpointerShutdownXLOGPending &&
 		!ShutdownRequestPending &&
 		!FastCheckpointRequested() &&
 		IsCheckpointOnSchedule(progress))
@@ -818,7 +834,9 @@ CheckpointWriteDelay(int flags, double progress)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
+			if (CurrentPgRuntime == NULL ||
+				CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
+				ProcessConfigFile(PGC_SIGHUP);
 			/* update shmem copies of config variables */
 			UpdateSharedMemoryConfig();
 		}
@@ -948,7 +966,8 @@ IsCheckpointOnSchedule(double progress)
 static void
 ReqShutdownXLOG(SIGNAL_ARGS)
 {
-	ShutdownXLOGPending = true;
+	RaiseInterrupt(PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG);
+	CheckpointerShutdownXLOGPending = true;
 	SetLatch(MyLatch);
 }
 
@@ -1119,8 +1138,7 @@ RequestCheckpoint(int flags)
 #define MAX_SIGNAL_TRIES 600	/* max wait 60.0 sec */
 	for (ntries = 0;; ntries++)
 	{
-		volatile PROC_HDR *procglobal = ProcGlobal;
-		ProcNumber	checkpointerProc = procglobal->checkpointerProc;
+		ProcNumber	checkpointerProc = pg_atomic_read_u32(&ProcGlobal->checkpointerProc);
 
 		if (checkpointerProc == INVALID_PROC_NUMBER)
 		{
@@ -1261,8 +1279,7 @@ ForwardSyncRequest(const FileTag *ftag, SyncRequestType type)
 	/* ... but not till after we release the lock */
 	if (too_full)
 	{
-		volatile PROC_HDR *procglobal = ProcGlobal;
-		ProcNumber	checkpointerProc = procglobal->checkpointerProc;
+		ProcNumber	checkpointerProc = pg_atomic_read_u32(&ProcGlobal->checkpointerProc);
 
 		if (checkpointerProc != INVALID_PROC_NUMBER)
 			SetLatch(&GetPGProcByNumber(checkpointerProc)->procLatch);
@@ -1542,8 +1559,7 @@ FirstCallSinceLastCheckpoint(void)
 void
 WakeupCheckpointer(void)
 {
-	volatile PROC_HDR *procglobal = ProcGlobal;
-	ProcNumber	checkpointerProc = procglobal->checkpointerProc;
+	ProcNumber	checkpointerProc = pg_atomic_read_u32(&ProcGlobal->checkpointerProc);
 
 	if (checkpointerProc != INVALID_PROC_NUMBER)
 		SetLatch(&GetPGProcByNumber(checkpointerProc)->procLatch);
