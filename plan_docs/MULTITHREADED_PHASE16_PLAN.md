@@ -80,6 +80,8 @@ Phase 16 should add these artifacts early:
 - `check-threaded-bin`: threaded `src/bin` coverage target.
 - `check-threaded-tools`: threaded `src/tools/pg_bsd_indent` coverage target.
 - `check-threaded-world-coverage`: verifier for the strict coverage contract.
+- `plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv`: checked list of
+  currently covered threaded-world leaves and their threaded targets.
 - `plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv`: checked manifest of
   temporary or permanent exclusions.
 - A generated or maintained inventory for all `check-world` components,
@@ -256,6 +258,8 @@ Implementation direction:
 
 - identify the components that `check-world` runs in this tree;
 - define the threaded equivalent target list;
+- record currently covered leaves in
+  `plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv`;
 - add the exclusion manifest;
 - add a verifier that compares all three lists;
 - make `check-world-threaded` run the verifier.
