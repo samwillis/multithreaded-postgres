@@ -85,7 +85,8 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/btree_gist \
 	contrib/hstore \
 	contrib/isn \
-	contrib/pageinspect
+	contrib/pageinspect \
+	contrib/pg_trgm
 
 check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200: | temp-install
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: CHECKPREP_TOP=src/test/regress
@@ -173,6 +174,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-hstore-run
 	$(MAKE) check-threaded-contrib-isn-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
+	$(MAKE) check-threaded-contrib-pg-trgm-run
 
 check-threaded-contrib-btree-gist: CHECKPREP_TOP=contrib/btree_gist
 check-threaded-contrib-btree-gist: | temp-install
@@ -209,6 +211,15 @@ check-threaded-contrib-pageinspect:
 
 check-threaded-contrib-pageinspect-run:
 	$(MAKE) -C contrib/pageinspect check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pg-trgm: CHECKPREP_TOP=contrib/pg_trgm
+check-threaded-contrib-pg-trgm: | temp-install
+check-threaded-contrib-pg-trgm: submake-generated-headers
+check-threaded-contrib-pg-trgm:
+	$(MAKE) check-threaded-contrib-pg-trgm-run
+
+check-threaded-contrib-pg-trgm-run:
+	$(MAKE) -C contrib/pg_trgm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-interfaces:
 	@echo "$@: no admitted components yet; manifest covers remaining leaves"
@@ -342,4 +353,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage

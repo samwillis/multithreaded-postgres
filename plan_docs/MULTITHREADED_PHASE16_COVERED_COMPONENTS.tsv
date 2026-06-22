@@ -3,6 +3,7 @@ contrib/btree_gist	check-threaded-contrib-btree-gist-run	btree_gist regression, 
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
+contrib/pg_trgm	check-threaded-contrib-pg-trgm-run	pg_trgm regression, including similarity threshold custom GUC coverage, runs under threaded_workers.conf
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
