@@ -936,6 +936,10 @@ Every component covered by `check-world` must either run under
 a concrete reason and status. Phase 16 should not allow hidden skips, implicit
 omissions, or broad target names that cover only the easy subset.
 
+The threaded-world coverage surface includes the non-contrib `check-world`
+categories under `src/test`, `src/pl`, `src/interfaces`, `src/bin`, and
+`src/tools/pg_bsd_indent`, not only contrib extensions.
+
 Likely work:
 
 - migrate every contrib extension to explicit backend model metadata;

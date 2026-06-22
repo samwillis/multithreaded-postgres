@@ -3,7 +3,8 @@
 Phase 16 closes Gate E2-Extensions / Gate G after the Phase 15 pooled
 protocol scheduler is complete. The goal is to make threaded mode credible for
 the whole bundled PostgreSQL tree: contrib extensions, bundled procedural
-languages, test modules, extension GUCs, hooks, and failure paths.
+languages, core and auxiliary test suites, client and interface tests,
+extension GUCs, hooks, tools, and failure paths.
 
 The phase should be driven by a strict coverage rule:
 
@@ -20,13 +21,21 @@ that sound broader than the work they actually perform.
 
 Phase 16 owns:
 
+- `check-world-threaded` coverage for every `check-world` test component that
+  has a meaningful threaded-mode equivalent;
 - contrib-wide threaded regression coverage;
 - bundled procedural languages beyond PL/pgSQL;
+- non-contrib `check-world` coverage under `src/test`, `src/pl`,
+  `src/interfaces`, `src/bin`, and `src/tools/pg_bsd_indent`;
 - custom and extension GUC ownership, hook, and replay semantics;
 - extension backend-model metadata and compatibility levels;
-- extension-owned runtime/session APIs needed by in-tree modules;
+- extension-owned and module-owned runtime/session APIs needed by in-tree
+  modules;
 - threaded stress coverage for extension load, unload, cancellation, teardown,
-  `ERROR`, `FATAL`, and postmaster shutdown behavior;
+  waits, interrupts, `ERROR`, `FATAL`, and postmaster shutdown behavior;
+- lock-order documentation for new runtime locks;
+- debug views for runtime, backend, session, and carrier state where they are
+  needed to validate Phase 16 hardening;
 - sanitizer and performance baselines after Phase 15.
 
 Phase 16 does not own:
@@ -63,16 +72,83 @@ Phase 16 should add these artifacts early:
 - `check-world-threaded`: the broad threaded-world validation target.
 - `check-threaded-contrib`: threaded contrib regression target.
 - `check-threaded-pl`: threaded procedural-language target.
+- `check-threaded-src-test`: threaded `src/test` coverage target.
 - `check-threaded-test-modules`: threaded test-module target where applicable.
 - `check-threaded-interfaces`: threaded interface/tool coverage where relevant
   to `check-world`.
+- `check-threaded-bin`: threaded `src/bin` coverage target.
+- `check-threaded-tools`: threaded `src/tools/pg_bsd_indent` coverage target.
 - `check-threaded-world-coverage`: verifier for the strict coverage contract.
 - `plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv`: checked manifest of
   temporary or permanent exclusions.
-- A generated or maintained inventory for contrib, PL, and test modules.
+- A generated or maintained inventory for all `check-world` components,
+  including contrib, PL, test, interface, bin, and tool components.
 
 The first version of `check-world-threaded` may expose many blockers. That is
 acceptable only if the coverage verifier is strict and every omission is named.
+
+## Main-Plan Work Items
+
+The detailed Phase 16 plan carries forward every work item from the main plan.
+
+- Migrate every contrib extension to explicit backend model metadata.
+- Make every contrib extension support thread-per-session mode by default, or
+  list it as an explicit manifest exception.
+- Complete bundled procedural-language support beyond PL/pgSQL, or explicitly
+  mark any temporary exception as process-only with a release-blocking note.
+- Finish custom and extension GUC ownership and hook semantics for threaded
+  mode.
+- Add session/runtime APIs needed by in-tree modules that currently rely on
+  process-global mutable state.
+- Run contrib regression tests in process mode and threaded mode.
+- Document any temporary exception as a release-blocking gap rather than an
+  unknown default.
+- Run thread sanitizer where feasible.
+- Run address sanitizer where feasible.
+- Add stress tests for interrupts, waits, cancellation, and teardown.
+- Document lock ordering for new runtime locks.
+- Add debug views for runtime, backend, session, and carrier state where they
+  are needed to validate or debug threaded-world hardening.
+- Add crash and `FATAL` behavior tests.
+- Record performance baselines.
+
+## `check-world` Coverage Surface
+
+The current top-level `check-world` rule recurses into:
+
+```text
+src/test
+src/pl
+src/interfaces
+contrib
+src/bin
+src/tools/pg_bsd_indent
+```
+
+`check-world-threaded` must cover all of those categories, not just contrib.
+The coverage verifier should derive or check this list from the build system so
+future changes to `check-world` cannot silently escape threaded coverage.
+
+Non-contrib coverage categories:
+
+- `src/test`: core regression, isolation, modules, Perl support tests,
+  postmaster tests, recovery tests, subscription tests, authentication tests,
+  and optional ICU, Kerberos, LDAP, and SSL tests when enabled by configure.
+- `src/pl`: PL/pgSQL, PL/Perl, PL/Python, and PL/Tcl according to configure
+  support.
+- `src/interfaces`: libpq, ecpg, and libpq-oauth when configured.
+- `src/bin`: initdb, pg_amcheck, pg_archivecleanup, pg_basebackup,
+  pg_checksums, pg_combinebackup, pg_config, pg_controldata, pg_ctl, pg_dump,
+  pg_resetwal, pg_rewind, pg_test_fsync, pg_test_timing, pg_upgrade,
+  pg_verifybackup, pg_waldump, pg_walsummary, pgbench, psql, scripts, and
+  pgevent where applicable.
+- `src/tools/pg_bsd_indent`: pg_bsd_indent TAP/test coverage.
+
+`world` and `install-world` also include build/install surfaces such as `doc`
+and `config`. Those are not `check-world` test components, but if Phase 16
+adds build-oriented threaded-world or install-world variants, they should be
+listed as build-only coverage or `not_applicable` manifest rows rather than
+being ignored.
 
 ## Exclusion Manifest
 
@@ -89,9 +165,11 @@ Suggested `type` values:
 
 - `contrib`
 - `pl`
+- `src-test`
 - `test-module`
 - `bin`
 - `interface`
+- `tool`
 - `isolation`
 - `tap`
 - `other`
@@ -195,25 +273,32 @@ Start with a target shape like:
 ```make
 check-world-threaded:
 	$(MAKE) check-threaded-world-core
+	$(MAKE) check-threaded-src-test
 	$(MAKE) check-threaded-contrib
 	$(MAKE) check-threaded-pl
 	$(MAKE) check-threaded-test-modules
 	$(MAKE) check-threaded-interfaces
+	$(MAKE) check-threaded-bin
+	$(MAKE) check-threaded-tools
 	$(MAKE) check-threaded-world-coverage
 ```
 
 Keep target names specific. If a subtarget does not yet cover all components in
 its category, its manifest and verifier must make that explicit.
 
-## Step 4: Generate The Extension Inventory
+## Step 4: Generate The World Inventory
 
-Create an inventory for each bundled module. It can start as TSV or generated
-markdown, but it must be precise enough to drive implementation order.
+Create an inventory for each `check-world` component. It can start as TSV or
+generated markdown, but it must be precise enough to drive implementation
+order.
 
 Track at least:
 
 - component path;
 - build target and test target;
+- `check-world` category;
+- threaded target or manifest row;
+- configure condition, if any;
 - current backend model metadata;
 - current Phase 16 compatibility classification;
 - `PG_MODULE_MAGIC_EXT` status;
@@ -229,8 +314,13 @@ Track at least:
 - threaded coverage status;
 - pooled-affinity or migration limitations.
 
-This inventory should decide the order of work. Avoid picking modules manually
-once the inventory can identify lower-risk tranches.
+For non-extension components, track the threaded-mode relevance explicitly.
+Some `src/bin`, `src/interfaces`, and tool tests are client-side and may not
+need special threaded runtime state, but they still need coverage or a manifest
+classification because they are part of `check-world`.
+
+This inventory should decide the order of work. Avoid picking modules or test
+families manually once the inventory can identify lower-risk tranches.
 
 ## Step 5: Finish Extension GUC Semantics Early
 
@@ -374,10 +464,73 @@ For security and external-library modules:
 - synchronize or isolate process-global mutable state;
 - retain a release-blocking manifest row until tests prove the assumption.
 
-## Step 10: Add Failure-Path Stress
+## Step 10: Cover Non-Contrib `check-world` Tests
 
-Add extension-focused failure coverage after enough modules are admitted for
-the tests to matter.
+Bring the non-contrib `check-world` categories under the same coverage rule.
+
+Required `src/test` coverage:
+
+- `src/test/regress`: already covered by the core threaded regression target,
+  but the coverage verifier should still map the `check-world` component to
+  that threaded target.
+- `src/test/isolation`: already covered by `check-threaded-world-core`; keep it
+  mapped explicitly.
+- `src/test/modules`: split into admitted threaded modules, process-only
+  modules, and manifest exclusions.
+- `src/test/perl`: classify whether its tests are support-only, client-side,
+  or meaningful threaded runtime checks.
+- `src/test/postmaster`: cover postmaster death, shutdown, and control-plane
+  behavior relevant to threaded and pooled modes.
+- `src/test/recovery`: cover recovery, replication, restart, and failover tests
+  that interact with threaded workers or threaded backend sessions.
+- `src/test/subscription`: cover logical replication and subscription tests,
+  including worker behavior and teardown.
+- `src/test/authentication`: cover authentication and connection-startup tests
+  where threaded mode changes backend startup or module loading.
+- optional `src/test/icu`, `src/test/kerberos`, `src/test/ldap`, and
+  `src/test/ssl`: cover when configured; otherwise classify as
+  configure-disabled, not as a threaded skip.
+
+Required `src/pl` coverage:
+
+- PL/pgSQL remains a required core language and should stay covered.
+- PL/Perl, PL/Python, and PL/Tcl need threaded checks or release-blocking
+  manifest rows.
+- Contrib language adapters such as `hstore_plperl`, `jsonb_plpython`, and
+  related modules should be tied to the corresponding procedural-language
+  classification.
+
+Required `src/interfaces` coverage:
+
+- libpq tests must cover threaded and pooled server interactions where backend
+  startup, authentication, cancellation, pipeline behavior, SSL/GSS transport,
+  or postmaster death semantics are relevant.
+- ecpg tests must either run against threaded mode or be explicitly classified
+  as client-side coverage with a threaded server replacement guard.
+- libpq-oauth must be included when configured and classified when not
+  configured.
+
+Required `src/bin` coverage:
+
+- utilities that start, stop, initialize, upgrade, dump, restore, replicate, or
+  benchmark servers must run against an appropriate threaded server where that
+  changes behavior.
+- client-only or file-format-only tests may be classified as unchanged by
+  threaded mode, but the manifest or inventory must say that explicitly.
+- pgbench coverage should include process, thread-per-session, and pooled
+  protocol baselines because it is both a `check-world` component and the
+  primary performance harness.
+
+Required `src/tools/pg_bsd_indent` coverage:
+
+- keep the existing tool test in `check-world-threaded`, or classify it as
+  build/tool-only with no threaded-server dependency. Do not let it disappear
+  from the coverage verifier.
+
+## Step 11: Add Failure-Path Stress
+
+Add extension- and module-focused failure coverage after enough components are
+admitted for the tests to matter.
 
 Coverage should include:
 
@@ -396,7 +549,25 @@ Coverage should include:
 These tests should feed `check-world-threaded` or a required subtarget. Avoid
 leaving them as local scripts only.
 
-## Step 11: Add Sanitizer Runs
+## Step 12: Add Debug Views And Lock Documentation
+
+Add observability and documentation needed to make Phase 16 failures actionable.
+
+Expected work:
+
+- debug views for runtime, backend, session, carrier, extension-state, and
+  module-admission state where existing views are insufficient;
+- lock-order documentation for any new runtime, extension, hook, GUC, shared
+  memory, worker, or interpreter locks;
+- test output that ties failures back to component names in the world
+  inventory and exclusion manifest;
+- documented replacement guards for any manifest row that cannot run a direct
+  threaded equivalent.
+
+Keep debug views focused on validation and operations. Do not add broad
+introspection tables unless they answer a concrete Phase 16 debugging need.
+
+## Step 13: Add Sanitizer Runs
 
 Run sanitizers where feasible and document any platform-specific limitations.
 
@@ -411,7 +582,7 @@ Expected work:
 Sanitizer results should be part of Gate G evidence, even if the exact target
 set is smaller than ordinary `check-world-threaded`.
 
-## Step 12: Record Performance Baselines
+## Step 14: Record Performance Baselines
 
 Phase 16 must not hide major regressions behind compatibility work.
 
@@ -440,15 +611,18 @@ Recommended implementation order:
 1. Baseline and branch hygiene.
 2. Coverage contract and exclusion manifest.
 3. `check-world-threaded` discovery target.
-4. Inventory generation.
+4. World inventory generation.
 5. Extension/custom GUC semantics.
-6. Low-risk contrib admission.
-7. Hook/GUC contrib admission.
-8. Shared-memory, worker, stats, and logical module admission.
-9. PL and external runtime admission.
-10. Failure-path stress.
-11. Sanitizers.
-12. Performance baseline and Gate G closeout.
+6. Non-contrib `src/test`, `src/pl`, `src/interfaces`, `src/bin`, and tool
+   mapping.
+7. Low-risk contrib admission.
+8. Hook/GUC contrib admission.
+9. Shared-memory, worker, stats, and logical module admission.
+10. PL and external runtime admission.
+11. Failure-path stress.
+12. Debug views and lock documentation.
+13. Sanitizers.
+14. Performance baseline and Gate G closeout.
 
 This order is intentionally front-loaded with harness and coverage work. It
 prevents the phase from turning into unbounded module-by-module cleanup without
@@ -463,13 +637,18 @@ Phase 16 is complete only when:
 - every manifest exclusion is explicit, current, and justified;
 - the remaining manifest is empty or contains only consciously accepted
   release blockers;
+- non-contrib `check-world` components under `src/test`, `src/pl`,
+  `src/interfaces`, `src/bin`, and `src/tools/pg_bsd_indent` are covered by a
+  threaded target or explicit manifest row;
 - threaded contrib regression passes for every admitted contrib module;
 - bundled procedural-language checks pass for every admitted language;
 - custom and extension GUC stress passes;
-- extension load, `ERROR`, `FATAL`, cancel, terminate, reconnect, and teardown
-  stress passes;
+- extension and module load, waits, interrupts, `ERROR`, `FATAL`, cancel,
+  terminate, reconnect, and teardown stress passes;
 - process-mode `check-world` remains green;
 - lifecycle and global-lifetime checks remain green;
+- required debug views and lock-order notes are present for any new Phase 16
+  runtime locks or admission state;
 - sanitizer evidence has been recorded where feasible;
 - performance baselines have been recorded and any regression is classified.
 
