@@ -82,6 +82,7 @@ THREADED_WORLD_COVERAGE_TOOL = $(abs_top_srcdir)/src/tools/threaded_world/check_
 THREADED_WORLD_COVERED_COMPONENTS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv
 THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv
 THREADED_WORLD_CONTRIB_COMPONENTS = \
+	contrib/btree_gin \
 	contrib/btree_gist \
 	contrib/hstore \
 	contrib/isn \
@@ -170,11 +171,21 @@ check-threaded-contrib:
 	for component in $(THREADED_WORLD_CONTRIB_COMPONENTS); do \
 		$(MAKE) -j1 -C $$component checkprep || exit; \
 	done
+	$(MAKE) check-threaded-contrib-btree-gin-run
 	$(MAKE) check-threaded-contrib-btree-gist-run
 	$(MAKE) check-threaded-contrib-hstore-run
 	$(MAKE) check-threaded-contrib-isn-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
+
+check-threaded-contrib-btree-gin: CHECKPREP_TOP=contrib/btree_gin
+check-threaded-contrib-btree-gin: | temp-install
+check-threaded-contrib-btree-gin: submake-generated-headers
+check-threaded-contrib-btree-gin:
+	$(MAKE) check-threaded-contrib-btree-gin-run
+
+check-threaded-contrib-btree-gin-run:
+	$(MAKE) -C contrib/btree_gin check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-btree-gist: CHECKPREP_TOP=contrib/btree_gist
 check-threaded-contrib-btree-gist: | temp-install
@@ -353,4 +364,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
