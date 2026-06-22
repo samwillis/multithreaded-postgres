@@ -19,7 +19,6 @@ contrib/fuzzystrmatch	contrib	temporarily_blocked	yes	initial Phase 16 threaded-
 contrib/hstore_plperl	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/intagg	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/intarray	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-contrib/isn	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/jsonb_plperl	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/lo	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/ltree	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory

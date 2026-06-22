@@ -1,5 +1,6 @@
 # component	threaded_target	notes
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
+contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
