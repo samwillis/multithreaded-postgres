@@ -24,6 +24,8 @@ my %make_vars = read_make_vars(File::Spec->catfile($top_builddir, 'src', 'Makefi
 my @roots = check_world_roots();
 my @components = sort map { derive_leaf_components($_) } @roots;
 my %component = map { $_ => 1 } @components;
+my %target_graph = read_make_target_graph(File::Spec->catfile($top_srcdir, 'GNUmakefile.in'));
+my %world_threaded_targets = reachable_targets('check-world-threaded', \%target_graph);
 
 if ($list_components)
 {
@@ -44,6 +46,17 @@ for my $name (sort keys %covered)
 		unless $component{$name};
 	push @errors, "covered component has empty threaded target: $name"
 		unless length $covered{$name}->{threaded_target};
+
+	for my $target (threaded_targets($covered{$name}->{threaded_target}))
+	{
+		push @errors, "covered component target has invalid name: $name -> $target"
+			unless plain_make_target($target);
+		push @errors, "covered component target is not defined in GNUmakefile.in: $name -> $target"
+			unless exists $target_graph{$target};
+		push @errors, "covered component target is not reachable from check-world-threaded: $name -> $target"
+			if exists $target_graph{$target}
+			&& !$world_threaded_targets{$target};
+	}
 }
 
 for my $name (sort keys %excluded)
@@ -241,6 +254,79 @@ sub expand_make_value
 	$value =~ s/["']\s*$//;
 	$value =~ s/\$\(([^)]+)\)/exists $make_vars{$1} ? $make_vars{$1} : ''/ge;
 	return trim($value);
+}
+
+sub read_make_target_graph
+{
+	my ($path) = @_;
+	my %graph;
+	my @current_targets;
+
+	for my $raw (logical_makefile_lines($path))
+	{
+		if ($raw =~ /^\s/)
+		{
+			while (@current_targets
+				&& $raw =~ /\$\((?:MAKE|GMAKE)\)\s+([A-Za-z0-9_.-]+)/g)
+			{
+				my $called = $1;
+				next unless plain_make_target($called);
+				push @{$graph{$_}}, $called for @current_targets;
+			}
+			next;
+		}
+
+		@current_targets = ();
+		$raw =~ s/#.*$//;
+		my $line = trim($raw);
+		next unless length $line;
+		next if $line =~ /^(?:if(?:eq|neq|def|ndef)|else|endif)\b/;
+		next if $line =~ /^[A-Za-z0-9_]+\s*[:?+]?=/;
+		next unless $line =~ /^([^:=]+?)\s*:(.*)$/;
+
+		my ($lhs, $rhs) = ($1, $2);
+		my @targets = grep { plain_make_target($_) } split /\s+/, trim($lhs);
+		next unless @targets;
+
+		$graph{$_} ||= [] for @targets;
+		@current_targets = @targets;
+
+		$rhs =~ s/\|/ /g;
+		my @deps = grep {
+			plain_make_target($_) && $_ !~ /=/
+		} split /\s+/, trim($rhs);
+		push @{$graph{$_}}, @deps for @targets;
+	}
+
+	return %graph;
+}
+
+sub reachable_targets
+{
+	my ($root, $graph) = @_;
+	my %seen;
+	my @queue = ($root);
+
+	while (@queue)
+	{
+		my $target = shift @queue;
+		next if $seen{$target}++;
+		push @queue, grep { !$seen{$_} } @{$graph->{$target} || []};
+	}
+
+	return %seen;
+}
+
+sub threaded_targets
+{
+	my ($value) = @_;
+	return grep { length } split /\s+/, trim($value);
+}
+
+sub plain_make_target
+{
+	my ($value) = @_;
+	return defined $value && $value =~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 }
 
 sub read_covered_components

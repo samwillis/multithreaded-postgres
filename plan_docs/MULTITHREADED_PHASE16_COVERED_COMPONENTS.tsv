@@ -1,5 +1,5 @@
 # component	threaded_target	notes
-src/pl/plpgsql/src	check-threaded-world-core	PL/pgSQL regression runs under threaded_workers.conf
-src/test/isolation	check-threaded-world-core	full isolation suite runs under threaded_workers.conf
-src/test/modules/test_backend_runtime	check-threaded-world-core check-threaded-world-core-tap	backend runtime SQL and TAP fixtures cover core threaded runtime
-src/test/regress	check-threaded-world-core	core threaded regression runs under threaded_workers.conf
+src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
+src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
+src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
+src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf

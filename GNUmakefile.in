@@ -87,18 +87,48 @@ check check-tests check-threaded check-threaded-workers check-threaded-smoke che
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: submake-generated-headers
 	$(MAKE) -C src/test/regress $@
 
-check-threaded-world-core: CHECKPREP_TOP=src/test/regress
-check-threaded-world-core: | temp-install
-check-threaded-world-core: submake-generated-headers
 check-threaded-world-core:
+	$(MAKE) check-threaded-src-test
+	$(MAKE) check-threaded-pl
+	$(MAKE) check-runtime-lifecycles
+	$(MAKE) check-global-lifetimes
+
+check-threaded-src-test:
+	$(MAKE) check-threaded-src-test-regress
+	$(MAKE) check-threaded-src-test-isolation
+	$(MAKE) check-threaded-test-modules
+
+check-threaded-src-test-regress: CHECKPREP_TOP=src/test/regress
+check-threaded-src-test-regress: | temp-install
+check-threaded-src-test-regress: submake-generated-headers
+check-threaded-src-test-regress:
 	$(MAKE) -C src/test/regress check-threaded-workers
-	$(MAKE) -C src/pl/plpgsql/src check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-src-test-isolation: CHECKPREP_TOP=src/test/regress
+check-threaded-src-test-isolation: | temp-install
+check-threaded-src-test-isolation: submake-generated-headers
+check-threaded-src-test-isolation:
 	$(MAKE) -C src/test/isolation check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules:
+	$(MAKE) check-threaded-test-backend-runtime
+
+check-threaded-test-backend-runtime: CHECKPREP_TOP=src/test/regress
+check-threaded-test-backend-runtime: | temp-install
+check-threaded-test-backend-runtime: submake-generated-headers
+check-threaded-test-backend-runtime:
 	$(MAKE) -C src/test/modules/test_backend_runtime DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_backend_runtime check
 	$(MAKE) check-threaded-world-core-tap
-	$(MAKE) check-runtime-lifecycles
-	$(MAKE) check-global-lifetimes
+
+check-threaded-pl:
+	$(MAKE) check-threaded-plpgsql
+
+check-threaded-plpgsql: CHECKPREP_TOP=src/test/regress
+check-threaded-plpgsql: | temp-install
+check-threaded-plpgsql: submake-generated-headers
+check-threaded-plpgsql:
+	$(MAKE) -C src/pl/plpgsql/src check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-world-core-tap: CHECKPREP_TOP=src/test/regress
 check-threaded-world-core-tap: | temp-install
@@ -128,7 +158,25 @@ check-threaded-world-coverage:
 		--covered '$(THREADED_WORLD_COVERED_COMPONENTS)' \
 		--exclusions '$(THREADED_WORLD_EXCLUSIONS)'
 
-check-world-threaded: check-threaded-world-coverage
+check-threaded-contrib:
+	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+
+check-threaded-interfaces:
+	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+
+check-threaded-bin:
+	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+
+check-threaded-tools:
+	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+
+check-world-threaded:
+	$(MAKE) check-threaded-world-coverage
+	$(MAKE) check-threaded-world-core
+	$(MAKE) check-threaded-contrib
+	$(MAKE) check-threaded-interfaces
+	$(MAKE) check-threaded-bin
+	$(MAKE) check-threaded-tools
 
 $(call recurse,check-world,src/test src/pl src/interfaces contrib src/bin src/tools/pg_bsd_indent,check)
 $(call recurse,checkprep,  src/test src/pl src/interfaces contrib src/bin)
@@ -245,4 +293,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
