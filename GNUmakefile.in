@@ -84,10 +84,13 @@ THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EX
 THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/btree_gin \
 	contrib/btree_gist \
+	contrib/dict_int \
+	contrib/dict_xsyn \
 	contrib/hstore \
 	contrib/isn \
 	contrib/pageinspect \
-	contrib/pg_trgm
+	contrib/pg_trgm \
+	contrib/unaccent
 
 check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200: | temp-install
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: CHECKPREP_TOP=src/test/regress
@@ -173,10 +176,13 @@ check-threaded-contrib:
 	done
 	$(MAKE) check-threaded-contrib-btree-gin-run
 	$(MAKE) check-threaded-contrib-btree-gist-run
+	$(MAKE) check-threaded-contrib-dict-int-run
+	$(MAKE) check-threaded-contrib-dict-xsyn-run
 	$(MAKE) check-threaded-contrib-hstore-run
 	$(MAKE) check-threaded-contrib-isn-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
+	$(MAKE) check-threaded-contrib-unaccent-run
 
 check-threaded-contrib-btree-gin: CHECKPREP_TOP=contrib/btree_gin
 check-threaded-contrib-btree-gin: | temp-install
@@ -195,6 +201,24 @@ check-threaded-contrib-btree-gist:
 
 check-threaded-contrib-btree-gist-run:
 	$(MAKE) -C contrib/btree_gist check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-dict-int: CHECKPREP_TOP=contrib/dict_int
+check-threaded-contrib-dict-int: | temp-install
+check-threaded-contrib-dict-int: submake-generated-headers
+check-threaded-contrib-dict-int:
+	$(MAKE) check-threaded-contrib-dict-int-run
+
+check-threaded-contrib-dict-int-run:
+	$(MAKE) -C contrib/dict_int check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-dict-xsyn: CHECKPREP_TOP=contrib/dict_xsyn
+check-threaded-contrib-dict-xsyn: | temp-install
+check-threaded-contrib-dict-xsyn: submake-generated-headers
+check-threaded-contrib-dict-xsyn:
+	$(MAKE) check-threaded-contrib-dict-xsyn-run
+
+check-threaded-contrib-dict-xsyn-run:
+	$(MAKE) -C contrib/dict_xsyn check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-hstore: CHECKPREP_TOP=contrib/hstore
 check-threaded-contrib-hstore: | temp-install
@@ -231,6 +255,15 @@ check-threaded-contrib-pg-trgm:
 
 check-threaded-contrib-pg-trgm-run:
 	$(MAKE) -C contrib/pg_trgm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-unaccent: CHECKPREP_TOP=contrib/unaccent
+check-threaded-contrib-unaccent: | temp-install
+check-threaded-contrib-unaccent: submake-generated-headers
+check-threaded-contrib-unaccent:
+	$(MAKE) check-threaded-contrib-unaccent-run
+
+check-threaded-contrib-unaccent-run:
+	$(MAKE) -C contrib/unaccent check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-interfaces:
 	@echo "$@: no admitted components yet; manifest covers remaining leaves"
@@ -364,4 +397,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage

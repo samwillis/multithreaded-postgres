@@ -9,8 +9,6 @@ contrib/bool_plperl	contrib	temporarily_blocked	yes	initial Phase 16 threaded-wo
 contrib/citext	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/cube	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/dblink	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-contrib/dict_int	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-contrib/dict_xsyn	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/earthdistance	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/file_fdw	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/fuzzystrmatch	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
@@ -43,7 +41,6 @@ contrib/tcn	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world targ
 contrib/test_decoding	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/tsm_system_rows	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/tsm_system_time	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-contrib/unaccent	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/vacuumlo	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/initdb	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_amcheck	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
