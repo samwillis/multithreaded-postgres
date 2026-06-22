@@ -923,6 +923,19 @@ Threaded mode should become credible and complete for bundled in-tree modules,
 procedural languages, and contrib extensions without delaying Phase 13
 wait-observability or Phase 14/15 protocol-scheduler work.
 
+Detailed working plan: `MULTITHREADED_PHASE16_PLAN.md`.
+
+Primary coverage contract:
+
+```text
+check-world-threaded = check-world - explicit_manifest_exclusions
+```
+
+Every component covered by `check-world` must either run under
+`check-world-threaded` or appear in a checked Phase 16 exclusion manifest with
+a concrete reason and status. Phase 16 should not allow hidden skips, implicit
+omissions, or broad target names that cover only the easy subset.
+
 Likely work:
 
 - migrate every contrib extension to explicit backend model metadata;
