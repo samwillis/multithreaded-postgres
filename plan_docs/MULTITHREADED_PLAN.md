@@ -963,11 +963,15 @@ Likely work:
 Exit gate:
 
 - Gate E2-Extensions / Gate G is part of Phase 16 completion and may need to
-  run repeatedly during hardening. Before considering Phase 16 complete, run
-  the Gate G checks from the Test Strategy section: feasible sanitizers,
-  repeated full suites, threaded contrib regression for every contrib
-  extension, bundled procedural-language checks, custom/extension GUC stress,
-  crash/FATAL behavior tests, and performance baselines.
+  run repeatedly during hardening. Before considering Phase 16 complete,
+  `check-world-threaded` must mechanically cover every enabled `check-world`
+  leaf component except explicit manifest exclusions. Run the Gate G checks
+  from the Test Strategy section: feasible sanitizers, repeated full suites,
+  threaded contrib regression for every contrib extension, non-contrib
+  `check-world` coverage under `src/test`, `src/pl`, `src/interfaces`,
+  `src/bin`, and `src/tools/pg_bsd_indent`, bundled procedural-language checks,
+  custom/extension GUC stress, crash/FATAL behavior tests, and performance
+  baselines.
 
 ## Phase 17: Advanced Scheduler Boundaries
 
