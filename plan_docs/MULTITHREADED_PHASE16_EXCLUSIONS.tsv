@@ -25,7 +25,6 @@ contrib/jsonb_plperl	contrib	temporarily_blocked	yes	initial Phase 16 threaded-w
 contrib/lo	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/ltree	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/oid2name	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-contrib/pageinspect	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/passwordcheck	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/pg_buffercache	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 contrib/pg_freespacemap	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory

@@ -1,4 +1,5 @@
 # component	threaded_target	notes
+contrib/pageinspect	check-threaded-contrib-pageinspect	pageinspect regression runs under threaded_workers.conf
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime

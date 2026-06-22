@@ -159,7 +159,13 @@ check-threaded-world-coverage:
 		--exclusions '$(THREADED_WORLD_EXCLUSIONS)'
 
 check-threaded-contrib:
-	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+	$(MAKE) check-threaded-contrib-pageinspect
+
+check-threaded-contrib-pageinspect: CHECKPREP_TOP=contrib/pageinspect
+check-threaded-contrib-pageinspect: | temp-install
+check-threaded-contrib-pageinspect: submake-generated-headers
+check-threaded-contrib-pageinspect:
+	$(MAKE) -C contrib/pageinspect check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-interfaces:
 	@echo "$@: no admitted components yet; manifest covers remaining leaves"
@@ -293,4 +299,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-pageinspect check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
