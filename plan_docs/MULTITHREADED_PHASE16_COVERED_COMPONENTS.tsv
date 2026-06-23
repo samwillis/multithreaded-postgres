@@ -46,6 +46,7 @@ src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup
 src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_controldata	check-threaded-bin-pg-controldata	pg_controldata TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/pg_dump	check-threaded-bin-pg-dump	pg_dump, pg_dumpall, and pg_restore TAP coverage runs under threaded TAP; locale-sensitive pg_dump and dump connection-string files use fresh LC_CTYPE=C initdbs instead of the shared C.UTF-8 template so threaded postmaster/database locale constraints are preserved
 src/bin/pg_resetwal	check-threaded-bin-pg-resetwal	pg_resetwal TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/bin/pg_test_fsync	check-threaded-bin-pg-test-fsync	pg_test_fsync utility TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_test_timing	check-threaded-bin-pg-test-timing	pg_test_timing utility TAP leaf runs through direct threaded-world prove coverage

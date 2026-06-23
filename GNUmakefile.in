@@ -163,6 +163,42 @@ define threaded_world_prove
 	  $(THREADED_WORLD_PROVE) -I '$(abs_top_srcdir)'/src/test/perl -I '$(abs_top_srcdir)/$(1)' $(PROVE_FLAGS) $(2)
 endef
 
+define threaded_world_prove_fresh_locale_c
+	rm -rf '$(abs_top_srcdir)/$(1)'/tmp_check
+	$(MKDIR_P) '$(abs_top_srcdir)/$(1)'/tmp_check/log
+	cd '$(abs_top_srcdir)/$(1)' && \
+	  unset INITDB_TEMPLATE && \
+	  LC_CTYPE=C \
+	  TESTLOGDIR='$(abs_top_srcdir)/$(1)'/tmp_check/log \
+	  TESTDATADIR='$(abs_top_srcdir)/$(1)'/tmp_check \
+	  PATH='$(abs_top_builddir)'/tmp_install$(bindir):'$(abs_top_srcdir)/$(1)':$$PATH \
+	  $(call add_to_path,$(strip $(ld_library_path_var)),$(abs_top_builddir)/tmp_install$(libdir)) \
+	  TEMP_CONFIG='$(THREADED_WORLD_TAP_CONFIG)' \
+	  PG_TEST_EXTRA='$(PG_TEST_EXTRA)' \
+	  PGPORT=65432 \
+	  top_builddir='$(abs_top_builddir)' \
+	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
+	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
+	  GMAKE='$(MAKE)' \
+	  with_icu='$(with_icu)' \
+	  with_ssl='$(with_ssl)' \
+	  with_gssapi='$(with_gssapi)' \
+	  with_krb_srvnam='$(with_krb_srvnam)' \
+	  with_readline='$(with_readline)' \
+	  with_ldap='$(with_ldap)' \
+	  with_libcurl='$(with_libcurl)' \
+	  with_python='$(with_python)' \
+	  enable_injection_points='$(enable_injection_points)' \
+	  OPENSSL='$(OPENSSL)' \
+	  PYTHON='$(PYTHON)' \
+	  TAR='$(TAR)' \
+	  GZIP_PROGRAM='$(GZIP)' \
+	  LZ4='$(LZ4)' \
+	  ZSTD='$(ZSTD)' \
+	  PERL5LIB='$(THREADED_WORLD_TAP_PERL5LIB):$(abs_top_srcdir)/$(1)':$${PERL5LIB} \
+	  $(THREADED_WORLD_PROVE) -I '$(abs_top_srcdir)'/src/test/perl -I '$(abs_top_srcdir)/$(1)' $(PROVE_FLAGS) $(2)
+endef
+
 check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200: | temp-install
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: CHECKPREP_TOP=src/test/regress
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: submake-generated-headers
@@ -1006,6 +1042,7 @@ check-threaded-bin:
 	$(MAKE) check-threaded-bin-pg-checksums
 	$(MAKE) check-threaded-bin-pg-config
 	$(MAKE) check-threaded-bin-pg-controldata
+	$(MAKE) check-threaded-bin-pg-dump
 	$(MAKE) check-threaded-bin-pg-resetwal
 	$(MAKE) check-threaded-bin-pg-test-fsync
 	$(MAKE) check-threaded-bin-pg-test-timing
@@ -1045,6 +1082,14 @@ check-threaded-bin-pg-controldata: submake-generated-headers
 check-threaded-bin-pg-controldata:
 	$(call threaded_world_prove,src/bin/pg_controldata,t/*.pl)
 
+check-threaded-bin-pg-dump: | temp-install
+check-threaded-bin-pg-dump: submake-generated-headers
+check-threaded-bin-pg-dump:
+	$(MAKE) -C src/bin/pg_dump all
+	$(call threaded_world_prove,src/bin/pg_dump,t/001_basic.pl t/003_pg_dump_with_server.pl t/004_pg_dump_parallel.pl t/005_pg_dump_filterfile.pl t/006_pg_dump_compress.pl t/007_pg_dumpall.pl)
+	$(call threaded_world_prove_fresh_locale_c,src/bin/pg_dump,t/002_pg_dump.pl)
+	$(call threaded_world_prove_fresh_locale_c,src/bin/pg_dump,t/010_dump_connstr.pl)
+
 check-threaded-bin-pg-resetwal: | temp-install
 check-threaded-bin-pg-resetwal: submake-generated-headers
 check-threaded-bin-pg-resetwal:
@@ -1075,78 +1120,14 @@ check-threaded-bin-pgbench: submake-generated-headers
 check-threaded-bin-pgbench:
 	$(MAKE) -C src/bin/pgbench all
 	$(call threaded_world_prove,src/bin/pgbench,t/002_pgbench_no_server.pl)
-	rm -rf '$(abs_top_srcdir)'/src/bin/pgbench/tmp_check
-	$(MKDIR_P) '$(abs_top_srcdir)'/src/bin/pgbench/tmp_check/log
-	cd '$(abs_top_srcdir)'/src/bin/pgbench && \
-	  unset INITDB_TEMPLATE && \
-	  LC_CTYPE=C \
-	  TESTLOGDIR='$(abs_top_srcdir)'/src/bin/pgbench/tmp_check/log \
-	  TESTDATADIR='$(abs_top_srcdir)'/src/bin/pgbench/tmp_check \
-	  PATH='$(abs_top_builddir)'/tmp_install$(bindir):'$(abs_top_srcdir)'/src/bin/pgbench:$$PATH \
-	  $(call add_to_path,$(strip $(ld_library_path_var)),$(abs_top_builddir)/tmp_install$(libdir)) \
-	  TEMP_CONFIG='$(THREADED_WORLD_TAP_CONFIG)' \
-	  PG_TEST_EXTRA='$(PG_TEST_EXTRA)' \
-	  PGPORT=65432 \
-	  top_builddir='$(abs_top_builddir)' \
-	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
-	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
-	  GMAKE='$(MAKE)' \
-	  with_icu='$(with_icu)' \
-	  with_ssl='$(with_ssl)' \
-	  with_gssapi='$(with_gssapi)' \
-	  with_krb_srvnam='$(with_krb_srvnam)' \
-	  with_readline='$(with_readline)' \
-	  with_ldap='$(with_ldap)' \
-	  with_libcurl='$(with_libcurl)' \
-	  with_python='$(with_python)' \
-	  enable_injection_points='$(enable_injection_points)' \
-	  OPENSSL='$(OPENSSL)' \
-	  PYTHON='$(PYTHON)' \
-	  TAR='$(TAR)' \
-	  GZIP_PROGRAM='$(GZIP)' \
-	  LZ4='$(LZ4)' \
-	  ZSTD='$(ZSTD)' \
-	  PERL5LIB='$(THREADED_WORLD_TAP_PERL5LIB):$(abs_top_srcdir)/src/bin/pgbench':$${PERL5LIB} \
-	  $(THREADED_WORLD_PROVE) -I '$(abs_top_srcdir)'/src/test/perl -I '$(abs_top_srcdir)'/src/bin/pgbench $(PROVE_FLAGS) t/001_pgbench_with_server.pl
+	$(call threaded_world_prove_fresh_locale_c,src/bin/pgbench,t/001_pgbench_with_server.pl)
 
 check-threaded-bin-scripts: | temp-install
 check-threaded-bin-scripts: submake-generated-headers
 check-threaded-bin-scripts:
 	$(MAKE) -C src/bin/scripts all
 	$(call threaded_world_prove,src/bin/scripts,t/010_clusterdb.pl t/011_clusterdb_all.pl t/040_createuser.pl t/050_dropdb.pl t/070_dropuser.pl t/080_pg_isready.pl t/090_reindexdb.pl t/091_reindexdb_all.pl t/100_vacuumdb.pl t/101_vacuumdb_all.pl t/102_vacuumdb_stages.pl t/200_connstr.pl)
-	rm -rf '$(abs_top_srcdir)'/src/bin/scripts/tmp_check
-	$(MKDIR_P) '$(abs_top_srcdir)'/src/bin/scripts/tmp_check/log
-	cd '$(abs_top_srcdir)'/src/bin/scripts && \
-	  unset INITDB_TEMPLATE && \
-	  LC_CTYPE=C \
-	  TESTLOGDIR='$(abs_top_srcdir)'/src/bin/scripts/tmp_check/log \
-	  TESTDATADIR='$(abs_top_srcdir)'/src/bin/scripts/tmp_check \
-	  PATH='$(abs_top_builddir)'/tmp_install$(bindir):'$(abs_top_srcdir)'/src/bin/scripts:$$PATH \
-	  $(call add_to_path,$(strip $(ld_library_path_var)),$(abs_top_builddir)/tmp_install$(libdir)) \
-	  TEMP_CONFIG='$(THREADED_WORLD_TAP_CONFIG)' \
-	  PG_TEST_EXTRA='$(PG_TEST_EXTRA)' \
-	  PGPORT=65432 \
-	  top_builddir='$(abs_top_builddir)' \
-	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
-	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
-	  GMAKE='$(MAKE)' \
-	  with_icu='$(with_icu)' \
-	  with_ssl='$(with_ssl)' \
-	  with_gssapi='$(with_gssapi)' \
-	  with_krb_srvnam='$(with_krb_srvnam)' \
-	  with_readline='$(with_readline)' \
-	  with_ldap='$(with_ldap)' \
-	  with_libcurl='$(with_libcurl)' \
-	  with_python='$(with_python)' \
-	  enable_injection_points='$(enable_injection_points)' \
-	  OPENSSL='$(OPENSSL)' \
-	  PYTHON='$(PYTHON)' \
-	  TAR='$(TAR)' \
-	  GZIP_PROGRAM='$(GZIP)' \
-	  LZ4='$(LZ4)' \
-	  ZSTD='$(ZSTD)' \
-	  PERL5LIB='$(THREADED_WORLD_TAP_PERL5LIB):$(abs_top_srcdir)/src/bin/scripts':$${PERL5LIB} \
-	  $(THREADED_WORLD_PROVE) -I '$(abs_top_srcdir)'/src/test/perl -I '$(abs_top_srcdir)'/src/bin/scripts $(PROVE_FLAGS) t/020_createdb.pl
+	$(call threaded_world_prove_fresh_locale_c,src/bin/scripts,t/020_createdb.pl)
 
 check-threaded-tools: | temp-install
 check-threaded-tools:
@@ -1283,6 +1264,7 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-initdb check-threaded-bin-pg-amcheck check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-bin-pgbench check-threaded-bin-scripts check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-interfaces-libpq check-threaded-interfaces-libpq-run check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: check-threaded-bin-pg-dump
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auto-explain check-threaded-contrib-auto-explain-run
 .PHONY: check-threaded-contrib-basic-archive check-threaded-contrib-basic-archive-run
