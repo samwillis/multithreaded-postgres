@@ -19,7 +19,11 @@
 #include "utils/builtins.h"
 #include "utils/wait_classes.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_lwlock_tranches",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 static shmem_request_hook_type prev_shmem_request_hook;
 static void test_lwlock_tranches_shmem_request(void);

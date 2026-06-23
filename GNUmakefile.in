@@ -156,6 +156,7 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-modules-brin
 	$(MAKE) check-threaded-test-modules-commit-ts
 	$(MAKE) check-threaded-test-modules-dummy-index-am
+	$(MAKE) check-threaded-test-modules-dummy-seclabel
 	$(MAKE) check-threaded-test-modules-index
 	$(MAKE) check-threaded-test-modules-plsample
 	$(MAKE) check-threaded-test-modules-spgist-name-ops
@@ -168,9 +169,11 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-modules-test-json-parser
 	$(MAKE) check-threaded-test-modules-test-copy-callbacks
 	$(MAKE) check-threaded-test-modules-test-custom-types
+	$(MAKE) check-threaded-test-modules-test-dsa
 	$(MAKE) check-threaded-test-modules-test-ginpostinglist
 	$(MAKE) check-threaded-test-modules-test-integerset
 	$(MAKE) check-threaded-test-modules-test-lfind
+	$(MAKE) check-threaded-test-modules-test-lwlock-tranches
 	$(MAKE) check-threaded-test-modules-test-parser
 	$(MAKE) check-threaded-test-modules-test-pg-dump
 	$(MAKE) check-threaded-test-modules-test-predtest
@@ -211,6 +214,13 @@ check-threaded-test-modules-dummy-index-am: submake-generated-headers
 check-threaded-test-modules-dummy-index-am:
 	$(MAKE) -C src/test/modules/dummy_index_am DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/dummy_index_am check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-dummy-seclabel: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-dummy-seclabel: | temp-install
+check-threaded-test-modules-dummy-seclabel: submake-generated-headers
+check-threaded-test-modules-dummy-seclabel:
+	$(MAKE) -C src/test/modules/dummy_seclabel DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/dummy_seclabel check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-test-modules-index: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-index: | temp-install
@@ -275,6 +285,13 @@ check-threaded-test-modules-test-custom-types:
 	$(MAKE) -C src/test/modules/test_custom_types DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_custom_types check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-test-dsa: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-dsa: | temp-install
+check-threaded-test-modules-test-dsa: submake-generated-headers
+check-threaded-test-modules-test-dsa:
+	$(MAKE) -C src/test/modules/test_dsa DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_dsa check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-test-modules-test-ginpostinglist: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-ginpostinglist: | temp-install
 check-threaded-test-modules-test-ginpostinglist: submake-generated-headers
@@ -301,6 +318,13 @@ check-threaded-test-modules-test-lfind: submake-generated-headers
 check-threaded-test-modules-test-lfind:
 	$(MAKE) -C src/test/modules/test_lfind DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_lfind check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-lwlock-tranches: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-lwlock-tranches: | temp-install
+check-threaded-test-modules-test-lwlock-tranches: submake-generated-headers
+check-threaded-test-modules-test-lwlock-tranches:
+	$(MAKE) -C src/test/modules/test_lwlock_tranches DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_lwlock_tranches check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-test-modules-test-parser: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-parser: | temp-install
@@ -1011,5 +1035,5 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
 .PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
 .PHONY: check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser
-.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-dummy-index-am check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shm-mq
+.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-dummy-index-am check-threaded-test-modules-dummy-seclabel check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-dsa check-threaded-test-modules-test-lwlock-tranches check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shm-mq
 .PHONY: check-threaded-test-modules-test-binaryheap check-threaded-test-modules-test-bitmapset check-threaded-test-modules-test-bloomfilter check-threaded-test-modules-test-ginpostinglist check-threaded-test-modules-test-integerset check-threaded-test-modules-test-lfind check-threaded-test-modules-test-radixtree check-threaded-test-modules-test-rbtree check-threaded-test-modules-test-regex

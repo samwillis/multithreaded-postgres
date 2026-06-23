@@ -59,6 +59,7 @@ src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs u
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
 src/test/modules/commit_ts	check-threaded-test-modules-commit-ts	commit timestamp regression runs under threaded_workers.conf plus commit_ts.conf with current configured TAP surface
 src/test/modules/dummy_index_am	check-threaded-test-modules-dummy-index-am	dummy index access method regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/dummy_seclabel	check-threaded-test-modules-dummy-seclabel	dummy security-label provider regression runs under threaded_workers.conf with thread-per-session metadata and process-global label-provider registration scoped to the temp test server
 src/test/modules/index	check-threaded-test-modules-index	index module isolation coverage runs under threaded_workers.conf
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
 src/test/modules/plsample	check-threaded-test-modules-plsample	PL/Sample regression module declares thread-per-session metadata and runs under threaded_workers.conf
@@ -70,11 +71,13 @@ src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloe
 src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callbacks	COPY callback regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_cplusplusext	check-threaded-test-modules-test-cplusplusext	C++ extension regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_custom_types	check-threaded-test-modules-test-custom-types	custom type regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_dsa	check-threaded-test-modules-test-dsa	dynamic shared memory area regression module declares thread-per-session metadata and runs DSA/resource-owner coverage under threaded_workers.conf
 src/test/modules/test_ginpostinglist	check-threaded-test-modules-test-ginpostinglist	GIN posting-list regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
 src/test/modules/test_integerset	check-threaded-test-modules-test-integerset	integer set regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
 src/test/modules/test_lfind	check-threaded-test-modules-test-lfind	linear-search regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_lwlock_tranches	check-threaded-test-modules-test-lwlock-tranches	LWLock tranche regression module declares thread-per-session metadata and runs startup shared-preload plus dynamic tranche coverage under threaded_workers.conf
 src/test/modules/test_parser	check-threaded-test-modules-test-parser	text search parser regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_pg_dump	check-threaded-test-modules-test-pg-dump	test_pg_dump SQL extension regression runs under threaded_workers.conf with current configured TAP surface
 src/test/modules/test_predtest	check-threaded-test-modules-test-predtest	predicate proof regression module declares thread-per-session metadata and runs under threaded_workers.conf
