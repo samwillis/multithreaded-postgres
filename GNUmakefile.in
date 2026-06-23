@@ -82,6 +82,7 @@ THREADED_WORLD_COVERAGE_TOOL = $(abs_top_srcdir)/src/tools/threaded_world/check_
 THREADED_WORLD_COVERED_COMPONENTS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv
 THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv
 THREADED_WORLD_CONTRIB_COMPONENTS = \
+	contrib/bloom \
 	contrib/btree_gin \
 	contrib/btree_gist \
 	contrib/citext \
@@ -89,21 +90,26 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/dict_int \
 	contrib/dict_xsyn \
 	contrib/earthdistance \
+	contrib/file_fdw \
 	contrib/fuzzystrmatch \
 	contrib/hstore \
 	contrib/intagg \
 	contrib/intarray \
 	contrib/isn \
+	contrib/lo \
 	contrib/ltree \
 	contrib/pageinspect \
 	contrib/pg_buffercache \
 	contrib/pg_freespacemap \
 	contrib/pg_surgery \
 	contrib/pg_trgm \
+	contrib/pg_visibility \
 	contrib/pg_walinspect \
 	contrib/pgrowlocks \
 	contrib/pgstattuple \
 	contrib/seg \
+	contrib/tablefunc \
+	contrib/tcn \
 	contrib/tsm_system_rows \
 	contrib/tsm_system_time \
 	contrib/unaccent
@@ -190,6 +196,7 @@ check-threaded-contrib:
 	for component in $(THREADED_WORLD_CONTRIB_COMPONENTS); do \
 		$(MAKE) -j1 -C $$component checkprep || exit; \
 	done
+	$(MAKE) check-threaded-contrib-bloom-run
 	$(MAKE) check-threaded-contrib-btree-gin-run
 	$(MAKE) check-threaded-contrib-btree-gist-run
 	$(MAKE) check-threaded-contrib-citext-run
@@ -197,24 +204,38 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-dict-int-run
 	$(MAKE) check-threaded-contrib-dict-xsyn-run
 	$(MAKE) check-threaded-contrib-earthdistance-run
+	$(MAKE) check-threaded-contrib-file-fdw-run
 	$(MAKE) check-threaded-contrib-fuzzystrmatch-run
 	$(MAKE) check-threaded-contrib-hstore-run
 	$(MAKE) check-threaded-contrib-intagg-run
 	$(MAKE) check-threaded-contrib-intarray-run
 	$(MAKE) check-threaded-contrib-isn-run
+	$(MAKE) check-threaded-contrib-lo-run
 	$(MAKE) check-threaded-contrib-ltree-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
 	$(MAKE) check-threaded-contrib-pg-buffercache-run
 	$(MAKE) check-threaded-contrib-pg-freespacemap-run
 	$(MAKE) check-threaded-contrib-pg-surgery-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
+	$(MAKE) check-threaded-contrib-pg-visibility-run
 	$(MAKE) check-threaded-contrib-pg-walinspect-run
 	$(MAKE) check-threaded-contrib-pgrowlocks-run
 	$(MAKE) check-threaded-contrib-pgstattuple-run
 	$(MAKE) check-threaded-contrib-seg-run
+	$(MAKE) check-threaded-contrib-tablefunc-run
+	$(MAKE) check-threaded-contrib-tcn-run
 	$(MAKE) check-threaded-contrib-tsm-system-rows-run
 	$(MAKE) check-threaded-contrib-tsm-system-time-run
 	$(MAKE) check-threaded-contrib-unaccent-run
+
+check-threaded-contrib-bloom: | temp-install
+check-threaded-contrib-bloom: submake-generated-headers
+check-threaded-contrib-bloom:
+	$(MAKE) -j1 -C contrib/bloom checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-bloom-run
+
+check-threaded-contrib-bloom-run:
+	$(MAKE) -C contrib/bloom check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-btree-gin: | temp-install
 check-threaded-contrib-btree-gin: submake-generated-headers
@@ -279,6 +300,15 @@ check-threaded-contrib-earthdistance:
 check-threaded-contrib-earthdistance-run:
 	$(MAKE) -C contrib/earthdistance check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-file-fdw: | temp-install
+check-threaded-contrib-file-fdw: submake-generated-headers
+check-threaded-contrib-file-fdw:
+	$(MAKE) -j1 -C contrib/file_fdw checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-file-fdw-run
+
+check-threaded-contrib-file-fdw-run:
+	$(MAKE) -C contrib/file_fdw check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-fuzzystrmatch: | temp-install
 check-threaded-contrib-fuzzystrmatch: submake-generated-headers
 check-threaded-contrib-fuzzystrmatch:
@@ -323,6 +353,15 @@ check-threaded-contrib-isn:
 
 check-threaded-contrib-isn-run:
 	$(MAKE) -C contrib/isn check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-lo: | temp-install
+check-threaded-contrib-lo: submake-generated-headers
+check-threaded-contrib-lo:
+	$(MAKE) -j1 -C contrib/lo checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-lo-run
+
+check-threaded-contrib-lo-run:
+	$(MAKE) -C contrib/lo check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-ltree: | temp-install
 check-threaded-contrib-ltree: submake-generated-headers
@@ -378,6 +417,15 @@ check-threaded-contrib-pg-trgm:
 check-threaded-contrib-pg-trgm-run:
 	$(MAKE) -C contrib/pg_trgm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-pg-visibility: | temp-install
+check-threaded-contrib-pg-visibility: submake-generated-headers
+check-threaded-contrib-pg-visibility:
+	$(MAKE) -j1 -C contrib/pg_visibility checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-visibility-run
+
+check-threaded-contrib-pg-visibility-run:
+	$(MAKE) -C contrib/pg_visibility check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-pg-walinspect: | temp-install
 check-threaded-contrib-pg-walinspect: submake-generated-headers
 check-threaded-contrib-pg-walinspect:
@@ -413,6 +461,24 @@ check-threaded-contrib-seg:
 
 check-threaded-contrib-seg-run:
 	$(MAKE) -C contrib/seg check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-tablefunc: | temp-install
+check-threaded-contrib-tablefunc: submake-generated-headers
+check-threaded-contrib-tablefunc:
+	$(MAKE) -j1 -C contrib/tablefunc checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-tablefunc-run
+
+check-threaded-contrib-tablefunc-run:
+	$(MAKE) -C contrib/tablefunc check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-tcn: | temp-install
+check-threaded-contrib-tcn: submake-generated-headers
+check-threaded-contrib-tcn:
+	$(MAKE) -j1 -C contrib/tcn checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-tcn-run
+
+check-threaded-contrib-tcn-run:
+	$(MAKE) -C contrib/tcn check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-tsm-system-rows: | temp-install
 check-threaded-contrib-tsm-system-rows: submake-generated-headers
@@ -611,4 +677,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
