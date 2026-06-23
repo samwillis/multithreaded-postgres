@@ -74,6 +74,7 @@ src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callb
 src/test/modules/test_cplusplusext	check-threaded-test-modules-test-cplusplusext	C++ extension regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_custom_types	check-threaded-test-modules-test-custom-types	custom type regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_dsa	check-threaded-test-modules-test-dsa	dynamic shared memory area regression module declares thread-per-session metadata and runs DSA/resource-owner coverage under threaded_workers.conf
+src/test/modules/test_escape	check-threaded-test-modules-test-escape	test_escape TAP module runs its libpq escape client program against a TEMP_CONFIG-injected multithreaded TAP server
 src/test/modules/test_extensions	check-threaded-test-modules-test-extensions	extension dependency and extension backend-model regressions run under threaded_workers.conf with a threaded-specific backend-model expectation while process and pooled model simulations remain covered by the process-mode schedule
 src/test/modules/test_ginpostinglist	check-threaded-test-modules-test-ginpostinglist	GIN posting-list regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf runs through direct threaded-world prove coverage
