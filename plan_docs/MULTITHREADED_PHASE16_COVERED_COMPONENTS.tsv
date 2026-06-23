@@ -93,5 +93,6 @@ src/test/modules/test_rls_hooks	check-threaded-test-modules-test-rls-hooks	RLS h
 src/test/modules/test_saslprep	check-threaded-test-modules-test-saslprep	SASLprep regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_shm_mq	check-threaded-test-modules-test-shm-mq	shared-memory message queue regression module declares thread-per-session metadata and runs worker coverage under threaded_workers.conf
 src/test/modules/test_tidstore	check-threaded-test-modules-test-tidstore	TidStore regression module runs under threaded_workers.conf with formerly file-scope test state moved to session-private extension state
+src/test/modules/unsafe_tests	check-threaded-test-modules-unsafe-tests	unsafe_tests regression suite runs under threaded_workers.conf, including non-contrib GUC privilege checks and ALTER SYSTEM custom-placeholder reload/reconnect coverage after threaded runtime server-GUC path ownership and placeholder replay fixes
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
 src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf runs through direct threaded-world prove coverage

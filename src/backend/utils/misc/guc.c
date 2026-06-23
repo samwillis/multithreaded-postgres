@@ -493,6 +493,23 @@ GUCRecordVariableIsCurrentSessionOwned(const struct config_generic *record)
 }
 
 static bool
+GUCStringVariableCanAssignDuringThreadedReplay(const struct config_generic *record)
+{
+	Assert(record->vartype == PGC_STRING);
+
+	if (PgCurrentOrEarlySessionOwnsPointer(GUC_VARIABLE_STRING(record)))
+		return true;
+
+	/*
+	 * Custom placeholders keep their char * value slot in the current
+	 * session's dynamic GUC record, not directly in PgSession.  They still
+	 * need replay assignment so custom settings loaded from postgresql.auto.conf
+	 * become visible in newly started threaded sessions.
+	 */
+	return (record->flags & GUC_CUSTOM_PLACEHOLDER) != 0;
+}
+
+static bool
 GUCThreadedBackendReplayActive(bool is_reload)
 {
 	return is_reload &&
@@ -1433,7 +1450,7 @@ set_extra_field(struct config_generic *gconf, void **field, void *newval)
 }
 
 static void
-clear_guc_stack(struct config_generic *gconf)
+clear_guc_stack(struct config_generic *gconf, bool free_string_fields)
 {
 	GucStack   *stack;
 
@@ -1443,8 +1460,16 @@ clear_guc_stack(struct config_generic *gconf)
 
 		if (gconf->vartype == PGC_STRING)
 		{
-			set_string_field(gconf, &stack->prior.val.stringval, NULL);
-			set_string_field(gconf, &stack->masked.val.stringval, NULL);
+			if (free_string_fields)
+			{
+				set_string_field(gconf, &stack->prior.val.stringval, NULL);
+				set_string_field(gconf, &stack->masked.val.stringval, NULL);
+			}
+			else
+			{
+				stack->prior.val.stringval = NULL;
+				stack->masked.val.stringval = NULL;
+			}
 		}
 		set_extra_field(gconf, &stack->prior.extra, NULL);
 		set_extra_field(gconf, &stack->masked.extra, NULL);
@@ -1457,18 +1482,23 @@ reset_guc_record_at_backend_exit(struct config_generic *gconf)
 {
 	void	   *extra = GUC_EXTRA(gconf);
 	void	   *reset_extra = GUC_RESET_EXTRA(gconf);
+	bool		session_owned_variable = GUCRecordVariableIsCurrentSessionOwned(gconf);
 
 	RemoveGUCFromLists(gconf);
-	clear_guc_stack(gconf);
+	clear_guc_stack(gconf, session_owned_variable);
 	clear_last_reported(gconf);
 	guc_free(GUC_SOURCEFILE(gconf));
 	GUC_SET_SOURCEFILE(gconf, NULL);
 
 	if (gconf->vartype == PGC_STRING)
 	{
-		if (GUCRecordVariableIsCurrentSessionOwned(gconf))
+		if (session_owned_variable)
+		{
 			set_string_field(gconf, GUC_VARIABLE_STRING(gconf), NULL);
-		set_string_field(gconf, &GUC_RESET_STRING(gconf), NULL);
+			set_string_field(gconf, &GUC_RESET_STRING(gconf), NULL);
+		}
+		else
+			GUC_RESET_STRING(gconf) = NULL;
 	}
 
 	GUC_SET_EXTRA(gconf, NULL);
@@ -5419,12 +5449,12 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 				 * GUCs into a copied GUC table.  If a string GUC still points
 				 * at process-global backing storage, do not replace that
 				 * global with a string allocated in this session's GUC
-				 * context.  Ordinary SET processing must still assign
-				 * custom and extension GUCs.
+				 * context.  Custom placeholders store their value slot in the
+				 * session GUC context, so replay must still assign them.
 				 */
 				assign_variable =
 					!GUCThreadedBackendReplayActive(is_reload) ||
-					PgCurrentOrEarlySessionOwnsPointer(GUC_VARIABLE_STRING(record));
+					GUCStringVariableCanAssignDuringThreadedReplay(record);
 
 				if (value)
 				{

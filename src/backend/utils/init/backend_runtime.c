@@ -775,7 +775,6 @@ InitializePgProcessRuntime(void)
 	process_runtime.kind = PG_RUNTIME_PROCESS;
 	process_runtime.current_carrier = &process_carrier;
 	process_runtime.extension_backend_model = PG_BACKEND_MODEL_PROCESS;
-	PgRuntimeAdoptEarlyServerGUCState(&process_runtime);
 	PgRuntimeAdoptEarlyExtensionModuleState(&process_runtime);
 
 	process_carrier.kind = PG_CARRIER_PROCESS;
@@ -811,6 +810,7 @@ InitializePgProcessRuntime(void)
 	PgRuntimeSetCurrentWork(&process_runtime, &process_carrier,
 							&process_backend, &process_session,
 							&process_connection, &process_execution, true);
+	PgRuntimeAdoptEarlyServerGUCState(&process_runtime);
 
 	if (MyProc != NULL && MyProc->backendId == 0)
 		MyProc->backendId = process_backend.id;
