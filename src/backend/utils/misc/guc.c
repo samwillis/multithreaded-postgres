@@ -611,6 +611,24 @@ GUCShowOptionNeedsThreadedLock(const struct config_generic *record)
 	return true;
 }
 
+static const ThreadedSessionGUCRebind *
+ThreadedSessionGUCRebindForRecord(const struct config_generic *record)
+{
+	if (!multithreaded || !GUCRecordIsCurrentSessionBuiltin(record))
+		return NULL;
+
+	for (int i = 0; i < NumThreadedSessionGUCRebinds; i++)
+	{
+		const ThreadedSessionGUCRebind *rebind = &ThreadedSessionGUCRebinds[i];
+
+		if (rebind->vartype == record->vartype &&
+			guc_name_compare(rebind->name, record->name) == 0)
+			return rebind;
+	}
+
+	return NULL;
+}
+
 static MemoryContext
 GUCReservedPrefixContext(void)
 {
@@ -1331,6 +1349,54 @@ guc_free(void *ptr)
 	}
 }
 
+static bool
+guc_string_is_static_storage(const char *strval)
+{
+	if (strval == NULL)
+		return false;
+	if (PgSessionStringIsStaticGUCDefault(strval))
+		return true;
+
+	if (guc_variables != NULL)
+	{
+		for (int i = 0; i < num_guc_variables; i++)
+		{
+			struct config_generic *gconf = &guc_variables[i];
+
+			if (gconf->vartype == PGC_STRING &&
+				strval == gconf->_string.boot_val)
+				return true;
+		}
+	}
+
+	if (guc_hashtab != NULL)
+	{
+		HASH_SEQ_STATUS status;
+		GUCHashEntry *hentry;
+
+		hash_seq_init(&status, guc_hashtab);
+		while ((hentry = (GUCHashEntry *) hash_seq_search(&status)) != NULL)
+		{
+			struct config_generic *gconf = hentry->gucvar;
+
+			if (gconf->vartype == PGC_STRING &&
+				strval == gconf->_string.boot_val)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+void
+guc_free_string(char *strval)
+{
+	if (multithreaded && !IsUnderPostmaster)
+		return;
+	if (strval != NULL && !guc_string_is_static_storage(strval))
+		guc_free(strval);
+}
+
 
 /*
  * Detect whether strval is referenced anywhere in a GUC string item
@@ -1352,6 +1418,13 @@ string_field_used(struct config_generic *conf, char *strval)
 	return false;
 }
 
+static void guc_free_string_value(const struct config_generic *conf,
+								  char *strval);
+static void guc_free_extra_value(const struct config_generic *conf,
+								 void *extra);
+static void guc_free_sourcefile_value(const struct config_generic *conf,
+									  char *sourcefile);
+
 /*
  * Forget the last value reported to the frontend.  In threaded builds, copied
  * session GUC records can transiently have last_reported sharing storage with
@@ -1367,8 +1440,12 @@ clear_last_reported(struct config_generic *conf)
 		return;
 
 	GUC_SET_LAST_REPORTED(conf, NULL);
-	if (conf->vartype != PGC_STRING ||
-		!string_field_used(conf, last_reported))
+	if (conf->vartype == PGC_STRING)
+	{
+		if (!string_field_used(conf, last_reported))
+			guc_free_string_value(conf, last_reported);
+	}
+	else
 		guc_free(last_reported);
 }
 
@@ -1382,15 +1459,50 @@ canonicalize_default_string_value(struct config_generic *conf, char *newval)
 	if (strcmp(newval, boot_val) != 0)
 		return newval;
 
-	guc_free(newval);
+	guc_free_string_value(conf, newval);
 	return unconstify(char *, boot_val);
 }
 
 static void
-guc_free_string_value(struct config_generic *conf, char *strval)
+guc_free_string_value(const struct config_generic *conf, char *strval)
 {
-	if (strval != NULL && strval != conf->_string.boot_val)
+	if (multithreaded &&
+		!IsUnderPostmaster &&
+		ThreadedSessionGUCRebindForRecord(conf) != NULL)
+		return;
+	if (strval != NULL &&
+		strval != conf->_string.boot_val &&
+		!guc_string_is_static_storage(strval))
 		guc_free(strval);
+}
+
+static void
+guc_free_extra_value(const struct config_generic *conf, void *extra)
+{
+	/*
+	 * Hook-backed session GUCs keep their direct variable value in PgSession
+	 * while the parsed "extra" payload remains attached to the copied GUC
+	 * record.  In threaded mode, the postmaster can reload config after carrier
+	 * threads have rebound that record through session state; do not let the
+	 * postmaster free payloads that may belong to a carrier's session GUC
+	 * context.  The owning session/backend releases those allocations when its
+	 * GUC context is torn down.
+	 */
+	if (multithreaded &&
+		!IsUnderPostmaster &&
+		ThreadedSessionGUCRebindForRecord(conf) != NULL)
+		return;
+	guc_free(extra);
+}
+
+static void
+guc_free_sourcefile_value(const struct config_generic *conf, char *sourcefile)
+{
+	if (multithreaded &&
+		!IsUnderPostmaster &&
+		ThreadedSessionGUCRebindForRecord(conf) != NULL)
+		return;
+	guc_free(sourcefile);
 }
 
 /*
@@ -1408,7 +1520,7 @@ set_string_field(struct config_generic *conf, char **field, char *newval)
 
 	/* Free old value if it's not NULL and isn't referenced anymore */
 	if (oldval && !string_field_used(conf, oldval))
-		guc_free(oldval);
+		guc_free_string_value(conf, oldval);
 }
 
 /*
@@ -1446,7 +1558,7 @@ set_extra_field(struct config_generic *gconf, void **field, void *newval)
 
 	/* Free old value if it's not NULL and isn't referenced anymore */
 	if (oldval && !extra_field_used(gconf, oldval))
-		guc_free(oldval);
+		guc_free_extra_value(gconf, oldval);
 }
 
 static void
@@ -1487,7 +1599,7 @@ reset_guc_record_at_backend_exit(struct config_generic *gconf)
 	RemoveGUCFromLists(gconf);
 	clear_guc_stack(gconf, session_owned_variable);
 	clear_last_reported(gconf);
-	guc_free(GUC_SOURCEFILE(gconf));
+	guc_free_sourcefile_value(gconf, GUC_SOURCEFILE(gconf));
 	GUC_SET_SOURCEFILE(gconf, NULL);
 
 	if (gconf->vartype == PGC_STRING)
@@ -1503,11 +1615,11 @@ reset_guc_record_at_backend_exit(struct config_generic *gconf)
 
 	GUC_SET_EXTRA(gconf, NULL);
 	if (extra != NULL && !extra_field_used(gconf, extra))
-		guc_free(extra);
+		guc_free_extra_value(gconf, extra);
 
 	GUC_SET_RESET_EXTRA(gconf, NULL);
 	if (reset_extra != NULL && !extra_field_used(gconf, reset_extra))
-		guc_free(reset_extra);
+		guc_free_extra_value(gconf, reset_extra);
 
 	GUC_STATUS(gconf) = 0;
 	GUC_SOURCE(gconf) = PGC_S_DEFAULT;
@@ -4643,7 +4755,7 @@ parse_and_validate_value(const struct config_generic *record,
 				if (!call_string_check_hook(record, &newval->stringval, newextra,
 											source, elevel))
 				{
-					guc_free(newval->stringval);
+					guc_free_string_value(record, newval->stringval);
 					newval->stringval = NULL;
 					return false;
 				}
@@ -5179,7 +5291,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 				{
 					/* Release newextra, unless it's reset_extra */
 					if (newextra && !extra_field_used(record, newextra))
-						guc_free(newextra);
+						guc_free_extra_value(record, newextra);
 
 					if (*GUC_VARIABLE_BOOL(record) != newval)
 					{
@@ -5236,7 +5348,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 				/* Perhaps we didn't install newextra anywhere */
 				if (newextra && !extra_field_used(record, newextra))
-					guc_free(newextra);
+					guc_free_extra_value(record, newextra);
 				break;
 
 #undef newval
@@ -5275,7 +5387,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 				{
 					/* Release newextra, unless it's reset_extra */
 					if (newextra && !extra_field_used(record, newextra))
-						guc_free(newextra);
+						guc_free_extra_value(record, newextra);
 
 					if (*GUC_VARIABLE_INT(record) != newval)
 					{
@@ -5332,7 +5444,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 				/* Perhaps we didn't install newextra anywhere */
 				if (newextra && !extra_field_used(record, newextra))
-					guc_free(newextra);
+					guc_free_extra_value(record, newextra);
 				break;
 
 #undef newval
@@ -5371,7 +5483,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 				{
 					/* Release newextra, unless it's reset_extra */
 					if (newextra && !extra_field_used(record, newextra))
-						guc_free(newextra);
+						guc_free_extra_value(record, newextra);
 
 					if (*GUC_VARIABLE_REAL(record) != newval)
 					{
@@ -5428,7 +5540,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 				/* Perhaps we didn't install newextra anywhere */
 				if (newextra && !extra_field_used(record, newextra))
-					guc_free(newextra);
+					guc_free_extra_value(record, newextra);
 				break;
 
 #undef newval
@@ -5478,7 +5590,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 					if (!call_string_check_hook(record, &newval, &newextra,
 												source, elevel))
 					{
-						guc_free(newval);
+						guc_free_string_value(record, newval);
 						return 0;
 					}
 				}
@@ -5506,10 +5618,10 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 					/* Release newval, unless it's reset_val */
 					if (newval && !string_field_used(record, newval))
-						guc_free(newval);
+						guc_free_string_value(record, newval);
 					/* Release newextra, unless it's reset_extra */
 					if (newextra && !extra_field_used(record, newextra))
-						guc_free(newextra);
+						guc_free_extra_value(record, newextra);
 
 					if (newval_different)
 					{
@@ -5611,10 +5723,10 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 				/* Perhaps we didn't install newval anywhere */
 				if (newval && !string_field_used(record, newval))
-					guc_free(newval);
+					guc_free_string_value(record, newval);
 				/* Perhaps we didn't install newextra anywhere */
 				if (newextra && !extra_field_used(record, newextra))
-					guc_free(newextra);
+					guc_free_extra_value(record, newextra);
 				break;
 
 #undef newval
@@ -5653,7 +5765,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 				{
 					/* Release newextra, unless it's reset_extra */
 					if (newextra && !extra_field_used(record, newextra))
-						guc_free(newextra);
+						guc_free_extra_value(record, newextra);
 
 					if (*GUC_VARIABLE_ENUM(record) != newval)
 					{
@@ -5710,7 +5822,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 
 				/* Perhaps we didn't install newextra anywhere */
 				if (newextra && !extra_field_used(record, newextra))
-					guc_free(newextra);
+					guc_free_extra_value(record, newextra);
 				break;
 
 #undef newval
@@ -5765,7 +5877,7 @@ set_config_sourcefile(const char *name, char *sourcefile, int sourceline)
 		return;
 
 	sourcefile = guc_strdup(elevel, sourcefile);
-	guc_free(GUC_SOURCEFILE(record));
+	guc_free_sourcefile_value(record, GUC_SOURCEFILE(record));
 	GUC_SET_SOURCEFILE(record, sourcefile);
 	GUC_SET_SOURCELINE(record, sourceline);
 }
@@ -6203,8 +6315,8 @@ AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt)
 									name, value)));
 
 				if (record->vartype == PGC_STRING && newval.stringval != NULL)
-					guc_free(newval.stringval);
-				guc_free(newextra);
+					guc_free_string_value(record, newval.stringval);
+				guc_free_extra_value(record, newextra);
 			}
 		}
 		else
@@ -7139,7 +7251,18 @@ ShowGUCOptionInternal(const struct config_generic *record, bool use_units)
 static void
 write_one_nondefault_variable(FILE *fp, struct config_generic *gconf)
 {
+	const ThreadedSessionGUCRebind *rebind;
+
 	Assert(GUC_SOURCE(gconf) != PGC_S_DEFAULT);
+
+	/*
+	 * Threaded carriers can rebind the raw variable slot in their own current
+	 * GUC state while the postmaster is dumping config for future backends.
+	 * For generated session/runtime-owned built-ins, read the current
+	 * postmaster/session value directly from the accessor so serialization
+	 * does not depend on a previously rebound raw slot.
+	 */
+	rebind = ThreadedSessionGUCRebindForRecord(gconf);
 
 	fprintf(fp, "%s", gconf->name);
 	fputc(0, fp);
@@ -7148,7 +7271,11 @@ write_one_nondefault_variable(FILE *fp, struct config_generic *gconf)
 	{
 		case PGC_BOOL:
 			{
-				if (*GUC_VARIABLE_BOOL(gconf))
+				bool	   *value;
+
+				value = rebind != NULL ? rebind->accessor.bool_ref() :
+					GUC_VARIABLE_BOOL(gconf);
+				if (*value)
 					fprintf(fp, "true");
 				else
 					fprintf(fp, "false");
@@ -7157,30 +7284,52 @@ write_one_nondefault_variable(FILE *fp, struct config_generic *gconf)
 
 		case PGC_INT:
 			{
-				fprintf(fp, "%d", *GUC_VARIABLE_INT(gconf));
+				int		   *value;
+
+				value = rebind != NULL ? rebind->accessor.int_ref() :
+					GUC_VARIABLE_INT(gconf);
+				fprintf(fp, "%d", *value);
 			}
 			break;
 
 		case PGC_REAL:
 			{
-				fprintf(fp, "%.17g", *GUC_VARIABLE_REAL(gconf));
+				double	   *value;
+
+				value = rebind != NULL ? rebind->accessor.real_ref() :
+					GUC_VARIABLE_REAL(gconf);
+				fprintf(fp, "%.17g", *value);
 			}
 			break;
 
 		case PGC_STRING:
 			{
+				char	  **value;
+
 				if (strcmp(gconf->name, "client_encoding") == 0)
 					fprintf(fp, "%s", pg_get_client_encoding_name());
-				else if (*GUC_VARIABLE_STRING(gconf))
-					fprintf(fp, "%s", *GUC_VARIABLE_STRING(gconf));
+				else
+				{
+					value = rebind != NULL ? rebind->accessor.string_ref() :
+						GUC_VARIABLE_STRING(gconf);
+					if (strcmp(gconf->name, "timezone_abbreviations") == 0 &&
+						GUC_SOURCE(gconf) == PGC_S_DYNAMIC_DEFAULT)
+						fprintf(fp, "Default");
+					else if (*value)
+						fprintf(fp, "%s", *value);
+				}
 			}
 			break;
 
 		case PGC_ENUM:
 			{
+				int		   *value;
+
+				value = rebind != NULL ? rebind->accessor.enum_ref() :
+					GUC_VARIABLE_ENUM(gconf);
 				fprintf(fp, "%s",
 						config_enum_lookup_by_value(gconf,
-												   *GUC_VARIABLE_ENUM(gconf)));
+												   *value));
 			}
 			break;
 	}
@@ -7204,6 +7353,28 @@ write_one_nondefault_variable(FILE *fp, struct config_generic *gconf)
 	}
 }
 
+/*
+ * Process config files and refresh the exec-backend/threaded GUC dump.
+ *
+ * In threaded mode, built-in GUC records contain raw variable pointers that are
+ * rebound to whichever logical session is current on the carrier.  Keep config
+ * parsing on the postmaster's existing GUC state, then let
+ * write_nondefault_variables() rebind and serialize through generated
+ * accessors where needed so future threaded backends do not inherit stale raw
+ * session pointers.
+ */
+void
+ProcessConfigFileAndWriteNondefaultVariables(GucContext context)
+{
+	Assert(context == PGC_POSTMASTER || context == PGC_SIGHUP);
+
+	if (multithreaded)
+		RebindSessionGUCVariablePointers();
+
+	ProcessConfigFile(context);
+	write_nondefault_variables(context);
+}
+
 void
 write_nondefault_variables(GucContext context)
 {
@@ -7214,6 +7385,9 @@ write_nondefault_variables(GucContext context)
 	Assert(context == PGC_POSTMASTER || context == PGC_SIGHUP);
 
 	elevel = (context == PGC_SIGHUP) ? LOG : ERROR;
+
+	if (multithreaded)
+		RebindSessionGUCVariablePointers();
 
 	/*
 	 * Open file
@@ -7852,9 +8026,9 @@ RestoreGUCState(void *gucstate)
 		 * in.
 		 */
 		Assert(GUC_STACK(gconf) == NULL);
-		guc_free(GUC_EXTRA(gconf));
-		clear_last_reported(gconf);
-		guc_free(GUC_SOURCEFILE(gconf));
+			guc_free_extra_value(gconf, GUC_EXTRA(gconf));
+			clear_last_reported(gconf);
+			guc_free_sourcefile_value(gconf, GUC_SOURCEFILE(gconf));
 		switch (gconf->vartype)
 		{
 			case PGC_BOOL:
@@ -7875,7 +8049,7 @@ RestoreGUCState(void *gucstate)
 				}
 		}
 		if (GUC_RESET_EXTRA(gconf) && GUC_RESET_EXTRA(gconf) != GUC_EXTRA(gconf))
-			guc_free(GUC_RESET_EXTRA(gconf));
+				guc_free_extra_value(gconf, GUC_RESET_EXTRA(gconf));
 		/* Remove it from any lists it's in. */
 		RemoveGUCFromLists(gconf);
 		/* Now we can reset the struct to PGS_S_DEFAULT state. */
@@ -8520,7 +8694,7 @@ call_string_check_hook(const struct config_generic *conf, char **newval, void **
 	}
 	PG_CATCH();
 	{
-		guc_free(*newval);
+		guc_free_string(*newval);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();

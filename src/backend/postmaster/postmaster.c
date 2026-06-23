@@ -2127,12 +2127,13 @@ process_pm_reload_request(void)
 	{
 		ereport(LOG,
 				(errmsg("received SIGHUP, reloading configuration files")));
-		ProcessConfigFile(PGC_SIGHUP);
 #ifdef EXEC_BACKEND
-		write_nondefault_variables(PGC_SIGHUP);
+		ProcessConfigFileAndWriteNondefaultVariables(PGC_SIGHUP);
 #else
 		if (multithreaded)
-			write_nondefault_variables(PGC_SIGHUP);
+			ProcessConfigFileAndWriteNondefaultVariables(PGC_SIGHUP);
+		else
+			ProcessConfigFile(PGC_SIGHUP);
 #endif
 		SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
 

@@ -656,7 +656,7 @@ check_default_text_search_config(char **newval, void **extra, GucSource source)
 		ReleaseSysCache(tuple);
 
 		/* GUC wants it guc_malloc'd not palloc'd */
-		guc_free(*newval);
+		guc_free_string(*newval);
 		*newval = guc_strdup(LOG, buf);
 		pfree(buf);
 		if (!*newval)

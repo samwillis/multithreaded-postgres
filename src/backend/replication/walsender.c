@@ -1697,7 +1697,7 @@ WalSndHandleConfigReload(void)
 		return;
 
 	ConfigReloadPending = false;
-	ProcessConfigFile(PGC_SIGHUP);
+	ProcessConfigReloadForCurrentWorker();
 	SyncRepInitConfig();
 
 	/*

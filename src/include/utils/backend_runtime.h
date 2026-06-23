@@ -3408,6 +3408,7 @@ extern void PgRuntimeDeleteOwnedMemoryContext(MemoryContext *context);
 extern void PgBackendInitializeInterrupts(PgBackend *backend);
 extern void PgBackendAdoptEarlyState(PgBackend *backend);
 extern void PgSessionAdoptEarlyState(PgSession *session);
+extern bool PgSessionStringIsStaticGUCDefault(const char *strval);
 extern void PgConnectionAdoptEarlyState(PgConnection *connection,
 										 struct Port *preserved_port);
 extern void PgConnectionResetClosedState(PgConnection *connection);

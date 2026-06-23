@@ -925,7 +925,7 @@ PgSessionServiceProtocolReadWake(PgSession *session)
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 	}
 }
 
@@ -5027,7 +5027,7 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 	}
 
 	/*

@@ -222,7 +222,7 @@ check_datestyle(char **newval, void **extra, GucSource source)
 			break;
 	}
 
-	guc_free(*newval);
+	guc_free_string(*newval);
 	*newval = result;
 
 	/*
@@ -805,7 +805,7 @@ check_client_encoding(char **newval, void **extra, GucSource source)
 	if (strcmp(*newval, canonical_name) != 0 &&
 		strcmp(*newval, "UNICODE") != 0)
 	{
-		guc_free(*newval);
+		guc_free_string(*newval);
 		*newval = guc_strdup(LOG, canonical_name);
 		if (!*newval)
 			return false;
@@ -1134,7 +1134,7 @@ check_application_name(char **newval, void **extra, GucSource source)
 		return false;
 	}
 
-	guc_free(*newval);
+	guc_free_string(*newval);
 
 	pfree(clean);
 	*newval = ret;
@@ -1172,7 +1172,7 @@ check_cluster_name(char **newval, void **extra, GucSource source)
 		return false;
 	}
 
-	guc_free(*newval);
+	guc_free_string(*newval);
 
 	pfree(clean);
 	*newval = ret;
