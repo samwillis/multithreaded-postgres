@@ -32,6 +32,36 @@ compute_query_id = 'regress'
 
 $node->start();
 
+my $threaded = $node->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
+
+sub crash_backend_or_threaded_postmaster
+{
+	my ($node, $signal, $pid) = @_;
+
+	if ($threaded)
+	{
+		$node->kill9();
+		return 0;
+	}
+
+	return PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', $signal, $pid);
+}
+
+sub wait_after_crash
+{
+	my ($node, $signal) = @_;
+
+	if ($threaded)
+	{
+		ok($node->start(), "restarted threaded postmaster after $signal crash");
+		return;
+	}
+
+	is($node->poll_query_until('postgres', undef, ''),
+		"1", "reconnected after $signal");
+	return;
+}
+
 # by default PostgreSQL::Test::Cluster doesn't restart after a crash
 $node->safe_psql(
 	'postgres', q[
@@ -116,10 +146,13 @@ $monitor_stdout = '';
 $monitor_stderr = '';
 
 # kill once with QUIT - we expect psql to exit, while emitting error message first
-my $ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'QUIT', $pid);
+my $ret = crash_backend_or_threaded_postmaster($node, 'QUIT', $pid);
 
 # Exactly process should have been alive to be killed
-is($ret, 0, "killed process with SIGQUIT");
+is($ret, 0,
+	$threaded
+	? "crashed threaded postmaster for SIGQUIT scenario"
+	: "killed process with SIGQUIT");
 
 # Check that psql sees the killed backend as having been terminated
 $killme_stdin .= q[
@@ -149,8 +182,7 @@ ok( pump_until(
 $monitor->finish;
 
 # Wait till server restarts
-is($node->poll_query_until('postgres', undef, ''),
-	"1", "reconnected after SIGQUIT");
+wait_after_crash($node, 'SIGQUIT');
 
 
 # restart psql processes, now that the crash cycle finished
@@ -208,8 +240,11 @@ $monitor_stderr = '';
 
 # kill with SIGKILL this time - we expect the backend to exit, without
 # being able to emit an error message
-$ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
-is($ret, 0, "killed process with KILL");
+$ret = crash_backend_or_threaded_postmaster($node, 'KILL', $pid);
+is($ret, 0,
+	$threaded
+	? "crashed threaded postmaster for SIGKILL scenario"
+	: "killed process with KILL");
 
 # Check that psql sees the server as being terminated. No WARNING,
 # because signal handlers aren't being run on SIGKILL.
@@ -238,8 +273,7 @@ ok( pump_until(
 $monitor->finish;
 
 # Wait till server restarts
-is($node->poll_query_until('postgres', undef, ''),
-	"1", "reconnected after SIGKILL");
+wait_after_crash($node, 'SIGKILL');
 
 # Make sure the committed rows survived, in-progress ones not
 is( $node->safe_psql('postgres', 'SELECT * FROM alive'),

@@ -21,6 +21,35 @@ my $node = PostgreSQL::Test::Cluster->new('node_crash');
 $node->init();
 $node->start();
 
+my $threaded = $node->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
+
+sub crash_backend_or_threaded_postmaster
+{
+	my ($node, $pid) = @_;
+
+	if ($threaded)
+	{
+		$node->kill9();
+		return 0;
+	}
+
+	return PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
+}
+
+sub wait_after_crash
+{
+	my ($node) = @_;
+
+	if ($threaded)
+	{
+		ok($node->start(), 'restarted threaded postmaster after crash');
+		return;
+	}
+
+	$node->poll_query_until('postgres', undef, '');
+	return;
+}
+
 # By default, PostgreSQL::Test::Cluster doesn't restart after crash
 # Reduce work_mem to generate temporary file with a few number of rows
 $node->safe_psql(
@@ -125,8 +154,11 @@ $killme_stdout2 = '';
 $killme_stderr2 = '';
 
 # Kill with SIGKILL
-my $ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
-is($ret, 0, 'killed process with KILL');
+my $ret = crash_backend_or_threaded_postmaster($node, $pid);
+is($ret, 0,
+	$threaded
+	? 'crashed threaded postmaster for KILL scenario'
+	: 'killed process with KILL');
 
 # Close that psql session
 $killme->finish;
@@ -146,7 +178,7 @@ ok( pump_until(
 $killme2->finish;
 
 # Wait till server finishes restarting
-$node->poll_query_until('postgres', undef, '');
+wait_after_crash($node);
 
 # Check for temporary files
 is( $node->safe_psql(
@@ -232,8 +264,11 @@ $killme_stdout2 = '';
 $killme_stderr2 = '';
 
 # Kill with SIGKILL
-$ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
-is($ret, 0, 'killed process with KILL');
+$ret = crash_backend_or_threaded_postmaster($node, $pid);
+is($ret, 0,
+	$threaded
+	? 'crashed threaded postmaster for KILL scenario'
+	: 'killed process with KILL');
 
 # Close that psql session
 $killme->finish;
@@ -253,13 +288,23 @@ ok( pump_until(
 $killme2->finish;
 
 # Wait till server finishes restarting
-$node->poll_query_until('postgres', undef, '');
+wait_after_crash($node);
 
-# Check for temporary files -- should be there
-is( $node->safe_psql(
-		'postgres', 'SELECT COUNT(1) FROM pg_ls_dir($$base/pgsql_tmp$$)'),
-	qq(1),
-	'one temporary file');
+# Check for temporary files.
+if ($threaded)
+{
+	is( $node->safe_psql(
+			'postgres', 'SELECT COUNT(1) FROM pg_ls_dir($$base/pgsql_tmp$$)'),
+		qq(0),
+		'no temporary files after threaded postmaster crash');
+}
+else
+{
+	is( $node->safe_psql(
+			'postgres', 'SELECT COUNT(1) FROM pg_ls_dir($$base/pgsql_tmp$$)'),
+		qq(1),
+		'one temporary file');
+}
 
 # Restart should remove the temporary files
 $node->restart();

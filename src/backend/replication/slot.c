@@ -55,6 +55,7 @@
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "storage/subsystems.h"
 #include "utils/builtins.h"
 #include "utils/guc_hooks.h"
@@ -2124,6 +2125,11 @@ InvalidatePossiblyObsoleteSlot(uint32 possible_causes,
 					(void) SignalRecoveryConflict(GetPGProcByNumber(active_proc),
 												  active_pid,
 												  RECOVERY_CONFLICT_LOGICALSLOT);
+				else if (GetPGProcByNumber(active_proc)->pid == PostmasterPid &&
+						 GetPGProcByNumber(active_proc)->backendId != 0)
+					(void) SendBackendInterrupt(active_pid,
+												PG_BACKEND_INTERRUPT_PROC_DIE,
+												MyProcPid, getuid());
 				else
 					(void) kill(active_pid, SIGTERM);
 
