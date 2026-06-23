@@ -96,7 +96,13 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/isn \
 	contrib/ltree \
 	contrib/pageinspect \
+	contrib/pg_buffercache \
+	contrib/pg_freespacemap \
+	contrib/pg_surgery \
 	contrib/pg_trgm \
+	contrib/pg_walinspect \
+	contrib/pgrowlocks \
+	contrib/pgstattuple \
 	contrib/seg \
 	contrib/tsm_system_rows \
 	contrib/tsm_system_time \
@@ -198,7 +204,13 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-isn-run
 	$(MAKE) check-threaded-contrib-ltree-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
+	$(MAKE) check-threaded-contrib-pg-buffercache-run
+	$(MAKE) check-threaded-contrib-pg-freespacemap-run
+	$(MAKE) check-threaded-contrib-pg-surgery-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
+	$(MAKE) check-threaded-contrib-pg-walinspect-run
+	$(MAKE) check-threaded-contrib-pgrowlocks-run
+	$(MAKE) check-threaded-contrib-pgstattuple-run
 	$(MAKE) check-threaded-contrib-seg-run
 	$(MAKE) check-threaded-contrib-tsm-system-rows-run
 	$(MAKE) check-threaded-contrib-tsm-system-time-run
@@ -330,6 +342,33 @@ check-threaded-contrib-pageinspect:
 check-threaded-contrib-pageinspect-run:
 	$(MAKE) -C contrib/pageinspect check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-pg-buffercache: | temp-install
+check-threaded-contrib-pg-buffercache: submake-generated-headers
+check-threaded-contrib-pg-buffercache:
+	$(MAKE) -j1 -C contrib/pg_buffercache checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-buffercache-run
+
+check-threaded-contrib-pg-buffercache-run:
+	$(MAKE) -C contrib/pg_buffercache check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pg-freespacemap: | temp-install
+check-threaded-contrib-pg-freespacemap: submake-generated-headers
+check-threaded-contrib-pg-freespacemap:
+	$(MAKE) -j1 -C contrib/pg_freespacemap checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-freespacemap-run
+
+check-threaded-contrib-pg-freespacemap-run:
+	$(MAKE) -C contrib/pg_freespacemap check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pg-surgery: | temp-install
+check-threaded-contrib-pg-surgery: submake-generated-headers
+check-threaded-contrib-pg-surgery:
+	$(MAKE) -j1 -C contrib/pg_surgery checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-surgery-run
+
+check-threaded-contrib-pg-surgery-run:
+	$(MAKE) -C contrib/pg_surgery check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-pg-trgm: | temp-install
 check-threaded-contrib-pg-trgm: submake-generated-headers
 check-threaded-contrib-pg-trgm:
@@ -338,6 +377,33 @@ check-threaded-contrib-pg-trgm:
 
 check-threaded-contrib-pg-trgm-run:
 	$(MAKE) -C contrib/pg_trgm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pg-walinspect: | temp-install
+check-threaded-contrib-pg-walinspect: submake-generated-headers
+check-threaded-contrib-pg-walinspect:
+	$(MAKE) -j1 -C contrib/pg_walinspect checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-walinspect-run
+
+check-threaded-contrib-pg-walinspect-run:
+	$(MAKE) -C contrib/pg_walinspect check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pgrowlocks: | temp-install
+check-threaded-contrib-pgrowlocks: submake-generated-headers
+check-threaded-contrib-pgrowlocks:
+	$(MAKE) -j1 -C contrib/pgrowlocks checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pgrowlocks-run
+
+check-threaded-contrib-pgrowlocks-run:
+	$(MAKE) -C contrib/pgrowlocks check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pgstattuple: | temp-install
+check-threaded-contrib-pgstattuple: submake-generated-headers
+check-threaded-contrib-pgstattuple:
+	$(MAKE) -j1 -C contrib/pgstattuple checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pgstattuple-run
+
+check-threaded-contrib-pgstattuple-run:
+	$(MAKE) -C contrib/pgstattuple check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-seg: | temp-install
 check-threaded-contrib-seg: submake-generated-headers
@@ -507,4 +573,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage

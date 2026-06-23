@@ -13,7 +13,13 @@ contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs un
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
+contrib/pg_buffercache	check-threaded-contrib-pg-buffercache-run	pg_buffercache shared buffer cache regressions run under threaded_workers.conf
+contrib/pg_freespacemap	check-threaded-contrib-pg-freespacemap-run	pg_freespacemap regression runs with threaded_workers.conf plus its autovacuum-disabled temp config
+contrib/pg_surgery	check-threaded-contrib-pg-surgery-run	pg_surgery heap surgery regression runs under threaded_workers.conf
 contrib/pg_trgm	check-threaded-contrib-pg-trgm-run	pg_trgm regression, including similarity threshold custom GUC coverage, runs under threaded_workers.conf
+contrib/pg_walinspect	check-threaded-contrib-pg-walinspect-run	pg_walinspect regression runs with threaded_workers.conf plus walinspect WAL temp config
+contrib/pgrowlocks	check-threaded-contrib-pgrowlocks-run	pgrowlocks isolation test runs under threaded_workers.conf
+contrib/pgstattuple	check-threaded-contrib-pgstattuple-run	pgstattuple regression runs under threaded_workers.conf
 contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
 contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
 contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
