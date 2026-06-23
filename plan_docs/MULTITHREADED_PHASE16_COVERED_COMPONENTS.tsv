@@ -8,10 +8,15 @@ contrib/dict_xsyn	check-threaded-contrib-dict-xsyn-run	dict_xsyn text search dic
 contrib/earthdistance	check-threaded-contrib-earthdistance-run	earthdistance regression runs under threaded_workers.conf
 contrib/fuzzystrmatch	check-threaded-contrib-fuzzystrmatch-run	fuzzystrmatch regression, including UTF-8 SQL coverage, runs under threaded_workers.conf
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
+contrib/intagg	check-threaded-contrib-intagg-run	intagg SQL-only extension check runs in threaded-world temp install
+contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs under threaded_workers.conf
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
+contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 contrib/pg_trgm	check-threaded-contrib-pg-trgm-run	pg_trgm regression, including similarity threshold custom GUC coverage, runs under threaded_workers.conf
 contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
+contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
+contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
