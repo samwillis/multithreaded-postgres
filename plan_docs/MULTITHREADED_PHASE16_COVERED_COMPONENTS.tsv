@@ -51,6 +51,7 @@ src/bin/pg_test_fsync	check-threaded-bin-pg-test-fsync	pg_test_fsync utility TAP
 src/bin/pg_test_timing	check-threaded-bin-pg-test-timing	pg_test_timing utility TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_waldump	check-threaded-bin-pg-waldump	pg_waldump TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/scripts	check-threaded-bin-scripts	client script TAP coverage runs under threaded TAP; locale-sensitive createdb coverage uses a fresh LC_CTYPE=C initdb instead of the shared C.UTF-8 template so threaded postmaster/database locale constraints are preserved
 src/interfaces/libpq	check-threaded-interfaces-libpq	libpq URI, API, host-list load-balancing, and service-file TAP coverage runs with TEMP_CONFIG-injected multithreaded TAP clusters; optional load_balance DNS and encryption matrices remain gated by PG_TEST_EXTRA
 src/interfaces/ecpg/compatlib	check-threaded-interfaces-ecpg-compatlib	ECPG compatibility library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/ecpglib	check-threaded-interfaces-ecpg-ecpglib	ECPG client library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
