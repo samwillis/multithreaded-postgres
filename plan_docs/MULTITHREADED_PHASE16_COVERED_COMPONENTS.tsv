@@ -15,6 +15,7 @@ contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs un
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/lo	check-threaded-contrib-lo-run	lo large-object trigger regression runs under threaded_workers.conf
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
+contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf has no threaded-server dependency and runs through check-threaded-contrib
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 contrib/pg_buffercache	check-threaded-contrib-pg-buffercache-run	pg_buffercache shared buffer cache regressions run under threaded_workers.conf
 contrib/pg_freespacemap	check-threaded-contrib-pg-freespacemap-run	pg_freespacemap regression runs with threaded_workers.conf plus its autovacuum-disabled temp config
@@ -25,11 +26,13 @@ contrib/pg_walinspect	check-threaded-contrib-pg-walinspect-run	pg_walinspect reg
 contrib/pgrowlocks	check-threaded-contrib-pgrowlocks-run	pgrowlocks isolation test runs under threaded_workers.conf
 contrib/pgstattuple	check-threaded-contrib-pgstattuple-run	pgstattuple regression runs under threaded_workers.conf
 contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
+contrib/spi	check-threaded-contrib-spi-run	spi trigger/SPI regression runs under threaded_workers.conf with session-local refint plan cache state
 contrib/tablefunc	check-threaded-contrib-tablefunc-run	tablefunc set-returning and crosstab regression runs under threaded_workers.conf
 contrib/tcn	check-threaded-contrib-tcn-run	tcn trigger notification isolation test runs under threaded_workers.conf
 contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
 contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
+contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP leaf has no threaded-server dependency and runs through check-threaded-contrib
 src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup check-world TAP leaf has no threaded-server dependency and runs through check-threaded-bin
 src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums offline data-directory TAP leaf has no threaded-server dependency and runs through check-threaded-bin
 src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf has no threaded-server dependency and runs through check-threaded-bin
