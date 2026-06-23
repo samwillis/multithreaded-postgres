@@ -185,6 +185,12 @@ PG_GLOBAL_RUNTIME int max_wal_senders = 10;	/* the maximum number of concurrent
  */
 #define last_reply_timestamp \
 	(PgCurrentWalSenderState()->last_reply_timestamp)
+#define standby_reply_prev_write_ptr \
+	(PgCurrentWalSenderState()->standby_reply_prev_write_ptr)
+#define standby_reply_prev_flush_ptr \
+	(PgCurrentWalSenderState()->standby_reply_prev_flush_ptr)
+#define standby_reply_prev_apply_ptr \
+	(PgCurrentWalSenderState()->standby_reply_prev_apply_ptr)
 
 /* Have we sent a heartbeat message asking for reply, since last reply? */
 #define waiting_for_ping_response \
@@ -240,6 +246,12 @@ PG_GLOBAL_RUNTIME int max_wal_senders = 10;	/* the maximum number of concurrent
 	(PgCurrentWalSenderState()->logical_decoding_ctx)
 #define logical_decoding_cleanup_registered \
 	(PgCurrentWalSenderState()->logical_decoding_cleanup_registered)
+#define logical_lag_send_time \
+	(PgCurrentWalSenderState()->logical_lag_send_time)
+#define recent_flush_ptr \
+	(PgCurrentWalSenderState()->recent_flush_ptr)
+#define logical_flush_ptr \
+	(PgCurrentWalSenderState()->logical_flush_ptr)
 
 /*
  * Working memory context for replication commands.  In process mode this used
@@ -1773,7 +1785,6 @@ static void
 WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 					 bool skipped_xact)
 {
-	static TimestampTz sendTime = 0;
 	TimestampTz now = GetCurrentTimestamp();
 	bool		pending_writes = false;
 	bool		end_xact = ctx->end_xact;
@@ -1787,11 +1798,11 @@ WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId 
 	 * transaction LSN.
 	 */
 #define WALSND_LOGICAL_LAG_TRACK_INTERVAL_MS	1000
-	if (end_xact && TimestampDifferenceExceeds(sendTime, now,
+	if (end_xact && TimestampDifferenceExceeds(logical_lag_send_time, now,
 											   WALSND_LOGICAL_LAG_TRACK_INTERVAL_MS))
 	{
 		LagTrackerWrite(lsn, now);
-		sendTime = now;
+		logical_lag_send_time = now;
 	}
 
 	/*
@@ -1911,9 +1922,9 @@ NeedToWaitForWal(XLogRecPtr target_lsn, XLogRecPtr flushed_lsn,
  *
  * If the walsender holds a logical failover slot, we also wait for all the
  * specified streaming replication standby servers to confirm receipt of WAL
- * up to RecentFlushPtr. It is beneficial to wait here for the confirmation
- * up to RecentFlushPtr rather than waiting before transmitting each change
- * to logical subscribers, which is already covered by RecentFlushPtr.
+ * up to recent_flush_ptr. It is beneficial to wait here for the confirmation
+ * up to recent_flush_ptr rather than waiting before transmitting each change
+ * to logical subscribers, which is already covered by recent_flush_ptr.
  *
  * Returns end LSN of flushed WAL.  Normally this will be >= loc, but if we
  * detect a shutdown request (either from postmaster or client) we will return
@@ -1924,18 +1935,17 @@ WalSndWaitForWal(XLogRecPtr loc)
 {
 	int			wakeEvents;
 	uint32		wait_event = 0;
-	static XLogRecPtr RecentFlushPtr = InvalidXLogRecPtr;
 	TimestampTz last_flush = 0;
 
 	/*
 	 * Fast path to avoid acquiring the spinlock in case we already know we
 	 * have enough WAL available and all the standby servers have confirmed
-	 * receipt of WAL up to RecentFlushPtr. This is particularly interesting
+	 * receipt of WAL up to recent_flush_ptr. This is particularly interesting
 	 * if we're far behind.
 	 */
-	if (XLogRecPtrIsValid(RecentFlushPtr) &&
-		!NeedToWaitForWal(loc, RecentFlushPtr, &wait_event))
-		return RecentFlushPtr;
+	if (XLogRecPtrIsValid(recent_flush_ptr) &&
+		!NeedToWaitForWal(loc, recent_flush_ptr, &wait_event))
+		return recent_flush_ptr;
 
 	/*
 	 * Within the loop, we wait for the necessary WALs to be flushed to disk
@@ -1982,9 +1992,9 @@ WalSndWaitForWal(XLogRecPtr loc)
 		if (wait_event != WAIT_EVENT_WAIT_FOR_STANDBY_CONFIRMATION)
 		{
 			if (!RecoveryInProgress())
-				RecentFlushPtr = GetFlushRecPtr(NULL);
+				recent_flush_ptr = GetFlushRecPtr(NULL);
 			else
-				RecentFlushPtr = GetXLogReplayRecPtr(NULL);
+				recent_flush_ptr = GetXLogReplayRecPtr(NULL);
 		}
 
 		/*
@@ -1992,12 +2002,12 @@ WalSndWaitForWal(XLogRecPtr loc)
 		 * to the flushed position, don't wait anymore.
 		 *
 		 * It's important to do this check after the recomputation of
-		 * RecentFlushPtr, so we can send all remaining data before shutting
+		 * recent_flush_ptr, so we can send all remaining data before shutting
 		 * down.
 		 */
 		if (got_STOPPING)
 		{
-			if (NeedToWaitForStandbys(RecentFlushPtr, &wait_event))
+			if (NeedToWaitForStandbys(recent_flush_ptr, &wait_event))
 				wait_for_standby_at_stop = true;
 			else
 				break;
@@ -2021,7 +2031,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 		 * standby slots.
 		 */
 		if (!wait_for_standby_at_stop &&
-			!NeedToWaitForWal(loc, RecentFlushPtr, &wait_event))
+			!NeedToWaitForWal(loc, recent_flush_ptr, &wait_event))
 			break;
 
 		/*
@@ -2089,7 +2099,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 
 	/* reactivate latch so WalSndLoop knows to continue */
 	SetLatch(MyLatch);
-	return RecentFlushPtr;
+	return recent_flush_ptr;
 }
 
 /*
@@ -2573,10 +2583,6 @@ ProcessStandbyReplyMessage(void)
 	TimestampTz now;
 	TimestampTz replyTime;
 
-	static XLogRecPtr prevWritePtr = InvalidXLogRecPtr;
-	static XLogRecPtr prevFlushPtr = InvalidXLogRecPtr;
-	static XLogRecPtr prevApplyPtr = InvalidXLogRecPtr;
-
 	/* the caller already consumed the msgtype byte */
 	writePtr = pq_getmsgint64(&reply_message);
 	flushPtr = pq_getmsgint64(&reply_message);
@@ -2619,12 +2625,13 @@ ProcessStandbyReplyMessage(void)
 	 * avoids displaying stale lag data until more WAL traffic arrives.
 	 */
 	clearLagTimes = (applyPtr == local_sent_ptr && flushPtr == local_sent_ptr &&
-					 writePtr == prevWritePtr && flushPtr == prevFlushPtr &&
-					 applyPtr == prevApplyPtr);
+					 writePtr == standby_reply_prev_write_ptr &&
+					 flushPtr == standby_reply_prev_flush_ptr &&
+					 applyPtr == standby_reply_prev_apply_ptr);
 
-	prevWritePtr = writePtr;
-	prevFlushPtr = flushPtr;
-	prevApplyPtr = applyPtr;
+	standby_reply_prev_write_ptr = writePtr;
+	standby_reply_prev_flush_ptr = flushPtr;
+	standby_reply_prev_apply_ptr = applyPtr;
 
 	/* Send a reply if the standby requested one. */
 	if (replyRequested)
@@ -3703,12 +3710,10 @@ XLogSendLogical(void)
 
 	/*
 	 * We'll use the current flush point to determine whether we've caught up.
-	 * This variable is static in order to cache it across calls.  Caching is
+	 * This value is cached across calls in backend-owned state.  Caching is
 	 * helpful because GetFlushRecPtr() needs to acquire a heavily-contended
 	 * spinlock.
 	 */
-	static XLogRecPtr flushPtr = InvalidXLogRecPtr;
-
 	/*
 	 * Don't know whether we've caught up yet. We'll set WalSndCaughtUp to
 	 * true in WalSndWaitForWal, if we're actually waiting. We also set to
@@ -3740,8 +3745,8 @@ XLogSendLogical(void)
 	 * If first time through in this session, initialize flushPtr.  Otherwise,
 	 * we only need to update flushPtr if EndRecPtr is past it.
 	 */
-	if (!XLogRecPtrIsValid(flushPtr) ||
-		logical_decoding_ctx->reader->EndRecPtr >= flushPtr)
+	if (!XLogRecPtrIsValid(logical_flush_ptr) ||
+		logical_decoding_ctx->reader->EndRecPtr >= logical_flush_ptr)
 	{
 		/*
 		 * For cascading logical WAL senders, we use the replay LSN instead of
@@ -3752,13 +3757,13 @@ XLogSendLogical(void)
 		 * proceed.
 		 */
 		if (am_cascading_walsender)
-			flushPtr = GetXLogReplayRecPtr(NULL);
+			logical_flush_ptr = GetXLogReplayRecPtr(NULL);
 		else
-			flushPtr = GetFlushRecPtr(NULL);
+			logical_flush_ptr = GetFlushRecPtr(NULL);
 	}
 
 	/* If EndRecPtr is still past our flushPtr, it means we caught up. */
-	if (logical_decoding_ctx->reader->EndRecPtr >= flushPtr)
+	if (logical_decoding_ctx->reader->EndRecPtr >= logical_flush_ptr)
 		WalSndCaughtUp = true;
 
 	/*

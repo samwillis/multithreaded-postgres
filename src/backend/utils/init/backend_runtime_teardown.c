@@ -443,6 +443,8 @@ PgBackendResetWalSenderClosedState(PgBackendWalSenderState *walsender)
 		pfree(walsender->lag_tracker);
 		walsender->lag_tracker = NULL;
 	}
+
+	MemSet(walsender, 0, sizeof(*walsender));
 }
 
 static void

@@ -512,6 +512,9 @@ typedef struct PgBackendWalSenderState
 	StringInfoData tmpbuf;
 	TimestampTz last_processing;
 	TimestampTz last_reply_timestamp;
+	XLogRecPtr	standby_reply_prev_write_ptr;
+	XLogRecPtr	standby_reply_prev_flush_ptr;
+	XLogRecPtr	standby_reply_prev_apply_ptr;
 	bool		waiting_for_ping_response;
 	TimestampTz shutdown_request_timestamp;
 	XLogRecPtr	shutdown_stopping_flush_ptr;
@@ -524,6 +527,9 @@ typedef struct PgBackendWalSenderState
 	volatile sig_atomic_t replication_active;
 	LogicalDecodingContext *logical_decoding_ctx;
 	bool		logical_decoding_cleanup_registered;
+	TimestampTz logical_lag_send_time;
+	XLogRecPtr	recent_flush_ptr;
+	XLogRecPtr	logical_flush_ptr;
 	MemoryContext replication_cmd_context;
 	LagTracker *lag_tracker;
 } PgBackendWalSenderState;
