@@ -70,7 +70,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "dblink",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 typedef struct remoteConn
@@ -87,6 +88,7 @@ typedef struct DblinkSessionState
 	MemoryContext context;
 	remoteConn *persistent_connection;
 	HTAB	   *remote_conn_hash;
+	PQconninfoOption *conninfo_options;
 	bool		reset_registered;
 } DblinkSessionState;
 
@@ -158,9 +160,11 @@ static bool is_valid_dblink_fdw_option(const PQconninfoOption *options, const ch
 									   Oid context);
 static bool dblink_connstr_has_required_scram_options(const char *connstr);
 static MemoryContext dblink_get_context(void);
+static void dblink_ensure_reset_callback(void);
 static void dblink_reset_session_state(void *arg);
 static DblinkRuntimeState *dblink_runtime_state(void);
 static DblinkSessionState *dblink_session_state(void);
+static const PQconninfoOption *dblink_conninfo_options(void);
 
 /* Session-local state, exposed through compatibility macros. */
 #define dblink_context (dblink_session_state()->context)
@@ -303,11 +307,7 @@ dblink_init(void)
 		pconn->newXactForCursor = false;
 	}
 
-	if (!dblink_reset_registered)
-	{
-		PgSessionRegisterResetCallback(dblink_reset_session_state, NULL);
-		dblink_reset_registered = true;
-	}
+	dblink_ensure_reset_callback();
 }
 
 /*
@@ -1972,25 +1972,7 @@ dblink_fdw_validator(PG_FUNCTION_ARGS)
 	List	   *options_list = untransformRelOptions(PG_GETARG_DATUM(0));
 	Oid			context = PG_GETARG_OID(1);
 	ListCell   *cell;
-
-	static const PQconninfoOption *options = NULL;
-
-	/*
-	 * Get list of valid libpq options.
-	 *
-	 * To avoid unnecessary work, we get the list once and use it throughout
-	 * the lifetime of this backend process.  We don't need to care about
-	 * memory context issues, because PQconndefaults allocates with malloc.
-	 */
-	if (!options)
-	{
-		options = PQconndefaults();
-		if (!options)			/* assume reason for failure is OOM */
-			ereport(ERROR,
-					(errcode(ERRCODE_FDW_OUT_OF_MEMORY),
-					 errmsg("out of memory"),
-					 errdetail("Could not get libpq's default connection options.")));
-	}
+	const PQconninfoOption *options = dblink_conninfo_options();
 
 	/* Validate each supplied option. */
 	foreach(cell, options_list)
@@ -2606,6 +2588,16 @@ dblink_get_context(void)
 	return dblink_context;
 }
 
+static void
+dblink_ensure_reset_callback(void)
+{
+	if (!dblink_reset_registered)
+	{
+		PgSessionRegisterResetCallback(dblink_reset_session_state, NULL);
+		dblink_reset_registered = true;
+	}
+}
+
 static DblinkSessionState *
 dblink_session_state(void)
 {
@@ -2622,6 +2614,23 @@ dblink_runtime_state(void)
 		PgRuntimeEnsureExtensionPrivateState(DBLINK_RUNTIME_STATE_KEY,
 											 sizeof(DblinkRuntimeState),
 											 NULL);
+}
+
+static const PQconninfoOption *
+dblink_conninfo_options(void)
+{
+	if (dblink_session_state()->conninfo_options == NULL)
+	{
+		dblink_session_state()->conninfo_options = PQconndefaults();
+		if (dblink_session_state()->conninfo_options == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_FDW_OUT_OF_MEMORY),
+					 errmsg("out of memory"),
+					 errdetail("Could not get libpq's default connection options.")));
+	}
+
+	dblink_ensure_reset_callback();
+	return dblink_session_state()->conninfo_options;
 }
 
 static remoteConn *
@@ -2697,6 +2706,12 @@ dblink_reset_session_state(void *arg)
 		}
 		hash_destroy(remoteConnHash);
 		remoteConnHash = NULL;
+	}
+
+	if (dblink_session_state()->conninfo_options != NULL)
+	{
+		PQconninfoFree(dblink_session_state()->conninfo_options);
+		dblink_session_state()->conninfo_options = NULL;
 	}
 
 	dblink_reset_registered = false;
@@ -2965,27 +2980,10 @@ get_connect_string(const char *servername)
 	ForeignDataWrapper *fdw;
 	AclResult	aclresult;
 	char	   *srvname;
-
-	static const PQconninfoOption *options = NULL;
+	const PQconninfoOption *options;
 
 	initStringInfo(&buf);
-
-	/*
-	 * Get list of valid libpq options.
-	 *
-	 * To avoid unnecessary work, we get the list once and use it throughout
-	 * the lifetime of this backend process.  We don't need to care about
-	 * memory context issues, because PQconndefaults allocates with malloc.
-	 */
-	if (!options)
-	{
-		options = PQconndefaults();
-		if (!options)			/* assume reason for failure is OOM */
-			ereport(ERROR,
-					(errcode(ERRCODE_FDW_OUT_OF_MEMORY),
-					 errmsg("out of memory"),
-					 errdetail("Could not get libpq's default connection options.")));
-	}
+	options = dblink_conninfo_options();
 
 	/* first gather the server connstr options */
 	srvname = pstrdup(servername);
