@@ -86,6 +86,7 @@ src/test/modules/test_bloomfilter	check-threaded-test-modules-test-bloomfilter	B
 src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callbacks	COPY callback regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_cplusplusext	check-threaded-test-modules-test-cplusplusext	C++ extension regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_custom_rmgrs	check-threaded-test-modules-test-custom-rmgrs	test_custom_rmgrs TAP runs custom WAL resource-manager registration and WAL inspection under threaded_smoke.conf with thread-per-session metadata and shared-preload registration guarded against threaded replay
 src/test/modules/test_custom_types	check-threaded-test-modules-test-custom-types	custom type regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_dsa	check-threaded-test-modules-test-dsa	dynamic shared memory area regression module declares thread-per-session metadata and runs DSA/resource-owner coverage under threaded_workers.conf
 src/test/modules/test_escape	check-threaded-test-modules-test-escape	test_escape TAP module runs its libpq escape client program against a TEMP_CONFIG-injected multithreaded TAP server

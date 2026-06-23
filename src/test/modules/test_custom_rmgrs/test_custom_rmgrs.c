@@ -24,7 +24,11 @@
 #include "utils/pg_lsn.h"
 #include "varatt.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_custom_rmgrs",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 /*
  * test_custom_rmgrs WAL record message.
@@ -68,7 +72,12 @@ _PG_init(void)
 	/*
 	 * In order to create our own custom resource manager, we have to be
 	 * loaded via shared_preload_libraries. Otherwise, registration will fail.
+	 * Threaded session replay and CREATE EXTENSION load the module after
+	 * startup, but the resource manager is already process/runtime-global.
 	 */
+	if (!process_shared_preload_libraries_in_progress)
+		return;
+
 	RegisterCustomRmgr(RM_TESTCUSTOMRMGRS_ID, &testcustomrmgrs_rmgr);
 }
 
