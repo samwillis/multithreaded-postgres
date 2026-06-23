@@ -1194,6 +1194,7 @@ check-threaded-bin:
 	$(MAKE) check-threaded-bin-pg-resetwal
 	$(MAKE) check-threaded-bin-pg-test-fsync
 	$(MAKE) check-threaded-bin-pg-test-timing
+	$(MAKE) check-threaded-bin-pg-verifybackup
 	$(MAKE) check-threaded-bin-pg-waldump
 	$(MAKE) check-threaded-bin-pg-walsummary
 	$(MAKE) check-threaded-bin-pgbench
@@ -1259,6 +1260,12 @@ check-threaded-bin-pg-test-timing: | temp-install
 check-threaded-bin-pg-test-timing: submake-generated-headers
 check-threaded-bin-pg-test-timing:
 	$(call threaded_world_prove,src/bin/pg_test_timing,t/*.pl)
+
+check-threaded-bin-pg-verifybackup: | temp-install
+check-threaded-bin-pg-verifybackup: submake-generated-headers
+check-threaded-bin-pg-verifybackup:
+	$(MAKE) -C src/bin/pg_verifybackup all
+	$(call threaded_world_prove,src/bin/pg_verifybackup,t/*.pl)
 
 check-threaded-bin-pg-waldump: | temp-install
 check-threaded-bin-pg-waldump: submake-generated-headers
@@ -1426,7 +1433,7 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-initdb check-threaded-bin-pg-amcheck check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-bin-pgbench check-threaded-bin-scripts check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-interfaces-libpq check-threaded-interfaces-libpq-run check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-authentication check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
-.PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-dump check-threaded-bin-psql
+.PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-dump check-threaded-bin-pg-verifybackup check-threaded-bin-psql
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auth-delay check-threaded-contrib-auth-delay-run
 .PHONY: check-threaded-contrib-auto-explain check-threaded-contrib-auto-explain-run
