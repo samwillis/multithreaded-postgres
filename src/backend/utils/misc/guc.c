@@ -40,6 +40,7 @@
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
 #include "commands/vacuum.h"
+#include "fmgr.h"
 #include "guc_internal.h"
 #include "libpq/pqformat.h"
 #include "libpq/protocol.h"
@@ -7270,6 +7271,7 @@ read_nondefault_variables(void)
 	GucSource	varsource;
 	GucContext	varscontext;
 	Oid			varsrole;
+	bool		locked;
 
 	/*
 	 * Open file
@@ -7286,61 +7288,82 @@ read_nondefault_variables(void)
 		return;
 	}
 
-	for (;;)
+	/*
+	 * Dynamic library _PG_init() can define custom GUCs and reserve their
+	 * prefixes, while threaded child startup is replaying the postmaster's
+	 * config dump.  Serialize the replay with dynamic library initialization so
+	 * this session either sees the module before replay starts or safely creates
+	 * placeholders before any other thread reserves the prefix.
+	 */
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
 	{
-		struct config_generic *record;
+		initialize_loaded_modules_for_threaded_session();
 
-		if ((varname = read_string_with_null(fp)) == NULL)
-			break;
-
-		record = find_option(varname, true, false, FATAL);
-		if (record == NULL)
-			elog(FATAL, "failed to locate variable \"%s\" in exec config params file", varname);
-
-		if ((varvalue = read_string_with_null(fp)) == NULL)
-			elog(FATAL, "invalid format of exec config params file");
-		if ((varsourcefile = read_string_with_null(fp)) == NULL)
-			elog(FATAL, "invalid format of exec config params file");
-		if (fread(&varsourceline, 1, sizeof(varsourceline), fp) != sizeof(varsourceline))
-			elog(FATAL, "invalid format of exec config params file");
-		if (fread(&varsource, 1, sizeof(varsource), fp) != sizeof(varsource))
-			elog(FATAL, "invalid format of exec config params file");
-		if (fread(&varscontext, 1, sizeof(varscontext), fp) != sizeof(varscontext))
-			elog(FATAL, "invalid format of exec config params file");
-		if (fread(&varsrole, 1, sizeof(varsrole), fp) != sizeof(varsrole))
-			elog(FATAL, "invalid format of exec config params file");
-
-		/*
-		 * Threaded backends share the postmaster address space.  Postmaster
-		 * and internal GUCs are already present in runtime-global storage; a
-		 * thread carrier must not replay them through a session GUC context,
-		 * because doing so can replace/free strings owned by the postmaster's
-		 * GUC context.  Still replay backend/session/user settings so logical
-		 * backends see the same effective configuration as forked children.
-		 */
-		if (multithreaded &&
-			IsUnderPostmaster &&
-			(record->context == PGC_POSTMASTER ||
-			 record->context == PGC_INTERNAL))
+		for (;;)
 		{
+			struct config_generic *record;
+
+			if ((varname = read_string_with_null(fp)) == NULL)
+				break;
+
+			record = find_option(varname, true, false, FATAL);
+			if (record == NULL)
+				elog(FATAL, "failed to locate variable \"%s\" in exec config params file", varname);
+
+			if ((varvalue = read_string_with_null(fp)) == NULL)
+				elog(FATAL, "invalid format of exec config params file");
+			if ((varsourcefile = read_string_with_null(fp)) == NULL)
+				elog(FATAL, "invalid format of exec config params file");
+			if (fread(&varsourceline, 1, sizeof(varsourceline), fp) != sizeof(varsourceline))
+				elog(FATAL, "invalid format of exec config params file");
+			if (fread(&varsource, 1, sizeof(varsource), fp) != sizeof(varsource))
+				elog(FATAL, "invalid format of exec config params file");
+			if (fread(&varscontext, 1, sizeof(varscontext), fp) != sizeof(varscontext))
+				elog(FATAL, "invalid format of exec config params file");
+			if (fread(&varsrole, 1, sizeof(varsrole), fp) != sizeof(varsrole))
+				elog(FATAL, "invalid format of exec config params file");
+
+			/*
+			 * Threaded backends share the postmaster address space.  Postmaster
+			 * and internal GUCs are already present in runtime-global storage; a
+			 * thread carrier must not replay them through a session GUC context,
+			 * because doing so can replace/free strings owned by the postmaster's
+			 * GUC context.  Still replay backend/session/user settings so logical
+			 * backends see the same effective configuration as forked children.
+			 */
+			if (multithreaded &&
+				IsUnderPostmaster &&
+				(record->context == PGC_POSTMASTER ||
+				 record->context == PGC_INTERNAL))
+			{
+				guc_free(varname);
+				guc_free(varvalue);
+				guc_free(varsourcefile);
+				continue;
+			}
+
+			(void) set_config_option_ext(varname, varvalue,
+										 varscontext, varsource, varsrole,
+										 GUC_ACTION_SET, true, 0, true);
+			if (varsourcefile[0])
+				set_config_sourcefile(varname, varsourcefile, varsourceline);
+
 			guc_free(varname);
 			guc_free(varvalue);
 			guc_free(varsourcefile);
-			continue;
 		}
 
-		(void) set_config_option_ext(varname, varvalue,
-									 varscontext, varsource, varsrole,
-									 GUC_ACTION_SET, true, 0, true);
-		if (varsourcefile[0])
-			set_config_sourcefile(varname, varsourcefile, varsourceline);
-
-		guc_free(varname);
-		guc_free(varvalue);
-		guc_free(varsourcefile);
+		FreeFile(fp);
+		fp = NULL;
 	}
-
-	FreeFile(fp);
+	PG_FINALLY();
+	{
+		if (fp != NULL)
+			FreeFile(fp);
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
 }
 
 /*

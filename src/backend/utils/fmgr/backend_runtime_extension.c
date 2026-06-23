@@ -90,6 +90,12 @@ PgCurrentRuntimeExtensionModuleState(void)
 	return &CurrentPgRuntime->extension_modules;
 }
 
+int *
+PgCurrentThreadedDynamicFileManagerMutexDepthRef(void)
+{
+	return &PgCurrentCarrierState()->threaded_dynamic_file_manager_mutex_depth;
+}
+
 static PgRuntimeExtensionPrivateState *
 PgRuntimeFindExtensionPrivateState(PgRuntimeExtensionModuleState *extension_modules,
 								   const char *key)

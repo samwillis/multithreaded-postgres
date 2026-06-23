@@ -1223,9 +1223,10 @@ backend_thread_entry(void *arg)
 	MemoryContextInit();
 	InitializeTransactionState();
 	InitializeThreadedSessionGUCOptions();
-	read_nondefault_variables();
 	InitializeLatchWaitSet();
 	InstallPgThreadBackendRuntimeState(&thread_start->runtime_state);
+	read_nondefault_variables();
+	InitializeThreadedSessionRequiredGUCOptions();
 	if (thread_start->child_type == B_BACKEND)
 	{
 		if (!PgRuntimeProtocolSchedulerRegisterCarrier(CurrentPgRuntime,

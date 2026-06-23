@@ -18,6 +18,7 @@
 
 #ifndef WIN32
 #include <dlfcn.h>
+#include <pthread.h>
 #endif							/* !WIN32 */
 
 #include "fmgr.h"
@@ -61,6 +62,11 @@ struct DynamicFileList
 static PG_GLOBAL_RUNTIME DynamicFileList *file_list = NULL;
 static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
 
+#ifndef WIN32
+static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX_INITIALIZER;
+#define DynamicFileManagerMutexDepth (*PgCurrentThreadedDynamicFileManagerMutexDepthRef())
+#endif
+
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
 #define SAME_INODE(A,B) ((A).st_ino == (B).inode && (A).st_dev == (B).device)
@@ -69,6 +75,7 @@ static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
 #endif
 
 static void *internal_load_library(const char *libname);
+static void *internal_load_library_locked(const char *libname);
 static void call_module_init_function(DynamicFileList *file_scanner);
 static bool module_needs_session_init(DynamicFileList *file_scanner);
 static void remember_module_session_init(DynamicFileList *file_scanner);
@@ -91,6 +98,62 @@ static HTAB *create_rendezvous_hash(void);
 
 /* ABI values that module needs to match to be accepted */
 static const Pg_abi_values magic_data = PG_MODULE_ABI_DATA;
+
+
+bool
+LockDynamicFileManagerForThreadedReplay(void)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!multithreaded)
+		return false;
+	if (DynamicFileManagerMutexDepth++ > 0)
+		return false;
+
+	HOLD_INTERRUPTS();
+	rc = pthread_mutex_lock(&DynamicFileManagerMutex);
+	if (rc != 0)
+	{
+		DynamicFileManagerMutexDepth--;
+		RESUME_INTERRUPTS();
+		errno = rc;
+		ereport(FATAL,
+				(errmsg("could not enter threaded dynamic file manager critical section: %m")));
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+void
+UnlockDynamicFileManagerForThreadedReplay(bool locked)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!multithreaded)
+		return;
+
+	Assert(DynamicFileManagerMutexDepth > 0);
+	DynamicFileManagerMutexDepth--;
+
+	if (!locked)
+		return;
+
+	rc = pthread_mutex_unlock(&DynamicFileManagerMutex);
+	RESUME_INTERRUPTS();
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not leave threaded dynamic file manager critical section: %m");
+	}
+#else
+	(void) locked;
+#endif
+}
 
 
 /*
@@ -210,6 +273,26 @@ lookup_external_function(void *filehandle, const char *funcname)
  */
 static void *
 internal_load_library(const char *libname)
+{
+	void	   *handle = NULL;
+	bool		locked;
+
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
+	{
+		handle = internal_load_library_locked(libname);
+	}
+	PG_FINALLY();
+	{
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
+
+	return handle;
+}
+
+static void *
+internal_load_library_locked(const char *libname)
 {
 	DynamicFileList *file_scanner;
 	PGModuleMagicFunction magic_func;
@@ -415,6 +498,46 @@ remember_module_session_init(DynamicFileList *file_scanner)
 		PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession));
 	*dynamic_library_inits = lappend(*dynamic_library_inits, file_scanner);
 	MemoryContextSwitchTo(oldcontext);
+}
+
+/*
+ * Replay _PG_init() for libraries that were loaded before this threaded
+ * logical session existed.  Without this, custom GUC descriptors defined by
+ * postmaster/worker-loaded libraries are absent from the session-local GUC
+ * hash, while their prefixes may already be reserved globally.
+ */
+void
+initialize_loaded_modules_for_threaded_session(void)
+{
+	DynamicFileList *file_scanner;
+	bool		locked;
+
+	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
+		CurrentPgSession == NULL)
+		return;
+
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
+	{
+		file_scanner = file_list;
+		while (file_scanner != NULL)
+		{
+			DynamicFileList *next = file_scanner->next;
+
+			check_module_backend_model(file_scanner->filename,
+									   file_scanner->magic,
+									   PgRuntimeGetExtensionBackendModel());
+			if (module_needs_session_init(file_scanner))
+				call_module_init_function(file_scanner);
+
+			file_scanner = next;
+		}
+	}
+	PG_FINALLY();
+	{
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
 }
 
 /*

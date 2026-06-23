@@ -482,7 +482,6 @@ Likely candidates:
 - `auth_delay`
 - `auto_explain`
 - `basebackup_to_shell`
-- `basic_archive`
 - `passwordcheck`
 - `pg_overexplain`
 - `pg_plan_advice`
@@ -499,6 +498,11 @@ Focus areas:
 
 Add lock-order notes for any new runtime lock introduced to support hook or GUC
 state.
+
+`basic_archive` is admitted in this tranche. Its threaded coverage depends on
+serializing dynamic library `_PG_init()` replay with `config_exec_params`
+replay, so archive-module custom GUC prefix reservation is observed
+consistently by auxiliary workers and client backends.
 
 ## Step 9: Admit Shared-Memory, Stats, Worker, And Logical Modules
 

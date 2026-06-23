@@ -2355,6 +2355,7 @@ struct PgCarrier
 	char	   *stack_base_ptr;
 	int			threaded_guc_mutex_depth;
 	int			threaded_reloptions_mutex_depth;
+	int			threaded_dynamic_file_manager_mutex_depth;
 	bool		protocol_scheduler_registered;
 	bool		protocol_scheduler_idle;
 };
@@ -2658,6 +2659,7 @@ extern bool *PgCurrentGUCReportingEnabledRef(void);
 extern int *PgCurrentGUCNestLevelRef(void);
 extern int *PgCurrentThreadedGUCMutexDepthRef(void);
 extern int *PgCurrentThreadedRelOptionsMutexDepthRef(void);
+extern int *PgCurrentThreadedDynamicFileManagerMutexDepthRef(void);
 extern void **PgCurrentBackendThreadStartRef(void);
 extern volatile sig_atomic_t *PgCurrentWaitEventWaitingRef(void);
 extern int *PgCurrentWaitEventSignalFdRef(void);
@@ -3681,6 +3683,9 @@ pg_noreturn extern void PgSessionRun(PgSession *session);
 #define PgCurrentThreadedRelOptionsMutexDepthRef() \
 	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentThreadedRelOptionsMutexDepthRef, \
 										 threaded_reloptions_mutex_depth)
+#define PgCurrentThreadedDynamicFileManagerMutexDepthRef() \
+	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentThreadedDynamicFileManagerMutexDepthRef, \
+										 threaded_dynamic_file_manager_mutex_depth)
 #define PgCurrentWaitEventWaitingRef() \
 	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentWaitEventWaitingRef, \
 										 wait_event_waiting)
