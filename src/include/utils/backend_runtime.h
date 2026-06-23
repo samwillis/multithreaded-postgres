@@ -629,6 +629,7 @@ typedef struct PgBackendXLogWriteResult
 
 typedef struct PgBackendXLogState
 {
+	bool		in_recovery;
 	bool		local_recovery_in_progress;
 	int			local_xlog_insert_allowed;
 	XLogRecPtr	proc_last_rec_ptr;
@@ -663,6 +664,7 @@ typedef struct PgBackendRecoveryState
 	volatile sig_atomic_t startup_in_restore_command;
 	TimestampTz startup_progress_phase_start_time;
 	volatile sig_atomic_t startup_progress_timer_expired;
+	int			standby_state;
 	bool		local_hot_standby_active;
 	bool		local_promote_is_triggered;
 	HTAB	   *recovery_lock_hash;

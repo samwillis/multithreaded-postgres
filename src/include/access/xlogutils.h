@@ -25,7 +25,7 @@ extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool ignore_invalid_pages;
  * potentially perform work during recovery should check RecoveryInProgress().
  * See XLogCtl notes in xlog.c.
  */
-extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool InRecovery;
+#define InRecovery (PgCurrentXLogState()->in_recovery)
 
 /*
  * Like InRecovery, standbyState is only valid in the startup process.
@@ -56,7 +56,7 @@ typedef enum
 	STANDBY_SNAPSHOT_READY,
 } HotStandbyState;
 
-extern PGDLLIMPORT PG_GLOBAL_RUNTIME HotStandbyState standbyState;
+#define standbyState (PgCurrentRecoveryState()->standby_state)
 
 #define InHotStandby (standbyState >= STANDBY_SNAPSHOT_PENDING)
 
