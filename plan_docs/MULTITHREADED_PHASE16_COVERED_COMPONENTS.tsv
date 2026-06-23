@@ -87,5 +87,6 @@ src/test/modules/test_regex	check-threaded-test-modules-test-regex	regular expre
 src/test/modules/test_resowner	check-threaded-test-modules-test-resowner	resource owner regression module declares thread-per-session metadata and runs under threaded_workers.conf with per-call test state
 src/test/modules/test_saslprep	check-threaded-test-modules-test-saslprep	SASLprep regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_shm_mq	check-threaded-test-modules-test-shm-mq	shared-memory message queue regression module declares thread-per-session metadata and runs worker coverage under threaded_workers.conf
+src/test/modules/test_tidstore	check-threaded-test-modules-test-tidstore	TidStore regression module runs under threaded_workers.conf with formerly file-scope test state moved to session-private extension state
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
 src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf has no threaded-server dependency and runs through check-threaded-tools
