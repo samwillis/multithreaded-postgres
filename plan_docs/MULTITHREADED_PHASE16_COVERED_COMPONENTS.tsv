@@ -45,5 +45,8 @@ src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary offline WAL
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
+src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
 src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf has no threaded-server dependency and runs through check-threaded-tools
