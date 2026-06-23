@@ -30,6 +30,7 @@ contrib/pg_visibility	check-threaded-contrib-pg-visibility-run	pg_visibility pag
 contrib/pg_walinspect	check-threaded-contrib-pg-walinspect-run	pg_walinspect regression runs with threaded_workers.conf plus walinspect WAL temp config
 contrib/pgrowlocks	check-threaded-contrib-pgrowlocks-run	pgrowlocks isolation test runs under threaded_workers.conf
 contrib/pgstattuple	check-threaded-contrib-pgstattuple-run	pgstattuple regression runs under threaded_workers.conf
+contrib/postgres_fdw	check-threaded-contrib-postgres-fdw-run	postgres_fdw remote-connection, query-cancel, and eval-plan-qual regression/isolation coverage runs under threaded_workers.conf with session-owned connection, shippability, option, and application-name state; TAP surface remains gated by enable_tap_tests
 contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
 contrib/spi	check-threaded-contrib-spi-run	spi trigger/SPI regression runs under threaded_workers.conf with session-local refint plan cache state
 contrib/tablefunc	check-threaded-contrib-tablefunc-run	tablefunc set-returning and crosstab regression runs under threaded_workers.conf

@@ -113,6 +113,7 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/pg_walinspect \
 	contrib/pgrowlocks \
 	contrib/pgstattuple \
+	contrib/postgres_fdw \
 	contrib/seg \
 	contrib/spi \
 	contrib/tablefunc \
@@ -438,6 +439,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-pg-walinspect-run
 	$(MAKE) check-threaded-contrib-pgrowlocks-run
 	$(MAKE) check-threaded-contrib-pgstattuple-run
+	$(MAKE) check-threaded-contrib-postgres-fdw-run
 	$(MAKE) check-threaded-contrib-seg-run
 	$(MAKE) check-threaded-contrib-spi-run
 	$(MAKE) check-threaded-contrib-tablefunc-run
@@ -726,6 +728,15 @@ check-threaded-contrib-pgstattuple:
 check-threaded-contrib-pgstattuple-run:
 	$(MAKE) -C contrib/pgstattuple check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-postgres-fdw: | temp-install
+check-threaded-contrib-postgres-fdw: submake-generated-headers
+check-threaded-contrib-postgres-fdw:
+	$(MAKE) -j1 -C contrib/postgres_fdw checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-postgres-fdw-run
+
+check-threaded-contrib-postgres-fdw-run:
+	$(MAKE) -C contrib/postgres_fdw check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-seg: | temp-install
 check-threaded-contrib-seg: submake-generated-headers
 check-threaded-contrib-seg:
@@ -997,6 +1008,7 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-dblink check-threaded-contrib-dblink-run
 .PHONY: check-threaded-contrib-passwordcheck check-threaded-contrib-passwordcheck-run
 .PHONY: check-threaded-contrib-pg-overexplain check-threaded-contrib-pg-overexplain-run
+.PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
 .PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
 .PHONY: check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser
 .PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-dummy-index-am check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shm-mq
