@@ -88,6 +88,7 @@ THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EX
 THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/amcheck \
 	contrib/auto_explain \
+	contrib/basebackup_to_shell \
 	contrib/basic_archive \
 	contrib/bloom \
 	contrib/btree_gin \
@@ -624,6 +625,7 @@ check-threaded-contrib:
 	done
 	$(MAKE) check-threaded-contrib-amcheck-run
 	$(MAKE) check-threaded-contrib-auto-explain-run
+	$(MAKE) check-threaded-contrib-basebackup-to-shell-run
 	$(MAKE) check-threaded-contrib-basic-archive-run
 	$(MAKE) check-threaded-contrib-bloom-run
 	$(MAKE) check-threaded-contrib-btree-gin-run
@@ -683,6 +685,16 @@ check-threaded-contrib-auto-explain:
 
 check-threaded-contrib-auto-explain-run:
 	$(MAKE) -C contrib/auto_explain check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-basebackup-to-shell: | temp-install
+check-threaded-contrib-basebackup-to-shell: submake-generated-headers
+check-threaded-contrib-basebackup-to-shell:
+	$(MAKE) -j1 -C contrib/basebackup_to_shell checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-basebackup-to-shell-run
+
+check-threaded-contrib-basebackup-to-shell-run:
+	$(MAKE) -C contrib/basebackup_to_shell all
+	$(call threaded_world_prove,contrib/basebackup_to_shell,t/*.pl)
 
 check-threaded-contrib-basic-archive: | temp-install
 check-threaded-contrib-basic-archive: submake-generated-headers
@@ -1337,6 +1349,7 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-bin-pg-dump check-threaded-bin-psql
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auto-explain check-threaded-contrib-auto-explain-run
+.PHONY: check-threaded-contrib-basebackup-to-shell check-threaded-contrib-basebackup-to-shell-run
 .PHONY: check-threaded-contrib-basic-archive check-threaded-contrib-basic-archive-run
 .PHONY: check-threaded-contrib-dblink check-threaded-contrib-dblink-run
 .PHONY: check-threaded-contrib-passwordcheck check-threaded-contrib-passwordcheck-run
