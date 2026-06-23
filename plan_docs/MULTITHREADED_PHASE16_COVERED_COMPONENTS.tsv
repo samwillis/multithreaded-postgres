@@ -59,6 +59,7 @@ src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threade
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
 src/test/modules/commit_ts	check-threaded-test-modules-commit-ts	commit timestamp regression runs under threaded_workers.conf plus commit_ts.conf with current configured TAP surface
+src/test/modules/delay_execution	check-threaded-test-modules-delay-execution	delay_execution partition DDL isolation coverage runs under threaded_workers.conf with thread-per-session metadata, session-private delay GUC state, and runtime-owned planner hook chain state
 src/test/modules/dummy_index_am	check-threaded-test-modules-dummy-index-am	dummy index access method regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/dummy_seclabel	check-threaded-test-modules-dummy-seclabel	dummy security-label provider regression runs under threaded_workers.conf with thread-per-session metadata and process-global label-provider registration scoped to the temp test server
 src/test/modules/index	check-threaded-test-modules-index	index module isolation coverage runs under threaded_workers.conf
