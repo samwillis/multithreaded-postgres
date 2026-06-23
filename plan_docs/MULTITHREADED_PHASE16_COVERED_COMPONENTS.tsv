@@ -81,6 +81,7 @@ src/test/modules/test_integerset	check-threaded-test-modules-test-integerset	int
 src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_lfind	check-threaded-test-modules-test-lfind	linear-search regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_lwlock_tranches	check-threaded-test-modules-test-lwlock-tranches	LWLock tranche regression module declares thread-per-session metadata and runs startup shared-preload plus dynamic tranche coverage under threaded_workers.conf
+src/test/modules/test_oat_hooks	check-threaded-test-modules-test-oat-hooks	object-access, ProcessUtility, and ExecutorCheckPerms hook regression module runs under threaded_workers.conf with thread-per-session metadata, session-private GUC state, and runtime-owned hook chain state
 src/test/modules/test_parser	check-threaded-test-modules-test-parser	text search parser regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_pg_dump	check-threaded-test-modules-test-pg-dump	test_pg_dump SQL extension regression runs under threaded_workers.conf with current configured TAP surface
 src/test/modules/test_predtest	check-threaded-test-modules-test-predtest	predicate proof regression module declares thread-per-session metadata and runs under threaded_workers.conf

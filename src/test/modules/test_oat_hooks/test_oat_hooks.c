@@ -20,33 +20,98 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "tcop/utility.h"
+#include "utils/backend_runtime.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_oat_hooks",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
+
+#define TEST_OAT_HOOKS_SESSION_STATE_KEY "test_oat_hooks.session"
+#define TEST_OAT_HOOKS_RUNTIME_STATE_KEY "test_oat_hooks.runtime"
 
 /*
  * GUCs controlling which operations to deny
  */
-static bool REGRESS_deny_set_variable = false;
-static bool REGRESS_deny_alter_system = false;
-static bool REGRESS_deny_object_access = false;
-static bool REGRESS_deny_exec_perms = false;
-static bool REGRESS_deny_utility_commands = false;
-static bool REGRESS_audit = false;
+typedef struct TestOatHooksSessionState
+{
+	bool		REGRESS_deny_set_variable;
+	bool		REGRESS_deny_alter_system;
+	bool		REGRESS_deny_object_access;
+	bool		REGRESS_deny_exec_perms;
+	bool		REGRESS_deny_utility_commands;
+	bool		REGRESS_audit;
 
 /*
  * GUCs for testing privileges on USERSET and SUSET variables,
  * with and without privileges granted prior to module load.
  */
-static bool REGRESS_userset_variable1 = false;
-static bool REGRESS_userset_variable2 = false;
-static bool REGRESS_suset_variable1 = false;
-static bool REGRESS_suset_variable2 = false;
+	bool		REGRESS_userset_variable1;
+	bool		REGRESS_userset_variable2;
+	bool		REGRESS_suset_variable1;
+	bool		REGRESS_suset_variable2;
+} TestOatHooksSessionState;
 
 /* Saved hook values */
-static object_access_hook_type next_object_access_hook = NULL;
-static object_access_hook_type_str next_object_access_hook_str = NULL;
-static ExecutorCheckPerms_hook_type next_exec_check_perms_hook = NULL;
-static ProcessUtility_hook_type next_ProcessUtility_hook = NULL;
+typedef struct TestOatHooksRuntimeState
+{
+	object_access_hook_type next_object_access_hook;
+	object_access_hook_type_str next_object_access_hook_str;
+	ExecutorCheckPerms_hook_type next_exec_check_perms_hook;
+	ProcessUtility_hook_type next_ProcessUtility_hook;
+	bool		hook_installed;
+} TestOatHooksRuntimeState;
+
+static TestOatHooksSessionState *
+test_oat_hooks_session_state(void)
+{
+	return (TestOatHooksSessionState *)
+		PgSessionEnsureExtensionPrivateState(TEST_OAT_HOOKS_SESSION_STATE_KEY,
+											 sizeof(TestOatHooksSessionState),
+											 NULL);
+}
+
+static TestOatHooksRuntimeState *
+test_oat_hooks_runtime_state(void)
+{
+	return (TestOatHooksRuntimeState *)
+		PgRuntimeEnsureExtensionPrivateState(TEST_OAT_HOOKS_RUNTIME_STATE_KEY,
+											 sizeof(TestOatHooksRuntimeState),
+											 NULL);
+}
+
+#define REGRESS_deny_set_variable \
+	(test_oat_hooks_session_state()->REGRESS_deny_set_variable)
+#define REGRESS_deny_alter_system \
+	(test_oat_hooks_session_state()->REGRESS_deny_alter_system)
+#define REGRESS_deny_object_access \
+	(test_oat_hooks_session_state()->REGRESS_deny_object_access)
+#define REGRESS_deny_exec_perms \
+	(test_oat_hooks_session_state()->REGRESS_deny_exec_perms)
+#define REGRESS_deny_utility_commands \
+	(test_oat_hooks_session_state()->REGRESS_deny_utility_commands)
+#define REGRESS_audit \
+	(test_oat_hooks_session_state()->REGRESS_audit)
+#define REGRESS_userset_variable1 \
+	(test_oat_hooks_session_state()->REGRESS_userset_variable1)
+#define REGRESS_userset_variable2 \
+	(test_oat_hooks_session_state()->REGRESS_userset_variable2)
+#define REGRESS_suset_variable1 \
+	(test_oat_hooks_session_state()->REGRESS_suset_variable1)
+#define REGRESS_suset_variable2 \
+	(test_oat_hooks_session_state()->REGRESS_suset_variable2)
+
+#define next_object_access_hook \
+	(test_oat_hooks_runtime_state()->next_object_access_hook)
+#define next_object_access_hook_str \
+	(test_oat_hooks_runtime_state()->next_object_access_hook_str)
+#define next_exec_check_perms_hook \
+	(test_oat_hooks_runtime_state()->next_exec_check_perms_hook)
+#define next_ProcessUtility_hook \
+	(test_oat_hooks_runtime_state()->next_ProcessUtility_hook)
+#define test_oat_hooks_installed \
+	(test_oat_hooks_runtime_state()->hook_installed)
 
 /* Test Object Access Type Hook hooks */
 static void REGRESS_object_access_hook_str(ObjectAccessType access,
@@ -209,21 +274,25 @@ _PG_init(void)
 
 	MarkGUCPrefixReserved("test_oat_hooks");
 
-	/* Object access hook */
-	next_object_access_hook = object_access_hook;
-	object_access_hook = REGRESS_object_access_hook;
+	if (!test_oat_hooks_installed)
+	{
+		/* Object access hook */
+		next_object_access_hook = object_access_hook;
+		object_access_hook = REGRESS_object_access_hook;
 
-	/* Object access hook str */
-	next_object_access_hook_str = object_access_hook_str;
-	object_access_hook_str = REGRESS_object_access_hook_str;
+		/* Object access hook str */
+		next_object_access_hook_str = object_access_hook_str;
+		object_access_hook_str = REGRESS_object_access_hook_str;
 
-	/* DML permission check */
-	next_exec_check_perms_hook = ExecutorCheckPerms_hook;
-	ExecutorCheckPerms_hook = REGRESS_exec_check_perms;
+		/* DML permission check */
+		next_exec_check_perms_hook = ExecutorCheckPerms_hook;
+		ExecutorCheckPerms_hook = REGRESS_exec_check_perms;
 
-	/* ProcessUtility hook */
-	next_ProcessUtility_hook = ProcessUtility_hook;
-	ProcessUtility_hook = REGRESS_utility_command;
+		/* ProcessUtility hook */
+		next_ProcessUtility_hook = ProcessUtility_hook;
+		ProcessUtility_hook = REGRESS_utility_command;
+		test_oat_hooks_installed = true;
+	}
 }
 
 static void
