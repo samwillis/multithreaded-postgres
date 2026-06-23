@@ -70,7 +70,8 @@ sub wait_for_protocol_parked
 
 			return 0 unless @fields >= 27;
 			return $fields[PARK_STATE] eq 'committed'
-			  && $fields[QUEUE_STATE] eq 'parked_protocol_read'
+			  && ($fields[QUEUE_STATE] eq 'parked_protocol_read'
+				|| $fields[QUEUE_STATE] eq 'polling')
 			  && $fields[CARRIER_ATTACHED] == 0
 			  && $fields[SESSION_PRESENT] == 1
 			  && $fields[CONNECTION_PRESENT] == 1
