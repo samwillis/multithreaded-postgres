@@ -17,6 +17,7 @@ contrib/lo	check-threaded-contrib-lo-run	lo large-object trigger regression runs
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
 contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf has no threaded-server dependency and runs through check-threaded-contrib
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
+contrib/passwordcheck	check-threaded-contrib-passwordcheck-run	passwordcheck regression runs under threaded_workers.conf with session-local hook and GUC state
 contrib/pg_buffercache	check-threaded-contrib-pg-buffercache-run	pg_buffercache shared buffer cache regressions run under threaded_workers.conf
 contrib/pg_freespacemap	check-threaded-contrib-pg-freespacemap-run	pg_freespacemap regression runs with threaded_workers.conf plus its autovacuum-disabled temp config
 contrib/pg_surgery	check-threaded-contrib-pg-surgery-run	pg_surgery heap surgery regression runs under threaded_workers.conf
