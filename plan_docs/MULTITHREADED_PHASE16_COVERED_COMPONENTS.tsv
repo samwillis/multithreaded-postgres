@@ -1,12 +1,17 @@
 # component	threaded_target	notes
 contrib/btree_gin	check-threaded-contrib-btree-gin-run	btree_gin regression, including all GIN operator class SQL coverage, runs under threaded_workers.conf
 contrib/btree_gist	check-threaded-contrib-btree-gist-run	btree_gist regression, including all GiST operator class SQL coverage, runs under threaded_workers.conf
+contrib/citext	check-threaded-contrib-citext-run	citext regression, including ACL and UTF-8 SQL coverage, runs under threaded_workers.conf
+contrib/cube	check-threaded-contrib-cube-run	cube regression, including scanner/parser and scientific notation coverage, runs under threaded_workers.conf
 contrib/dict_int	check-threaded-contrib-dict-int-run	dict_int text search dictionary regression runs under threaded_workers.conf
 contrib/dict_xsyn	check-threaded-contrib-dict-xsyn-run	dict_xsyn text search dictionary regression runs under threaded_workers.conf
+contrib/earthdistance	check-threaded-contrib-earthdistance-run	earthdistance regression runs under threaded_workers.conf
+contrib/fuzzystrmatch	check-threaded-contrib-fuzzystrmatch-run	fuzzystrmatch regression, including UTF-8 SQL coverage, runs under threaded_workers.conf
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 contrib/pg_trgm	check-threaded-contrib-pg-trgm-run	pg_trgm regression, including similarity threshold custom GUC coverage, runs under threaded_workers.conf
+contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
