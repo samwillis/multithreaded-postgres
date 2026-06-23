@@ -138,10 +138,16 @@ StartupProcApplyLogicalInterrupts(void)
 		return;
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_CONFIG_RELOAD))
+	{
 		got_SIGHUP = true;
+		WakeupRecovery();
+	}
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_STARTUP_PROMOTE))
+	{
 		promote_signaled = true;
+		WakeupRecovery();
+	}
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_SHUTDOWN_REQUEST))
 	{
@@ -149,6 +155,7 @@ StartupProcApplyLogicalInterrupts(void)
 			proc_exit(1);
 		else
 			shutdown_requested = true;
+		WakeupRecovery();
 	}
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_PROC_DIE))

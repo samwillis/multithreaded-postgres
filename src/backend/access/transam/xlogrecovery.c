@@ -4447,7 +4447,14 @@ CheckForStandbyTrigger(void)
 	if (LocalPromoteIsTriggered)
 		return true;
 
-	if (IsPromoteSignaled() && CheckPromoteSignal())
+	/*
+	 * In a thread-backed startup process, the process-directed SIGUSR2 used
+	 * by pg_ctl can be delivered to another thread in the shared address
+	 * space.  The signal file is still the durable promotion request, so poll
+	 * it when the startup thread reaches its ordinary trigger checks.
+	 */
+	if ((IsPromoteSignaled() || PgRuntimeIsThreadBacked(CurrentPgRuntime)) &&
+		CheckPromoteSignal())
 	{
 		ereport(LOG, (errmsg("received promote request")));
 		RemovePromoteSignalFiles();
