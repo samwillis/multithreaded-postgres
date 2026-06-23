@@ -1,5 +1,6 @@
 # component	threaded_target	notes
 contrib/amcheck	check-threaded-contrib-amcheck-run	amcheck btree, GIN, and heap corruption SQL regressions run under threaded_workers.conf with current configured TAP surface
+contrib/auto_explain	check-threaded-contrib-auto-explain-run	auto_explain custom GUC, ALTER RESET, and extension EXPLAIN option regressions run under threaded_workers.conf with runtime-owned Executor hooks and session/execution-local state; TAP surface remains gated by enable_tap_tests
 contrib/bloom	check-threaded-contrib-bloom-run	bloom index access method regression runs under threaded_workers.conf
 contrib/btree_gin	check-threaded-contrib-btree-gin-run	btree_gin regression, including all GIN operator class SQL coverage, runs under threaded_workers.conf
 contrib/btree_gist	check-threaded-contrib-btree-gist-run	btree_gist regression, including all GiST operator class SQL coverage, runs under threaded_workers.conf
