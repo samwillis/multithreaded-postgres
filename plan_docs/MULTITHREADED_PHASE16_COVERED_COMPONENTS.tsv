@@ -26,6 +26,7 @@ contrib/pg_buffercache	check-threaded-contrib-pg-buffercache-run	pg_buffercache 
 contrib/pg_freespacemap	check-threaded-contrib-pg-freespacemap-run	pg_freespacemap regression runs with threaded_workers.conf plus its autovacuum-disabled temp config
 contrib/pg_logicalinspect	check-threaded-contrib-pg-logicalinspect-run	pg_logicalinspect SQL regression and logical_inspect isolation coverage run under threaded_workers.conf with pg_logicalinspect and test_decoding thread-per-session metadata
 contrib/pg_overexplain	check-threaded-contrib-pg-overexplain-run	pg_overexplain EXPLAIN hook regression runs under threaded_workers.conf with runtime-owned hook chain state
+contrib/pg_prewarm	check-threaded-contrib-pg-prewarm-run	pg_prewarm SQL regression runs under threaded_workers.conf, and autoprewarm TAP runs under threaded_smoke.conf with shared-preload postmaster custom GUC descriptor replay and autoprewarm worker restart coverage
 contrib/pg_surgery	check-threaded-contrib-pg-surgery-run	pg_surgery heap surgery regression runs under threaded_workers.conf
 contrib/pg_trgm	check-threaded-contrib-pg-trgm-run	pg_trgm regression, including similarity threshold custom GUC coverage, runs under threaded_workers.conf
 contrib/pg_visibility	check-threaded-contrib-pg-visibility-run	pg_visibility page visibility regression runs under threaded_workers.conf
