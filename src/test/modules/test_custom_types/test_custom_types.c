@@ -21,7 +21,11 @@
 #include "commands/vacuum.h"
 #include "utils/builtins.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_custom_types",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 /* Function declarations */
 PG_FUNCTION_INFO_V1(int_custom_in);
