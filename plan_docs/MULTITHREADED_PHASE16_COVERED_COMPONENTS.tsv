@@ -18,7 +18,7 @@ contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs un
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/lo	check-threaded-contrib-lo-run	lo large-object trigger regression runs under threaded_workers.conf
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
-contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf has no threaded-server dependency and runs through check-threaded-contrib
+contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf runs through direct threaded-world prove coverage
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 contrib/passwordcheck	check-threaded-contrib-passwordcheck-run	passwordcheck regression runs under threaded_workers.conf with session-local hook and GUC state
 contrib/pg_buffercache	check-threaded-contrib-pg-buffercache-run	pg_buffercache shared buffer cache regressions run under threaded_workers.conf
@@ -38,22 +38,22 @@ contrib/tcn	check-threaded-contrib-tcn-run	tcn trigger notification isolation te
 contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
 contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
-contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP leaf has no threaded-server dependency and runs through check-threaded-contrib
-src/bin/initdb	check-threaded-bin-initdb	initdb offline data-directory TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup check-world TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums offline data-directory TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_controldata	check-threaded-bin-pg-controldata	pg_controldata offline control-file TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_resetwal	check-threaded-bin-pg-resetwal	pg_resetwal offline WAL-control TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_test_fsync	check-threaded-bin-pg-test-fsync	pg_test_fsync utility TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_test_timing	check-threaded-bin-pg-test-timing	pg_test_timing utility TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_waldump	check-threaded-bin-pg-waldump	pg_waldump offline WAL-reader TAP leaf has no threaded-server dependency and runs through check-threaded-bin
-src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary offline WAL-summary TAP leaf has no threaded-server dependency and runs through check-threaded-bin
+contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP leaf runs through direct threaded-world prove coverage
+src/bin/initdb	check-threaded-bin-initdb	initdb TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_controldata	check-threaded-bin-pg-controldata	pg_controldata TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/pg_resetwal	check-threaded-bin-pg-resetwal	pg_resetwal TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/pg_test_fsync	check-threaded-bin-pg-test-fsync	pg_test_fsync utility TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_test_timing	check-threaded-bin-pg-test-timing	pg_test_timing utility TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_waldump	check-threaded-bin-pg-waldump	pg_waldump TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
+src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/interfaces/ecpg/compatlib	check-threaded-interfaces-ecpg-compatlib	ECPG compatibility library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/ecpglib	check-threaded-interfaces-ecpg-ecpglib	ECPG client library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/include	check-threaded-interfaces-ecpg-include	ECPG header check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/pgtypeslib	check-threaded-interfaces-ecpg-pgtypeslib	ECPG pgtypes library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
-src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf has no threaded-server dependency and runs through check-threaded-interfaces
+src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf runs through direct threaded-world prove coverage
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
@@ -67,15 +67,15 @@ src/test/modules/spgist_name_ops	check-threaded-test-modules-spgist-name-ops	SP-
 src/test/modules/test_binaryheap	check-threaded-test-modules-test-binaryheap	binary heap regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_bitmapset	check-threaded-test-modules-test-bitmapset	bitmapset regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_bloomfilter	check-threaded-test-modules-test-bloomfilter	Bloom filter regression module declares thread-per-session metadata and runs under threaded_workers.conf
-src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callbacks	COPY callback regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_cplusplusext	check-threaded-test-modules-test-cplusplusext	C++ extension regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_custom_types	check-threaded-test-modules-test-custom-types	custom type regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_dsa	check-threaded-test-modules-test-dsa	dynamic shared memory area regression module declares thread-per-session metadata and runs DSA/resource-owner coverage under threaded_workers.conf
 src/test/modules/test_ginpostinglist	check-threaded-test-modules-test-ginpostinglist	GIN posting-list regression module declares thread-per-session metadata and runs under threaded_workers.conf
-src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_integerset	check-threaded-test-modules-test-integerset	integer set regression module declares thread-per-session metadata and runs under threaded_workers.conf
-src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_lfind	check-threaded-test-modules-test-lfind	linear-search regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_lwlock_tranches	check-threaded-test-modules-test-lwlock-tranches	LWLock tranche regression module declares thread-per-session metadata and runs startup shared-preload plus dynamic tranche coverage under threaded_workers.conf
 src/test/modules/test_parser	check-threaded-test-modules-test-parser	text search parser regression module declares thread-per-session metadata and runs under threaded_workers.conf
@@ -89,4 +89,4 @@ src/test/modules/test_saslprep	check-threaded-test-modules-test-saslprep	SASLpre
 src/test/modules/test_shm_mq	check-threaded-test-modules-test-shm-mq	shared-memory message queue regression module declares thread-per-session metadata and runs worker coverage under threaded_workers.conf
 src/test/modules/test_tidstore	check-threaded-test-modules-test-tidstore	TidStore regression module runs under threaded_workers.conf with formerly file-scope test state moved to session-private extension state
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
-src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf has no threaded-server dependency and runs through check-threaded-tools
+src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf runs through direct threaded-world prove coverage

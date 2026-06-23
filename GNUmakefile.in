@@ -64,6 +64,7 @@ distclean:
 	rm -f config.cache config.log config.status GNUmakefile
 
 THREADED_WORLD_CORE_CONFIG = $(abs_top_srcdir)/src/test/regress/threaded_workers.conf
+THREADED_WORLD_TAP_CONFIG = $(abs_top_srcdir)/src/test/regress/threaded_smoke.conf
 THREADED_WORLD_CORE_TAP_DIR = $(abs_top_srcdir)/src/test/modules/test_backend_runtime
 THREADED_WORLD_CORE_TAP_TESTS = \
 	t/001_threaded_runtime.pl \
@@ -75,9 +76,12 @@ THREADED_WORLD_CORE_TAP_TESTS = \
 	t/007_phase15_pooled_protocol_mode.pl \
 	t/008_phase15_pooled_protocol_postmaster_death.pl \
 	t/009_phase15_pooled_deep_waits_pinned.pl
+THREADED_WORLD_PROVE = $(if $(PROVE),$(PROVE),prove)
+THREADED_WORLD_TAP_PERL5LIB = \
+	$(abs_top_builddir)/.perl5/lib/perl5:$(abs_top_builddir)/.perl5/lib/perl5/darwin-thread-multi-2level:$(abs_top_srcdir)/src/test/perl
 THREADED_WORLD_CORE_TAP_PERL5LIB = \
-	$(abs_top_builddir)/.perl5/lib/perl5:$(abs_top_builddir)/.perl5/lib/perl5/darwin-thread-multi-2level:$(abs_top_srcdir)/src/test/perl:$(THREADED_WORLD_CORE_TAP_DIR)
-THREADED_WORLD_CORE_PROVE = $(if $(PROVE),$(PROVE),prove)
+	$(THREADED_WORLD_TAP_PERL5LIB):$(THREADED_WORLD_CORE_TAP_DIR)
+THREADED_WORLD_CORE_PROVE = $(THREADED_WORLD_PROVE)
 THREADED_WORLD_COVERAGE_TOOL = $(abs_top_srcdir)/src/tools/threaded_world/check_threaded_world_coverage.pl
 THREADED_WORLD_COVERED_COMPONENTS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv
 THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv
@@ -123,17 +127,54 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/unaccent \
 	contrib/vacuumlo
 
+define threaded_world_prove
+	rm -rf '$(abs_top_srcdir)/$(1)'/tmp_check
+	$(MKDIR_P) '$(abs_top_srcdir)/$(1)'/tmp_check/log
+	cd '$(abs_top_srcdir)/$(1)' && \
+	  TESTLOGDIR='$(abs_top_srcdir)/$(1)'/tmp_check/log \
+	  TESTDATADIR='$(abs_top_srcdir)/$(1)'/tmp_check \
+	  PATH='$(abs_top_builddir)'/tmp_install$(bindir):'$(abs_top_srcdir)/$(1)':$$PATH \
+	  $(call add_to_path,$(strip $(ld_library_path_var)),$(abs_top_builddir)/tmp_install$(libdir)) \
+	  INITDB_TEMPLATE='$(abs_top_builddir)'/tmp_install/initdb-template \
+	  TEMP_CONFIG='$(THREADED_WORLD_TAP_CONFIG)' \
+	  PG_TEST_EXTRA='$(PG_TEST_EXTRA)' \
+	  PGPORT=65432 \
+	  top_builddir='$(abs_top_builddir)' \
+	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
+	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
+	  GMAKE='$(MAKE)' \
+	  with_icu='$(with_icu)' \
+	  with_ssl='$(with_ssl)' \
+	  with_gssapi='$(with_gssapi)' \
+	  with_krb_srvnam='$(with_krb_srvnam)' \
+	  with_readline='$(with_readline)' \
+	  with_ldap='$(with_ldap)' \
+	  with_libcurl='$(with_libcurl)' \
+	  with_python='$(with_python)' \
+	  enable_injection_points='$(enable_injection_points)' \
+	  OPENSSL='$(OPENSSL)' \
+	  PYTHON='$(PYTHON)' \
+	  TAR='$(TAR)' \
+	  GZIP_PROGRAM='$(GZIP)' \
+	  LZ4='$(LZ4)' \
+	  ZSTD='$(ZSTD)' \
+	  PERL5LIB='$(THREADED_WORLD_TAP_PERL5LIB):$(abs_top_srcdir)/$(1)':$${PERL5LIB} \
+	  $(THREADED_WORLD_PROVE) -I '$(abs_top_srcdir)'/src/test/perl -I '$(abs_top_srcdir)/$(1)' $(PROVE_FLAGS) $(2)
+endef
+
 check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200: | temp-install
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: CHECKPREP_TOP=src/test/regress
 check check-tests check-threaded check-threaded-workers check-threaded-smoke check-threaded-150 check-threaded-200 installcheck installcheck-parallel installcheck-tests: submake-generated-headers
 	$(MAKE) -C src/test/regress $@
 
+check-threaded-world-core: | temp-install
 check-threaded-world-core:
 	$(MAKE) check-threaded-src-test
 	$(MAKE) check-threaded-pl
 	$(MAKE) check-runtime-lifecycles
 	$(MAKE) check-global-lifetimes
 
+check-threaded-src-test: | temp-install
 check-threaded-src-test:
 	$(MAKE) check-threaded-src-test-regress
 	$(MAKE) check-threaded-src-test-isolation
@@ -151,6 +192,7 @@ check-threaded-src-test-isolation: submake-generated-headers
 check-threaded-src-test-isolation:
 	$(MAKE) -C src/test/isolation check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules: | temp-install
 check-threaded-test-modules:
 	$(MAKE) check-threaded-test-backend-runtime
 	$(MAKE) check-threaded-test-modules-brin
@@ -193,8 +235,11 @@ check-threaded-test-backend-runtime:
 	$(MAKE) -C src/test/modules/test_backend_runtime check
 	$(MAKE) check-threaded-world-core-tap
 
+check-threaded-test-modules-test-cloexec: | temp-install
+check-threaded-test-modules-test-cloexec: submake-generated-headers
 check-threaded-test-modules-test-cloexec:
-	$(MAKE) -C src/test/modules/test_cloexec check
+	$(MAKE) -C src/test/modules/test_cloexec all
+	$(call threaded_world_prove,src/test/modules/test_cloexec,t/*.pl)
 
 check-threaded-test-modules-brin: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-brin: | temp-install
@@ -300,8 +345,11 @@ check-threaded-test-modules-test-ginpostinglist:
 	$(MAKE) -C src/test/modules/test_ginpostinglist DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_ginpostinglist check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-test-int128: | temp-install
+check-threaded-test-modules-test-int128: submake-generated-headers
 check-threaded-test-modules-test-int128:
-	$(MAKE) -C src/test/modules/test_int128 check
+	$(MAKE) -C src/test/modules/test_int128 all
+	$(call threaded_world_prove,src/test/modules/test_int128,t/*.pl)
 
 check-threaded-test-modules-test-integerset: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-integerset: | temp-install
@@ -310,8 +358,11 @@ check-threaded-test-modules-test-integerset:
 	$(MAKE) -C src/test/modules/test_integerset DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_integerset check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-test-json-parser: | temp-install
+check-threaded-test-modules-test-json-parser: submake-generated-headers
 check-threaded-test-modules-test-json-parser:
-	$(MAKE) -C src/test/modules/test_json_parser check
+	$(MAKE) -C src/test/modules/test_json_parser all
+	$(call threaded_world_prove,src/test/modules/test_json_parser,t/*.pl)
 
 check-threaded-test-modules-test-lfind: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-lfind: | temp-install
@@ -658,8 +709,11 @@ check-threaded-contrib-oid2name:
 	$(MAKE) -j1 -C contrib/oid2name checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
 	$(MAKE) check-threaded-contrib-oid2name-run
 
+check-threaded-contrib-oid2name-run: | temp-install
+check-threaded-contrib-oid2name-run: submake-generated-headers
 check-threaded-contrib-oid2name-run:
-	$(MAKE) -C contrib/oid2name check
+	$(MAKE) -C contrib/oid2name all
+	$(call threaded_world_prove,contrib/oid2name,t/*.pl)
 
 check-threaded-contrib-pageinspect: | temp-install
 check-threaded-contrib-pageinspect: submake-generated-headers
@@ -838,9 +892,13 @@ check-threaded-contrib-vacuumlo:
 	$(MAKE) -j1 -C contrib/vacuumlo checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
 	$(MAKE) check-threaded-contrib-vacuumlo-run
 
+check-threaded-contrib-vacuumlo-run: | temp-install
+check-threaded-contrib-vacuumlo-run: submake-generated-headers
 check-threaded-contrib-vacuumlo-run:
-	$(MAKE) -C contrib/vacuumlo check
+	$(MAKE) -C contrib/vacuumlo all
+	$(call threaded_world_prove,contrib/vacuumlo,t/*.pl)
 
+check-threaded-interfaces: | temp-install
 check-threaded-interfaces:
 	$(MAKE) check-threaded-interfaces-ecpg-compatlib
 	$(MAKE) check-threaded-interfaces-ecpg-ecpglib
@@ -860,9 +918,13 @@ check-threaded-interfaces-ecpg-include:
 check-threaded-interfaces-ecpg-pgtypeslib:
 	$(MAKE) -C src/interfaces/ecpg/pgtypeslib check
 
+check-threaded-interfaces-ecpg-preproc: | temp-install
+check-threaded-interfaces-ecpg-preproc: submake-generated-headers
 check-threaded-interfaces-ecpg-preproc:
-	$(MAKE) -C src/interfaces/ecpg/preproc check
+	$(MAKE) -C src/interfaces/ecpg/preproc all
+	$(call threaded_world_prove,src/interfaces/ecpg/preproc,t/*.pl)
 
+check-threaded-bin: | temp-install
 check-threaded-bin:
 	$(MAKE) check-threaded-bin-initdb
 	$(MAKE) check-threaded-bin-pg-archivecleanup
@@ -875,42 +937,67 @@ check-threaded-bin:
 	$(MAKE) check-threaded-bin-pg-waldump
 	$(MAKE) check-threaded-bin-pg-walsummary
 
+check-threaded-bin-initdb: | temp-install
+check-threaded-bin-initdb: submake-generated-headers
 check-threaded-bin-initdb:
-	$(MAKE) -C src/bin/initdb check
+	$(call threaded_world_prove,src/bin/initdb,t/*.pl)
 
+check-threaded-bin-pg-archivecleanup: | temp-install
+check-threaded-bin-pg-archivecleanup: submake-generated-headers
 check-threaded-bin-pg-archivecleanup:
-	$(MAKE) -C src/bin/pg_archivecleanup check
+	$(call threaded_world_prove,src/bin/pg_archivecleanup,t/*.pl)
 
+check-threaded-bin-pg-checksums: | temp-install
+check-threaded-bin-pg-checksums: submake-generated-headers
 check-threaded-bin-pg-checksums:
-	$(MAKE) -C src/bin/pg_checksums check
+	$(call threaded_world_prove,src/bin/pg_checksums,t/*.pl)
 
+check-threaded-bin-pg-config: | temp-install
+check-threaded-bin-pg-config: submake-generated-headers
 check-threaded-bin-pg-config:
-	$(MAKE) -C src/bin/pg_config check
+	$(call threaded_world_prove,src/bin/pg_config,t/*.pl)
 
+check-threaded-bin-pg-controldata: | temp-install
+check-threaded-bin-pg-controldata: submake-generated-headers
 check-threaded-bin-pg-controldata:
-	$(MAKE) -C src/bin/pg_controldata check
+	$(call threaded_world_prove,src/bin/pg_controldata,t/*.pl)
 
+check-threaded-bin-pg-resetwal: | temp-install
+check-threaded-bin-pg-resetwal: submake-generated-headers
 check-threaded-bin-pg-resetwal:
-	$(MAKE) -C src/bin/pg_resetwal check
+	$(call threaded_world_prove,src/bin/pg_resetwal,t/*.pl)
 
+check-threaded-bin-pg-test-fsync: | temp-install
+check-threaded-bin-pg-test-fsync: submake-generated-headers
 check-threaded-bin-pg-test-fsync:
-	$(MAKE) -C src/bin/pg_test_fsync check
+	$(call threaded_world_prove,src/bin/pg_test_fsync,t/*.pl)
 
+check-threaded-bin-pg-test-timing: | temp-install
+check-threaded-bin-pg-test-timing: submake-generated-headers
 check-threaded-bin-pg-test-timing:
-	$(MAKE) -C src/bin/pg_test_timing check
+	$(call threaded_world_prove,src/bin/pg_test_timing,t/*.pl)
 
+check-threaded-bin-pg-waldump: | temp-install
+check-threaded-bin-pg-waldump: submake-generated-headers
 check-threaded-bin-pg-waldump:
-	$(MAKE) -C src/bin/pg_waldump check
+	$(call threaded_world_prove,src/bin/pg_waldump,t/*.pl)
 
+check-threaded-bin-pg-walsummary: | temp-install
+check-threaded-bin-pg-walsummary: submake-generated-headers
 check-threaded-bin-pg-walsummary:
-	$(MAKE) -C src/bin/pg_walsummary check
+	$(call threaded_world_prove,src/bin/pg_walsummary,t/*.pl)
 
+check-threaded-tools: | temp-install
 check-threaded-tools:
 	$(MAKE) check-threaded-tools-pg-bsd-indent
 
+check-threaded-tools-pg-bsd-indent: | temp-install
+check-threaded-tools-pg-bsd-indent: submake-generated-headers
 check-threaded-tools-pg-bsd-indent:
-	$(MAKE) -C src/tools/pg_bsd_indent check
+	$(MAKE) -C src/tools/pg_bsd_indent all
+	$(call threaded_world_prove,src/tools/pg_bsd_indent,t/*.pl)
 
+check-world-threaded: | temp-install
 check-world-threaded:
 	$(MAKE) check-threaded-world-coverage
 	$(MAKE) check-threaded-world-core
