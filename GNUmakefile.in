@@ -149,12 +149,21 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-backend-runtime
 	$(MAKE) check-threaded-test-modules-plsample
 	$(MAKE) check-threaded-test-modules-spgist-name-ops
+	$(MAKE) check-threaded-test-modules-test-binaryheap
+	$(MAKE) check-threaded-test-modules-test-bitmapset
+	$(MAKE) check-threaded-test-modules-test-bloomfilter
 	$(MAKE) check-threaded-test-modules-test-cloexec
 	$(MAKE) check-threaded-test-modules-test-int128
 	$(MAKE) check-threaded-test-modules-test-json-parser
 	$(MAKE) check-threaded-test-modules-test-copy-callbacks
 	$(MAKE) check-threaded-test-modules-test-custom-types
+	$(MAKE) check-threaded-test-modules-test-ginpostinglist
+	$(MAKE) check-threaded-test-modules-test-integerset
+	$(MAKE) check-threaded-test-modules-test-lfind
 	$(MAKE) check-threaded-test-modules-test-parser
+	$(MAKE) check-threaded-test-modules-test-radixtree
+	$(MAKE) check-threaded-test-modules-test-rbtree
+	$(MAKE) check-threaded-test-modules-test-regex
 
 check-threaded-test-backend-runtime: CHECKPREP_TOP=src/test/regress
 check-threaded-test-backend-runtime: | temp-install
@@ -181,6 +190,27 @@ check-threaded-test-modules-spgist-name-ops:
 	$(MAKE) -C src/test/modules/spgist_name_ops DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/spgist_name_ops check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-test-binaryheap: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-binaryheap: | temp-install
+check-threaded-test-modules-test-binaryheap: submake-generated-headers
+check-threaded-test-modules-test-binaryheap:
+	$(MAKE) -C src/test/modules/test_binaryheap DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_binaryheap check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-bitmapset: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-bitmapset: | temp-install
+check-threaded-test-modules-test-bitmapset: submake-generated-headers
+check-threaded-test-modules-test-bitmapset:
+	$(MAKE) -C src/test/modules/test_bitmapset DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_bitmapset check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-bloomfilter: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-bloomfilter: | temp-install
+check-threaded-test-modules-test-bloomfilter: submake-generated-headers
+check-threaded-test-modules-test-bloomfilter:
+	$(MAKE) -C src/test/modules/test_bloomfilter DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_bloomfilter check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-test-modules-test-copy-callbacks: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-copy-callbacks: | temp-install
 check-threaded-test-modules-test-copy-callbacks: submake-generated-headers
@@ -195,11 +225,32 @@ check-threaded-test-modules-test-custom-types:
 	$(MAKE) -C src/test/modules/test_custom_types DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_custom_types check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-test-ginpostinglist: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-ginpostinglist: | temp-install
+check-threaded-test-modules-test-ginpostinglist: submake-generated-headers
+check-threaded-test-modules-test-ginpostinglist:
+	$(MAKE) -C src/test/modules/test_ginpostinglist DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_ginpostinglist check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-test-modules-test-int128:
 	$(MAKE) -C src/test/modules/test_int128 check
 
+check-threaded-test-modules-test-integerset: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-integerset: | temp-install
+check-threaded-test-modules-test-integerset: submake-generated-headers
+check-threaded-test-modules-test-integerset:
+	$(MAKE) -C src/test/modules/test_integerset DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_integerset check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-test-modules-test-json-parser:
 	$(MAKE) -C src/test/modules/test_json_parser check
+
+check-threaded-test-modules-test-lfind: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-lfind: | temp-install
+check-threaded-test-modules-test-lfind: submake-generated-headers
+check-threaded-test-modules-test-lfind:
+	$(MAKE) -C src/test/modules/test_lfind DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_lfind check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-test-modules-test-parser: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-parser: | temp-install
@@ -207,6 +258,27 @@ check-threaded-test-modules-test-parser: submake-generated-headers
 check-threaded-test-modules-test-parser:
 	$(MAKE) -C src/test/modules/test_parser DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_parser check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-radixtree: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-radixtree: | temp-install
+check-threaded-test-modules-test-radixtree: submake-generated-headers
+check-threaded-test-modules-test-radixtree:
+	$(MAKE) -C src/test/modules/test_radixtree DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_radixtree check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-rbtree: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-rbtree: | temp-install
+check-threaded-test-modules-test-rbtree: submake-generated-headers
+check-threaded-test-modules-test-rbtree:
+	$(MAKE) -C src/test/modules/test_rbtree DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_rbtree check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-regex: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-regex: | temp-install
+check-threaded-test-modules-test-regex: submake-generated-headers
+check-threaded-test-modules-test-regex:
+	$(MAKE) -C src/test/modules/test_regex DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_regex check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-pl:
 	$(MAKE) check-threaded-plpgsql
@@ -765,3 +837,4 @@ check-runtime-lifecycles:
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
 .PHONY: check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser
 .PHONY: check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-parser
+.PHONY: check-threaded-test-modules-test-binaryheap check-threaded-test-modules-test-bitmapset check-threaded-test-modules-test-bloomfilter check-threaded-test-modules-test-ginpostinglist check-threaded-test-modules-test-integerset check-threaded-test-modules-test-lfind check-threaded-test-modules-test-radixtree check-threaded-test-modules-test-rbtree check-threaded-test-modules-test-regex

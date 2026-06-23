@@ -47,11 +47,20 @@ src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs u
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
 src/test/modules/plsample	check-threaded-test-modules-plsample	PL/Sample regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/spgist_name_ops	check-threaded-test-modules-spgist-name-ops	SP-GiST name opclass regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_binaryheap	check-threaded-test-modules-test-binaryheap	binary heap regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_bitmapset	check-threaded-test-modules-test-bitmapset	bitmapset regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_bloomfilter	check-threaded-test-modules-test-bloomfilter	Bloom filter regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
 src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callbacks	COPY callback regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_custom_types	check-threaded-test-modules-test-custom-types	custom type regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_ginpostinglist	check-threaded-test-modules-test-ginpostinglist	GIN posting-list regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_int128	check-threaded-test-modules-test-int128	test_int128 standalone arithmetic program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_integerset	check-threaded-test-modules-test-integerset	integer set regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_json_parser	check-threaded-test-modules-test-json-parser	test_json_parser standalone parser program TAP leaf has no threaded-server dependency and runs through check-threaded-test-modules
+src/test/modules/test_lfind	check-threaded-test-modules-test-lfind	linear-search regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_parser	check-threaded-test-modules-test-parser	text search parser regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_radixtree	check-threaded-test-modules-test-radixtree	radix tree regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_rbtree	check-threaded-test-modules-test-rbtree	red-black tree regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_regex	check-threaded-test-modules-test-regex	regular expression regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
 src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf has no threaded-server dependency and runs through check-threaded-tools
