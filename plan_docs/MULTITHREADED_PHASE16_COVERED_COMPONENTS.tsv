@@ -48,6 +48,7 @@ contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP
 src/bin/initdb	check-threaded-bin-initdb	initdb TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_amcheck	check-threaded-bin-pg-amcheck	pg_amcheck TAP corruption-detection coverage runs against TEMP_CONFIG-injected multithreaded TAP clusters
 src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_basebackup	check-threaded-bin-pg-basebackup	pg_basebackup, pg_receivewal, pg_recvlogical, and pg_createsubscriber TAP coverage runs under threaded TAP; basebackup target registry and walsender command buffers use process-safe lifetimes for repeated threaded backup and streaming commands
 src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_controldata	check-threaded-bin-pg-controldata	pg_controldata TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration

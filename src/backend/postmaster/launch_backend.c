@@ -1474,8 +1474,10 @@ backend_thread_finish(int code)
 	 */
 	PostmasterChildUnpublishLogicalBackend(thread_start->publication.pmchild);
 	if (thread_start->runtime_state.carrier.protocol_scheduler_registered)
+	{
 		(void) PgRuntimeProtocolSchedulerUnregisterCarrier(thread_start->runtime_state.carrier.runtime,
 														   &thread_start->runtime_state.carrier);
+	}
 	if (retained_top_context != NULL)
 	{
 		/*

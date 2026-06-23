@@ -61,7 +61,6 @@ struct DynamicFileList
 
 static PG_GLOBAL_RUNTIME DynamicFileList *file_list = NULL;
 static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
-static PG_THREAD_LOCAL bool threaded_session_init_in_progress = false;
 
 #ifndef WIN32
 static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -472,17 +471,20 @@ call_module_init_function(DynamicFileList *file_scanner)
 static void
 call_module_threaded_session_init_function(DynamicFileList *file_scanner)
 {
+	bool	   *session_init_in_progress;
 	bool		save_threaded_session_init_in_progress;
 
-	save_threaded_session_init_in_progress = threaded_session_init_in_progress;
-	threaded_session_init_in_progress = true;
+	session_init_in_progress =
+		PgCurrentSessionDynamicLibrarySessionInitInProgressRef();
+	save_threaded_session_init_in_progress = *session_init_in_progress;
+	*session_init_in_progress = true;
 	PG_TRY();
 	{
 		call_module_init_function(file_scanner);
 	}
 	PG_FINALLY();
 	{
-		threaded_session_init_in_progress = save_threaded_session_init_in_progress;
+		*session_init_in_progress = save_threaded_session_init_in_progress;
 	}
 	PG_END_TRY();
 }
@@ -490,7 +492,10 @@ call_module_threaded_session_init_function(DynamicFileList *file_scanner)
 bool
 dynamic_library_threaded_session_init_in_progress(void)
 {
-	return threaded_session_init_in_progress;
+	if (CurrentPgSession == NULL)
+		return false;
+
+	return *PgCurrentSessionDynamicLibrarySessionInitInProgressRef();
 }
 
 static bool

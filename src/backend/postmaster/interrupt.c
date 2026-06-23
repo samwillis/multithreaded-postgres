@@ -22,6 +22,7 @@
 #include "commands/repack.h"
 #include "miscadmin.h"
 #include "postmaster/interrupt.h"
+#include "replication/walsender.h"
 #include "replication/logicalworker.h"
 #include "replication/slotsync.h"
 #include "storage/ipc.h"
@@ -333,6 +334,9 @@ PgCurrentBackendApplyInterrupts(void)
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG))
 		CheckpointerShutdownXLOGPending = true;
+
+	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE))
+		HandleWalSndLastCycle();
 }
 
 /*

@@ -441,6 +441,13 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
 
 				slot->pss_signalFlags[reason] = true;
 				SpinLockRelease(&slot->pss_mutex);
+				if (!PgBackendSendInterruptById(backend_id,
+												PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
+												0, 0))
+				{
+					errno = ESRCH;
+					return -1;
+				}
 				WakeProcSignalSlot(procNumber);
 				return 0;
 			}
@@ -486,6 +493,13 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
 
 					slot->pss_signalFlags[reason] = true;
 					SpinLockRelease(&slot->pss_mutex);
+					if (!PgBackendSendInterruptById(backend_id,
+													PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
+													0, 0))
+					{
+						errno = ESRCH;
+						return -1;
+					}
 					WakeProcSignalSlot(i);
 					return 0;
 				}
@@ -684,6 +698,12 @@ EmitProcSignalBarrier(ProcSignalBarrierType type)
 void
 WaitForProcSignalBarrier(uint64 generation)
 {
+	bool		threaded_waiter =
+		CurrentPgRuntime != NULL &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime);
+	long		sleep_ms = threaded_waiter ? 100 : 5000;
+	int			log_timeout_count = threaded_waiter ? 50 : 1;
+
 	Assert(generation <= pg_atomic_read_u64(&ProcSignal->psh_barrierGeneration));
 
 	elog(DEBUG1,
@@ -695,6 +715,7 @@ WaitForProcSignalBarrier(uint64 generation)
 	{
 		ProcSignalSlot *slot = &ProcSignal->psh_slot[i];
 		uint64		oldval;
+		int			timeout_count = 0;
 
 		/*
 		 * It's important that we check only pss_barrierGeneration here and
@@ -718,11 +739,15 @@ WaitForProcSignalBarrier(uint64 generation)
 				break;
 
 			if (ConditionVariableTimedSleep(&slot->pss_barrierCV,
-											5000,
+											sleep_ms,
 											WAIT_EVENT_PROC_SIGNAL_BARRIER))
-				ereport(LOG,
-						(errmsg("still waiting for backend with PID %d to accept ProcSignalBarrier",
-								(int) pg_atomic_read_u32(&slot->pss_pid))));
+			{
+				timeout_count++;
+				if (timeout_count % log_timeout_count == 0)
+					ereport(LOG,
+							(errmsg("still waiting for backend with PID %d to accept ProcSignalBarrier",
+									(int) pg_atomic_read_u32(&slot->pss_pid))));
+			}
 			PgCurrentBackendApplyInterrupts();
 			CHECK_FOR_INTERRUPTS();
 			oldval = pg_atomic_read_u64(&slot->pss_barrierGeneration);

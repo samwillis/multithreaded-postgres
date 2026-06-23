@@ -1996,6 +1996,14 @@ PgCurrentSessionDynamicLibraryInitsRef(void)
 	return &CurrentPgSession->dynamic_library_inits;
 }
 
+bool *
+PgCurrentSessionDynamicLibrarySessionInitInProgressRef(void)
+{
+	Assert(CurrentPgSession != NULL);
+
+	return &CurrentPgSession->dynamic_library_session_init_in_progress;
+}
+
 Session *
 PgSessionGetLegacySession(PgSession *session)
 {

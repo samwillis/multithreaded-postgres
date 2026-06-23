@@ -314,7 +314,8 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 		values[i++] = BoolGetDatum(slot_contents.active_proc != INVALID_PROC_NUMBER);
 
 		if (slot_contents.active_proc != INVALID_PROC_NUMBER)
-			values[i++] = Int32GetDatum(GetPGProcByNumber(slot_contents.active_proc)->pid);
+			values[i++] =
+				Int32GetDatum(PGProcSignalPid(GetPGProcByNumber(slot_contents.active_proc)));
 		else
 			nulls[i++] = true;
 

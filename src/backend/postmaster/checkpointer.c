@@ -1166,8 +1166,19 @@ RequestCheckpoint(int flags)
 	 */
 	if (flags & CHECKPOINT_WAIT)
 	{
+		bool		threaded_waiter =
+			CurrentPgRuntime != NULL &&
+			PgRuntimeIsThreadBacked(CurrentPgRuntime);
 		int			new_started,
 					new_failed;
+
+		/*
+		 * During recovery handoff, a thread-backed startup process can be
+		 * waiting for a process-backed checkpointer.  The process-directed
+		 * latch wake may not prod the exact postmaster thread that owns the
+		 * waiting latch, so poll occasionally instead of relying solely on
+		 * the condition-variable broadcast.
+		 */
 
 		/* Wait for a new checkpoint to start. */
 		ConditionVariablePrepareToSleep(&CheckpointerShmem->start_cv);
@@ -1180,8 +1191,13 @@ RequestCheckpoint(int flags)
 			if (new_started != old_started)
 				break;
 
-			ConditionVariableSleep(&CheckpointerShmem->start_cv,
-								   WAIT_EVENT_CHECKPOINT_START);
+			if (threaded_waiter)
+				(void) ConditionVariableTimedSleep(&CheckpointerShmem->start_cv,
+												   100,
+												   WAIT_EVENT_CHECKPOINT_START);
+			else
+				ConditionVariableSleep(&CheckpointerShmem->start_cv,
+									   WAIT_EVENT_CHECKPOINT_START);
 		}
 		ConditionVariableCancelSleep();
 
@@ -1201,8 +1217,13 @@ RequestCheckpoint(int flags)
 			if (new_done - new_started >= 0)
 				break;
 
-			ConditionVariableSleep(&CheckpointerShmem->done_cv,
-								   WAIT_EVENT_CHECKPOINT_DONE);
+			if (threaded_waiter)
+				(void) ConditionVariableTimedSleep(&CheckpointerShmem->done_cv,
+												   100,
+												   WAIT_EVENT_CHECKPOINT_DONE);
+			else
+				ConditionVariableSleep(&CheckpointerShmem->done_cv,
+									   WAIT_EVENT_CHECKPOINT_DONE);
 		}
 		ConditionVariableCancelSleep();
 

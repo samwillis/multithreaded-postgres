@@ -167,7 +167,6 @@ PgBackendResetPgStatPendingClosedState(PgBackendPgStatPendingState *pgstat_pendi
 {
 	Assert(pgstat_pending != NULL);
 	Assert(pgstat_pending->entry_ref_hash == NULL);
-	Assert(dlist_is_empty(&pgstat_pending->pending));
 	if (pgstat_pending->local != NULL)
 	{
 		Assert(pgstat_pending->local->shared_hash == NULL);
@@ -179,6 +178,8 @@ PgBackendResetPgStatPendingClosedState(PgBackendPgStatPendingState *pgstat_pendi
 	 * detach.  Closed-backend reset only reclaims retained local contexts and
 	 * restores constructor defaults for reuse.
 	 */
+	dlist_init(&pgstat_pending->pending);
+
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(pgstat_pending->fixed_snapshot_context);
 	if (pgstat_pending->local != NULL &&
 		pgstat_pending->local->snapshot != NULL)
@@ -188,12 +189,16 @@ PgBackendResetPgStatPendingClosedState(PgBackendPgStatPendingState *pgstat_pendi
 		pgstat_pending->local->snapshot = NULL;
 	}
 	if (pgstat_pending->local != NULL)
+	{
 		pfree(pgstat_pending->local);
+	}
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(pgstat_pending->shared_ref_context);
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(pgstat_pending->entry_ref_hash_context);
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(pgstat_pending->pending_context);
 	if (pgstat_pending->cold != NULL)
+	{
 		free(pgstat_pending->cold);
+	}
 
 	PgBackendInitializePgStatPendingState(pgstat_pending);
 }
@@ -524,6 +529,20 @@ PgBackendResetLogicalReplicationClosedState(PgBackendLogicalReplicationState *lo
 	PG_RUNTIME_LIST_FREE(logical_replication->parallel_apply_worker_pool);
 	PG_RUNTIME_LIST_FREE(logical_replication->parallel_apply_subxactlist);
 
+	/*
+	 * ApplyMessageContext and LogicalStreamingContext live in execution
+	 * scratch state, but logical apply workers create them below ApplyContext.
+	 * Backend closed-state reset runs before execution reset during threaded
+	 * proc_exit(), so deleting ApplyContext here also deletes those children.
+	 * Clear the execution-owned aliases before the later execution reset sees
+	 * stale context headers.
+	 */
+	if (logical_replication->apply_context != NULL &&
+		CurrentPgExecution != NULL)
+	{
+		CurrentPgExecution->replication_scratch.apply_message_context = NULL;
+		CurrentPgExecution->replication_scratch.logical_streaming_context = NULL;
+	}
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(logical_replication->apply_context);
 
 	dlist_init(&logical_replication->lsn_mapping);
@@ -635,20 +654,12 @@ PgBackendResetMemoryManagerClosedState(PgBackendMemoryManagerState *memory_manag
 	/*
 	 * The AllocSet freelist is tied to memory-context ownership, not this
 	 * bookkeeping bucket.  Process exit lets the operating system reclaim it.
-	 * Threaded logical exit, however, has already run session/connection
-	 * cleanup before reaching the backend memory-manager bucket; those earlier
-	 * MemoryContextDelete() calls can leave deleted keeper blocks on the
-	 * backend-local freelists.  Free them before clearing the bookkeeping, or
-	 * connection churn loses the only references and retains heap forever.
+	 * Threaded logical exit keeps the retained TopMemoryContext alive until
+	 * the carrier finish handoff, and that handoff drains the per-backend
+	 * freelists after deleting the retained root.  Leave the freelists intact
+	 * here so all closed-state MemoryContextDelete() calls have one owner for
+	 * final freelist reclamation.
 	 */
-	if (PgBackendExitInProgress() &&
-		CurrentPgRuntime != NULL &&
-		PgRuntimeIsThreadBacked(CurrentPgRuntime))
-		AllocSetFreeContextFreelists(memory_manager->context_freelists,
-									 PG_BACKEND_ALLOCSET_NUM_FREELISTS);
-
-	MemSet(memory_manager->context_freelists, 0,
-		   sizeof(memory_manager->context_freelists));
 	memory_manager->log_memory_context_in_progress = false;
 }
 
@@ -716,7 +727,9 @@ PgBackendResetClosedState(PgBackend *backend)
 	PgBackendUnregisterThreadedBackend(backend);
 
 #define PG_BACKEND_BUCKET(field, init, adopt, reset) \
-	do { reset; } while (0);
+	do { \
+		reset; \
+	} while (0);
 #include "backend_runtime_backend_buckets.def"
 #undef PG_BACKEND_BUCKET
 }
@@ -1280,15 +1293,13 @@ PgExecutionResetMemoryContextsClosedState(PgExecution *execution)
 	Assert(execution != NULL);
 
 	/*
-	 * Threaded backend finish still has to publish logical exit and reclaim
-	 * the retained TopMemoryContext after closed-state reset.  Keep the
-	 * backend's ErrorContext address usable for any ereport() on that final
-	 * physical-thread path, while clearing Top/CurrentMemoryContext so the
-	 * retained root can be deleted deliberately by the carrier exit code.
+	 * Backend finish still has to log the final process/thread exit after
+	 * closed-state reset.  Keep the backend's ErrorContext address usable for
+	 * any ereport() on that final path, while clearing Top/CurrentMemoryContext
+	 * so a threaded carrier can delete the retained root deliberately.
 	 */
 	preserve_error_context =
 		PgBackendExitInProgress() &&
-		PgRuntimeIsThreadBacked(CurrentPgRuntime) &&
 		execution == CurrentPgExecution;
 	error_context = preserve_error_context ?
 		execution->memory_contexts.error_context : NULL;

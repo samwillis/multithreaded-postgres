@@ -690,7 +690,7 @@ retry:
 		s->active_proc = active_proc = MyProcNumber;
 		ReplicationSlotSetInactiveSince(s, 0, true);
 	}
-	active_pid = GetPGProcByNumber(active_proc)->pid;
+	active_pid = PGProcSignalPid(GetPGProcByNumber(active_proc));
 	LWLockRelease(ReplicationSlotControlLock);
 
 	/*
@@ -1585,7 +1585,8 @@ restart:
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_IN_USE),
 					 errmsg("replication slot \"%s\" is active for PID %d",
-							slotname, GetPGProcByNumber(active_proc)->pid)));
+							slotname,
+							PGProcSignalPid(GetPGProcByNumber(active_proc)))));
 
 		/*
 		 * To avoid duplicating ReplicationSlotDropAcquired() and to avoid
@@ -2070,7 +2071,7 @@ InvalidatePossiblyObsoleteSlot(uint32 possible_causes,
 		}
 		else
 		{
-			active_pid = GetPGProcByNumber(active_proc)->pid;
+			active_pid = PGProcSignalPid(GetPGProcByNumber(active_proc));
 			Assert(active_pid != 0);
 		}
 

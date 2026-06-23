@@ -359,6 +359,8 @@ typedef enum PgBackendInterruptType
 	PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG,
 	PG_BACKEND_INTERRUPT_LOG_ROTATE,
 	PG_BACKEND_INTERRUPT_STARTUP_PROMOTE,
+	PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE,
+	PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
 	PG_BACKEND_INTERRUPT_COUNT
 } PgBackendInterruptType;
 
@@ -520,6 +522,7 @@ typedef struct PgBackendWalSenderState
 	volatile sig_atomic_t got_stopping;
 	volatile sig_atomic_t replication_active;
 	LogicalDecodingContext *logical_decoding_ctx;
+	bool		logical_decoding_cleanup_registered;
 	MemoryContext replication_cmd_context;
 	LagTracker *lag_tracker;
 } PgBackendWalSenderState;
@@ -2479,6 +2482,7 @@ struct PgSession
 	PgSessionLocaleState locale;
 	MemoryContext dynamic_library_context;
 	List	   *dynamic_library_inits;
+	bool		dynamic_library_session_init_in_progress;
 };
 
 struct PgConnection
@@ -3196,6 +3200,7 @@ extern bool PgCurrentOrEarlySessionOwnsPointer(const void *ptr);
 extern void PgBackendResetClosedState(PgBackend *backend);
 extern MemoryContext PgSessionGetDynamicLibraryMemoryContext(PgSession *session);
 extern List **PgCurrentSessionDynamicLibraryInitsRef(void);
+extern bool *PgCurrentSessionDynamicLibrarySessionInitInProgressRef(void);
 extern PgRuntimeExtensionModuleState *PgCurrentRuntimeExtensionModuleState(void);
 extern MemoryContext PgCurrentRuntimeExtensionModuleMemoryContext(void);
 extern void *PgRuntimeGetExtensionPrivateState(const char *key);

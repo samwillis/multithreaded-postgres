@@ -43,6 +43,10 @@ static PG_GLOBAL_RUNTIME bool atexit_callback_setup = false;
 
 /* local functions */
 pg_noreturn static void PgBackendExitProcess(int code);
+pg_noreturn static void PgBackendExitCompleteWithContinuation(int code,
+															  PgBackendExitContinuation exit_backend,
+															  bool thread_carrier);
+static PgBackendExitContinuation PgBackendCurrentExitContinuation(void);
 static PgBackendExitState *CurrentBackendExitState(void);
 static void PgBackendRememberRetainedTopMemoryContext(void);
 
@@ -160,6 +164,8 @@ void
 PgBackendExit(int code)
 {
 	int			current_pid = (int) getpid();
+	PgBackendExitContinuation exit_backend;
+	bool		thread_carrier;
 
 	/* not safe if forked by system(), etc. */
 	if (MyProcPid != 0 && MyProcPid != current_pid)
@@ -167,12 +173,17 @@ PgBackendExit(int code)
 	if (MyProcPid == 0)
 		MyProcPid = current_pid;
 
+	exit_backend = PgBackendCurrentExitContinuation();
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+
 	PgBackendRememberRetainedTopMemoryContext();
 
 	/* Clean up everything that must be cleaned up */
 	PgBackendExitCleanup(code);
 
-	PgBackendExitComplete(code);
+	PgBackendExitCompleteWithContinuation(code, exit_backend, thread_carrier);
 }
 
 /*
@@ -186,6 +197,20 @@ PgBackendExit(int code)
 void
 PgBackendExitComplete(int code)
 {
+	PgBackendExitContinuation exit_backend;
+	bool		thread_carrier;
+
+	exit_backend = PgBackendCurrentExitContinuation();
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+
+	PgBackendExitCompleteWithContinuation(code, exit_backend, thread_carrier);
+}
+
+static PgBackendExitContinuation
+PgBackendCurrentExitContinuation(void)
+{
 	PgRuntime  *runtime = CurrentPgRuntime;
 
 	if ((runtime == NULL || runtime->exit_backend == NULL) &&
@@ -194,9 +219,20 @@ PgBackendExitComplete(int code)
 		CurrentPgCarrier->runtime->exit_backend != NULL)
 		runtime = CurrentPgCarrier->runtime;
 
-	if (runtime != NULL && runtime->exit_backend != NULL)
+	if (runtime != NULL)
+		return runtime->exit_backend;
+
+	return NULL;
+}
+
+static void
+PgBackendExitCompleteWithContinuation(int code,
+									  PgBackendExitContinuation exit_backend,
+									  bool thread_carrier)
+{
+	if (exit_backend != NULL)
 	{
-		runtime->exit_backend(code);
+		exit_backend(code);
 
 		/*
 		 * A runtime may unwind to a scheduler or exit the process, but it
@@ -205,7 +241,9 @@ PgBackendExitComplete(int code)
 		elog(PANIC, "backend exit continuation returned");
 	}
 
-	if (CurrentPgCarrier != NULL && CurrentPgCarrier->kind == PG_CARRIER_THREAD)
+	if (thread_carrier ||
+		(CurrentPgCarrier != NULL &&
+		 CurrentPgCarrier->kind == PG_CARRIER_THREAD))
 		elog(PANIC, "thread carrier reached process backend exit");
 
 	PgBackendExitProcess(code);

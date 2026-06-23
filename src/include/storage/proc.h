@@ -526,6 +526,25 @@ extern PGDLLIMPORT PG_GLOBAL_SHMEM PGPROC *PreparedXactProcs;
 #define GetNumberFromPGProc(proc) ((proc) - &ProcGlobal->allProcs[0])
 
 /*
+ * Return the SQL-visible signal target for a PGPROC.
+ *
+ * Process-backed backends expose their OS pid. Thread-backed backends share
+ * the postmaster's OS pid, so SQL-facing views and functions expose their
+ * logical backend id instead.
+ */
+static inline int
+PGProcSignalPid(PGPROC *proc)
+{
+	if (proc->pid == 0)
+		return 0;
+
+	if (proc->pid == PostmasterPid && proc->backendId != 0)
+		return (int) proc->backendId;
+
+	return proc->pid;
+}
+
+/*
  * We set aside some extra PGPROC structures for "special worker" processes,
  * which are full-fledged backends (they can run transactions)
  * but are unique animals that there's never more than one of.

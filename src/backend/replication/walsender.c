@@ -230,6 +230,8 @@ PG_GLOBAL_RUNTIME int max_wal_senders = 10;	/* the maximum number of concurrent
 
 #define logical_decoding_ctx \
 	(PgCurrentWalSenderState()->logical_decoding_ctx)
+#define logical_decoding_cleanup_registered \
+	(PgCurrentWalSenderState()->logical_decoding_cleanup_registered)
 
 /*
  * Working memory context for replication commands.  In process mode this used
@@ -297,6 +299,9 @@ static void CreateReplicationSlot(CreateReplicationSlotCmd *cmd);
 static void DropReplicationSlot(DropReplicationSlotCmd *cmd);
 static void StartReplication(StartReplicationCmd *cmd);
 static void StartLogicalReplication(StartReplicationCmd *cmd);
+static void WalSndFreeLogicalDecodingContext(void);
+static void WalSndLogicalDecodingBeforeShmemExit(int code, Datum arg);
+static void ResetReplicationCommandBuffers(void);
 static void ProcessStandbyMessage(void);
 static void ProcessStandbyReplyMessage(void);
 static void ProcessStandbyHSFeedbackMessage(void);
@@ -1440,6 +1445,27 @@ DropReplicationSlot(DropReplicationSlotCmd *cmd)
 	ReplicationSlotDrop(cmd->slotname, !cmd->wait);
 }
 
+static void
+WalSndFreeLogicalDecodingContext(void)
+{
+	LogicalDecodingContext *ctx = logical_decoding_ctx;
+
+	if (ctx == NULL)
+		return;
+
+	logical_decoding_ctx = NULL;
+	if (xlogreader == ctx->reader)
+		xlogreader = NULL;
+
+	FreeDecodingContext(ctx);
+}
+
+static void
+WalSndLogicalDecodingBeforeShmemExit(int code, Datum arg)
+{
+	WalSndFreeLogicalDecodingContext();
+}
+
 /*
  * Change the definition of a replication slot.
  */
@@ -1525,6 +1551,11 @@ StartLogicalReplication(StartReplicationCmd *cmd)
 							  WalSndPrepareWrite, WalSndWriteData,
 							  WalSndUpdateProgress);
 	xlogreader = logical_decoding_ctx->reader;
+	if (!logical_decoding_cleanup_registered)
+	{
+		before_shmem_exit(WalSndLogicalDecodingBeforeShmemExit, 0);
+		logical_decoding_cleanup_registered = true;
+	}
 
 	WalSndSetState(WALSNDSTATE_CATCHUP);
 
@@ -1557,9 +1588,7 @@ StartLogicalReplication(StartReplicationCmd *cmd)
 	/* Main loop of walsender */
 	WalSndLoop(XLogSendLogical);
 
-	FreeDecodingContext(logical_decoding_ctx);
-	logical_decoding_ctx = NULL;
-	xlogreader = NULL;
+	WalSndFreeLogicalDecodingContext();
 	ReplicationSlotRelease();
 
 	replication_active = false;
@@ -2055,6 +2084,20 @@ WalSndWaitForWal(XLogRecPtr loc)
 }
 
 /*
+ * output_message, reply_message, and tmpbuf are backend-lifetime structs, but
+ * their data buffers are command-context allocations.  Clear the structs after
+ * resetting that context so closed-backend teardown does not see stale chunk
+ * pointers.
+ */
+static void
+ResetReplicationCommandBuffers(void)
+{
+	MemSet(&output_message, 0, sizeof(output_message));
+	MemSet(&reply_message, 0, sizeof(reply_message));
+	MemSet(&tmpbuf, 0, sizeof(tmpbuf));
+}
+
+/*
  * Execute an incoming replication command.
  *
  * Returns true if the cmd_string was recognized as WalSender command, false
@@ -2117,7 +2160,10 @@ exec_replication_command(const char *cmd_string)
 														"Replication command context",
 														ALLOCSET_DEFAULT_SIZES);
 	else
+	{
 		MemoryContextReset(replication_cmd_context);
+		ResetReplicationCommandBuffers();
+	}
 
 	MemoryContextSwitchTo(replication_cmd_context);
 
@@ -2133,6 +2179,7 @@ exec_replication_command(const char *cmd_string)
 
 		MemoryContextSwitchTo(old_context);
 		MemoryContextReset(replication_cmd_context);
+		ResetReplicationCommandBuffers();
 
 		/* XXX this is a pretty random place to make this check */
 		if (MyDatabaseId == InvalidOid)
@@ -2296,8 +2343,14 @@ exec_replication_command(const char *cmd_string)
 	 * Done.  Revert to caller's memory context, and clean out the command
 	 * context to recover memory right away.
 	 */
+	if (xlogreader != NULL && logical_decoding_ctx == NULL)
+	{
+		XLogReaderFree(xlogreader);
+		xlogreader = NULL;
+	}
 	MemoryContextSwitchTo(old_context);
 	MemoryContextReset(replication_cmd_context);
+	ResetReplicationCommandBuffers();
 
 	/*
 	 * We need not update ps display or pg_stat_activity, because PostgresMain
@@ -3176,7 +3229,7 @@ InitWalSenderSlot(void)
 			/*
 			 * Found a free slot. Reserve it for us.
 			 */
-			walsnd->pid = MyProcPid;
+			walsnd->pid = PgCurrentBackendSignalPid();
 			walsnd->state = WALSNDSTATE_STARTUP;
 			walsnd->sentPtr = InvalidXLogRecPtr;
 			walsnd->needreload = false;
@@ -3926,6 +3979,18 @@ HandleWalSndInitStopping(void)
 }
 
 /*
+ * Handle SIGUSR2-style request for a last WAL sender cycle before exit.
+ */
+void
+HandleWalSndLastCycle(void)
+{
+	Assert(am_walsender);
+
+	got_SIGUSR2 = true;
+	SetLatch(MyLatch);
+}
+
+/*
  * SIGUSR2: set flag to do a last cycle and shut down afterwards. The WAL
  * sender should already have been switched to WALSNDSTATE_STOPPING at
  * this point.
@@ -3933,8 +3998,7 @@ HandleWalSndInitStopping(void)
 static void
 WalSndLastCycleHandler(SIGNAL_ARGS)
 {
-	got_SIGUSR2 = true;
-	SetLatch(MyLatch);
+	HandleWalSndLastCycle();
 }
 
 /* Set up signal handlers */
@@ -4100,7 +4164,8 @@ WalSndInitStopping(void)
 		if (pid == 0)
 			continue;
 
-		SendProcSignal(pid, PROCSIG_WALSND_INIT_STOPPING, INVALID_PROC_NUMBER);
+		(void) SendProcSignal(pid, PROCSIG_WALSND_INIT_STOPPING,
+							  INVALID_PROC_NUMBER);
 	}
 }
 

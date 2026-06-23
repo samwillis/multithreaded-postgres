@@ -1593,6 +1593,7 @@ static int
 DetermineSleepTime(void)
 {
 	TimestampTz next_wakeup;
+	int			sleep_cap = 60 * 1000;
 
 	/*
 	 * If in ImmediateShutdown with a SIGKILL timeout, ignore everything else
@@ -1624,6 +1625,16 @@ DetermineSleepTime(void)
 
 	/* Time of next maybe_start_io_workers() call, or 0 for none. */
 	next_wakeup = maybe_start_io_workers_scheduled_at();
+
+	/*
+	 * Thread-backed startup/recovery children publish logical exits through
+	 * shared PMChild state.  Their direct latch wake can race with the
+	 * postmaster wait loop, so keep early threaded states on a short poll until
+	 * the startup child has been reaped and normal PM_RUN processing starts.
+	 */
+	if (multithreaded &&
+		(pmState == PM_STARTUP || pmState == PM_RECOVERY))
+		sleep_cap = 100;
 
 	/* Ignore bgworkers during shutdown. */
 	if (StartWorkerNeeded && Shutdown == NoShutdown)
@@ -1670,10 +1681,10 @@ DetermineSleepTime(void)
 		/* result of TimestampDifferenceMilliseconds is in [0, INT_MAX] */
 		ms = (int) TimestampDifferenceMilliseconds(GetCurrentTimestamp(),
 												   next_wakeup);
-		return Min(60 * 1000, ms);
+		return Min(sleep_cap, ms);
 	}
 
-	return 60 * 1000;
+	return sleep_cap;
 }
 
 /*
@@ -3923,6 +3934,11 @@ thread_child_signal_interrupt(PMChild *pmchild, int signal,
 			if (pmchild->bkend_type == B_IO_WORKER)
 			{
 				*interrupt = PG_BACKEND_INTERRUPT_SHUTDOWN_REQUEST;
+				return true;
+			}
+			if (pmchild->bkend_type == B_WAL_SENDER)
+			{
+				*interrupt = PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE;
 				return true;
 			}
 			if (pmchild->bkend_type == B_LOGGER)

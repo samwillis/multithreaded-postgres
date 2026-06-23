@@ -66,3 +66,4 @@ PG_SESSION_BUCKET(namespace_state, PgSessionInitializeNamespaceState(&session->n
 PG_SESSION_BUCKET(locale, PgSessionInitializeLocaleState(&session->locale), PgSessionAdoptEarlyLocaleState(session), PG_RUNTIME_NOOP)
 PG_SESSION_BUCKET(dynamic_library_context, session->dynamic_library_context = NULL, PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
 PG_SESSION_BUCKET(dynamic_library_inits, session->dynamic_library_inits = NIL, PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
+PG_SESSION_BUCKET(dynamic_library_session_init_in_progress, session->dynamic_library_session_init_in_progress = false, PG_RUNTIME_NOOP, PG_RUNTIME_NOOP)
