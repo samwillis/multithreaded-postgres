@@ -264,6 +264,7 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-modules-test-json-parser
 	$(MAKE) check-threaded-test-modules-test-copy-callbacks
 	$(MAKE) check-threaded-test-modules-test-custom-types
+	$(MAKE) check-threaded-test-modules-test-dsm-registry
 	$(MAKE) check-threaded-test-modules-test-dsa
 	$(MAKE) check-threaded-test-modules-test-escape
 	$(MAKE) check-threaded-test-modules-test-extensions
@@ -420,6 +421,13 @@ check-threaded-test-modules-test-custom-types: submake-generated-headers
 check-threaded-test-modules-test-custom-types:
 	$(MAKE) -C src/test/modules/test_custom_types DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_custom_types check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-test-dsm-registry: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-test-dsm-registry: | temp-install
+check-threaded-test-modules-test-dsm-registry: submake-generated-headers
+check-threaded-test-modules-test-dsm-registry:
+	$(MAKE) -C src/test/modules/test_dsm_registry DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_dsm_registry check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-test-modules-test-dsa: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-dsa: | temp-install
@@ -1396,5 +1404,5 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
 .PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
 .PHONY: check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser check-threaded-test-modules-test-autovacuum check-threaded-test-modules-worker-spi check-threaded-test-modules-xid-wraparound
-.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-libpq-pipeline check-threaded-test-modules-oauth-validator check-threaded-test-modules-delay-execution check-threaded-test-modules-dummy-index-am check-threaded-test-modules-dummy-seclabel check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-rmgrs check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-dsa check-threaded-test-modules-test-escape check-threaded-test-modules-test-extensions check-threaded-test-modules-test-lwlock-tranches check-threaded-test-modules-test-oat-hooks check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-rls-hooks check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shmem check-threaded-test-modules-test-shm-mq check-threaded-test-modules-test-slru check-threaded-test-modules-test-tidstore check-threaded-test-modules-unsafe-tests
+.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-libpq-pipeline check-threaded-test-modules-oauth-validator check-threaded-test-modules-delay-execution check-threaded-test-modules-dummy-index-am check-threaded-test-modules-dummy-seclabel check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-rmgrs check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-dsm-registry check-threaded-test-modules-test-dsa check-threaded-test-modules-test-escape check-threaded-test-modules-test-extensions check-threaded-test-modules-test-lwlock-tranches check-threaded-test-modules-test-oat-hooks check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-rls-hooks check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shmem check-threaded-test-modules-test-shm-mq check-threaded-test-modules-test-slru check-threaded-test-modules-test-tidstore check-threaded-test-modules-unsafe-tests
 .PHONY: check-threaded-test-modules-test-binaryheap check-threaded-test-modules-test-bitmapset check-threaded-test-modules-test-bloomfilter check-threaded-test-modules-test-ginpostinglist check-threaded-test-modules-test-integerset check-threaded-test-modules-test-lfind check-threaded-test-modules-test-radixtree check-threaded-test-modules-test-rbtree check-threaded-test-modules-test-regex

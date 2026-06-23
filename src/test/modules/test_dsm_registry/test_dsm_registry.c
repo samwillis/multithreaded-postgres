@@ -25,7 +25,11 @@
 #include "utils/builtins.h"
 #include "utils/wait_event.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_dsm_registry",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 #define TDR_EXIT_ORDER_FILE "global/test_dsm_registry_exit_order"
 #define TDR_EXIT_ORDER_MAXLEN 256
@@ -44,9 +48,14 @@ typedef struct TestDSMRegistryHashEntry
 	dsa_pointer val;
 } TestDSMRegistryHashEntry;
 
-static TestDSMRegistryStruct *tdr_dsm;
-static dsa_area *tdr_dsa;
-static dshash_table *tdr_hash;
+/*
+ * Named registry attach state is backend-local.  Thread-per-session backends
+ * share a process, so process-global cached handles would leak one backend's
+ * DSA/dshash attachment state into the next session.
+ */
+static PG_THREAD_LOCAL TestDSMRegistryStruct *tdr_dsm;
+static PG_THREAD_LOCAL dsa_area *tdr_dsa;
+static PG_THREAD_LOCAL dshash_table *tdr_hash;
 
 static const dshash_parameters dsh_params = {
 	offsetof(TestDSMRegistryHashEntry, val),
@@ -255,7 +264,8 @@ tdr_append_exit_order(const char *event)
 		ptr += written;
 		remaining -= written;
 	}
-	(void) write(fd, "\n", 1);
+	if (write(fd, "\n", 1) != 1)
+		goto done;
 
 done:
 	(void) close(fd);
