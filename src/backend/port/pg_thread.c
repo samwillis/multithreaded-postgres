@@ -18,6 +18,7 @@
 #include <process.h>
 #endif
 
+#include "libpq/pqsignal.h"
 #include "port/pg_thread.h"
 
 #define PG_THREAD_NAME_MAX 64
@@ -77,6 +78,8 @@ pg_thread_create(PgThread *thread, const char *name,
 	{
 		pthread_attr_t attr;
 		int			rc;
+		sigset_t	save_mask;
+		bool		mask_saved = false;
 
 		rc = pthread_attr_init(&attr);
 		if (rc != 0)
@@ -87,8 +90,27 @@ pg_thread_create(PgThread *thread, const char *name,
 
 		rc = pthread_attr_setstacksize(&attr, PG_THREAD_STACK_SIZE);
 		if (rc == 0)
+		{
+			if (sigprocmask(SIG_SETMASK, &BlockSig, &save_mask) == 0)
+				mask_saved = true;
+			else
+				rc = errno;
+		}
+		if (rc == 0)
 			rc = pthread_create(&thread->thread, &attr, pg_thread_start,
 								start_data);
+		if (mask_saved)
+		{
+			int			restore_rc;
+
+			if (sigprocmask(SIG_SETMASK, &save_mask, NULL) == 0)
+				restore_rc = 0;
+			else
+				restore_rc = errno;
+			Assert(restore_rc == 0);
+			if (rc != 0 && restore_rc != 0)
+				rc = restore_rc;
+		}
 		(void) pthread_attr_destroy(&attr);
 		if (rc != 0)
 		{

@@ -898,6 +898,9 @@ ProcessPgArchInterrupts(void)
 {
 	PgCurrentBackendApplyInterrupts();
 
+	if (ProcDiePending)
+		proc_exit(1);
+
 	if (WakeupStopPending)
 	{
 		WakeupStopPending = false;
