@@ -61,6 +61,7 @@ src/interfaces/ecpg/include	check-threaded-interfaces-ecpg-include	ECPG header c
 src/interfaces/ecpg/pgtypeslib	check-threaded-interfaces-ecpg-pgtypeslib	ECPG pgtypes library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf runs through direct threaded-world prove coverage
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
+src/test/authentication	check-threaded-src-test-authentication	authentication TAP coverage runs under threaded TAP; password, peer, file-inclusion, SSPI, and pre-auth files use the default C.UTF-8 template, while SASLprep and login-trigger files use fresh LC_CTYPE=C initdbs so threaded postmaster/database locale constraints are preserved; SSPI and injection-point paths remain gated by platform/configuration
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
 src/test/modules/commit_ts	check-threaded-test-modules-commit-ts	commit timestamp regression runs under threaded_workers.conf plus commit_ts.conf with current configured TAP surface
