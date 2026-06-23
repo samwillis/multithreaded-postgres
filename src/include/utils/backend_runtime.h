@@ -514,6 +514,7 @@ typedef struct PgBackendWalSenderState
 	TimestampTz last_reply_timestamp;
 	bool		waiting_for_ping_response;
 	TimestampTz shutdown_request_timestamp;
+	XLogRecPtr	shutdown_stopping_flush_ptr;
 	bool		shutdown_stream_done_queued;
 	bool		streaming_done_sending;
 	bool		streaming_done_receiving;

@@ -195,6 +195,14 @@ PG_GLOBAL_RUNTIME int max_wal_senders = 10;	/* the maximum number of concurrent
 	(PgCurrentWalSenderState()->shutdown_request_timestamp)
 
 /*
+ * Primary flush position observed when this walsender first entered stopping
+ * state.  Physical senders use it to avoid honoring an early last-cycle
+ * request before the shutdown checkpoint record has been flushed and streamed.
+ */
+#define shutdown_stopping_flush_ptr \
+	(PgCurrentWalSenderState()->shutdown_stopping_flush_ptr)
+
+/*
  * Set after queueing the CommandComplete message that ends WAL streaming
  * during shutdown. This prevents WalSndDone() and WalSndDoneImmediate()
  * from queueing the same message twice.
@@ -1007,6 +1015,7 @@ StartReplication(StartReplicationCmd *cmd)
 
 		/* Main loop of walsender */
 		replication_active = true;
+		shutdown_stopping_flush_ptr = InvalidXLogRecPtr;
 
 		WalSndLoop(XLogSendPhysical);
 
@@ -3380,7 +3389,16 @@ XLogSendPhysical(void)
 
 	/* If requested switch the WAL sender to the stopping state. */
 	if (got_STOPPING)
+	{
+		if (!XLogRecPtrIsValid(shutdown_stopping_flush_ptr) &&
+			MyWalSnd->kind == REPLICATION_KIND_PHYSICAL &&
+			!sendTimeLineIsHistoric &&
+			!am_cascading_walsender &&
+			!RecoveryInProgress())
+			shutdown_stopping_flush_ptr = GetFlushRecPtr(NULL);
+
 		WalSndSetState(WALSNDSTATE_STOPPING);
+	}
 
 	if (streamingDoneSending)
 	{
@@ -3831,8 +3849,22 @@ WalSndDone(WalSndSendDataCallback send_data)
 	replicatedPtr = XLogRecPtrIsValid(MyWalSnd->flush) ?
 		MyWalSnd->flush : MyWalSnd->write;
 
-	if (WalSndCaughtUp && local_sent_ptr == replicatedPtr &&
-		!pq_is_send_pending())
+	/*
+	 * Initial stopping and the final last-cycle request are distinct phases
+	 * during normal shutdown.  A thread-backed walsender can observe a
+	 * coalesced last-cycle interrupt before the checkpointer has emitted the
+	 * shutdown checkpoint.  In that case, stay in streaming mode until the
+	 * primary's flushed WAL has advanced past the position observed when
+	 * stopping began, so the shutdown checkpoint has a chance to be sent.
+	 */
+	if (send_data == XLogSendPhysical &&
+		XLogRecPtrIsValid(shutdown_stopping_flush_ptr) &&
+		local_sent_ptr <= shutdown_stopping_flush_ptr)
+	{
+		WalSndCaughtUp = false;
+	}
+	else if (WalSndCaughtUp && local_sent_ptr == replicatedPtr &&
+			 !pq_is_send_pending())
 	{
 		QueryCompletion qc;
 
