@@ -22,7 +22,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "test_custom_fixed_stats",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /* Fixed-amount custom statistics entry */
