@@ -190,6 +190,8 @@ PG_GLOBAL_RUNTIME double CheckPointCompletionTarget = 0.9;
 
 #define checkpointer_context \
 	(PgCurrentMaintenanceWorkerState()->checkpointer_context)
+#define checkpointer_shutdown_xlog_complete \
+	(PgCurrentMaintenanceWorkerState()->checkpointer_shutdown_xlog_complete)
 
 /* Prototypes for private functions */
 
@@ -199,6 +201,7 @@ static bool IsCheckpointOnSchedule(double progress);
 static bool FastCheckpointRequested(void);
 static bool CompactCheckpointerRequestQueue(void);
 static void UpdateSharedMemoryConfig(void);
+static void CheckpointerBeforeShmemExit(int code, Datum arg);
 
 /* Signal handlers */
 static void ReqShutdownXLOG(SIGNAL_ARGS);
@@ -264,7 +267,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	 * signal checkpointer to exit after all processes that could emit stats
 	 * have been shut down.
 	 */
-	before_shmem_exit(pgstat_before_server_shutdown, 0);
+	before_shmem_exit(CheckpointerBeforeShmemExit, 0);
 
 	/*
 	 * Create a memory context that we will do all our work in.  We do this so
@@ -639,6 +642,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 		ShutdownXLOG(0, 0);
 		pgstat_report_checkpointer();
 		pgstat_report_wal(true);
+		checkpointer_shutdown_xlog_complete = true;
 
 		/*
 		 * Tell postmaster that we're done.
@@ -965,6 +969,22 @@ ReqShutdownXLOG(SIGNAL_ARGS)
 	RaiseInterrupt(PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG);
 	CheckpointerShutdownXLOGPending = true;
 	SetLatch(MyLatch);
+}
+
+/*
+ * Preserve pgstat's "one writer at server shutdown" contract across threaded
+ * startup handoff.  A code-0 checkpointer exit writes the permanent stats file
+ * only after ShutdownXLOG() completed; otherwise treat it like an irregular
+ * exit so pending stats are flushed without making the on-disk stats look like
+ * a clean server shutdown artifact.
+ */
+static void
+CheckpointerBeforeShmemExit(int code, Datum arg)
+{
+	if (code == 0 && !checkpointer_shutdown_xlog_complete)
+		code = 1;
+
+	pgstat_before_server_shutdown(code, arg);
 }
 
 

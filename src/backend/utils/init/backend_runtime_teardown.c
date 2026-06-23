@@ -621,6 +621,7 @@ PgBackendResetMaintenanceWorkerClosedState(PgBackendMaintenanceWorkerState *main
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(maintenance_worker->walsummarizer_context);
 
 	maintenance_worker->archive_callbacks = NULL;
+	maintenance_worker->checkpointer_shutdown_xlog_complete = false;
 }
 
 static void

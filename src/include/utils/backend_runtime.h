@@ -696,6 +696,7 @@ typedef struct PgBackendMaintenanceWorkerState
 	MemoryContext walsummarizer_context;
 	volatile sig_atomic_t pgarch_ready_to_stop;
 	bool		ckpt_active;
+	bool		checkpointer_shutdown_xlog_complete;
 	pg_time_t	ckpt_start_time;
 	XLogRecPtr	ckpt_start_recptr;
 	double		ckpt_cached_elapsed;
