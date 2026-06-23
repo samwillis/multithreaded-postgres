@@ -44,7 +44,10 @@ src/bin/pg_waldump	check-threaded-bin-pg-waldump	pg_waldump offline WAL-reader T
 src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary offline WAL-summary TAP leaf has no threaded-server dependency and runs through check-threaded-bin
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
+src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
+src/test/modules/commit_ts	check-threaded-test-modules-commit-ts	commit timestamp regression runs under threaded_workers.conf plus commit_ts.conf with current configured TAP surface
 src/test/modules/dummy_index_am	check-threaded-test-modules-dummy-index-am	dummy index access method regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/index	check-threaded-test-modules-index	index module isolation coverage runs under threaded_workers.conf
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
 src/test/modules/plsample	check-threaded-test-modules-plsample	PL/Sample regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/spgist_name_ops	check-threaded-test-modules-spgist-name-ops	SP-GiST name opclass regression module declares thread-per-session metadata and runs under threaded_workers.conf
