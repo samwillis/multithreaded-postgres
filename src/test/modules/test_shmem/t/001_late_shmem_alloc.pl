@@ -38,12 +38,14 @@ $node->start;
 # called or not, depending on whether this is an EXEC_BACKEND build.
 my $exec_backend =
   $node->safe_psql("postgres", "SHOW debug_exec_backend;") eq 'on';
+my $multithreaded =
+  $node->safe_psql("postgres", "SHOW multithreaded;") eq 'on';
 $attach_count1 =
   $node->safe_psql("postgres", "SELECT get_test_shmem_attach_count();");
 $attach_count2 =
   $node->safe_psql("postgres", "SELECT get_test_shmem_attach_count();");
 
-if ($exec_backend)
+if ($exec_backend || $multithreaded)
 {
 	cmp_ok($attach_count2, '>', $attach_count1,
 		"attach callback is called in each backend when loaded via shared_preload_libraries"
