@@ -41,6 +41,7 @@ contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_ti
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
 contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP leaf runs through direct threaded-world prove coverage
 src/bin/initdb	check-threaded-bin-initdb	initdb TAP leaf runs through direct threaded-world prove coverage
+src/bin/pg_amcheck	check-threaded-bin-pg-amcheck	pg_amcheck TAP corruption-detection coverage runs against TEMP_CONFIG-injected multithreaded TAP clusters
 src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_checksums	check-threaded-bin-pg-checksums	pg_checksums TAP leaf runs through direct threaded-world prove coverage; temp clusters inherit threaded TAP configuration
 src/bin/pg_config	check-threaded-bin-pg-config	pg_config client-side configuration TAP leaf runs through direct threaded-world prove coverage
