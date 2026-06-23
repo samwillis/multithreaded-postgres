@@ -1024,13 +1024,7 @@ IoWorkerMain(const void *startup_data, size_t startup_data_len)
 		{
 			ConfigReloadPending = false;
 
-			/*
-			 * Thread-backed workers receive postmaster decisions through
-			 * logical interrupts.  Keep the shared process configuration
-			 * reload in the postmaster process.
-			 */
-			if (!threaded_worker)
-				ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 
 			/* If io_max_workers has been decreased, exit highest first. */
 			if (MyIoWorkerId >= io_max_workers)

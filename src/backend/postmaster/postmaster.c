@@ -2128,6 +2128,12 @@ process_pm_reload_request(void)
 		ereport(LOG,
 				(errmsg("received SIGHUP, reloading configuration files")));
 		ProcessConfigFile(PGC_SIGHUP);
+#ifdef EXEC_BACKEND
+		write_nondefault_variables(PGC_SIGHUP);
+#else
+		if (multithreaded)
+			write_nondefault_variables(PGC_SIGHUP);
+#endif
 		SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
 
 		/* Reload authentication config files too */
@@ -2155,14 +2161,6 @@ process_pm_reload_request(void)
 			secure_destroy();
 			LoadedSSL = false;
 		}
-#endif
-
-		/* Update the starting-point file for future children */
-#ifdef EXEC_BACKEND
-		write_nondefault_variables(PGC_SIGHUP);
-#else
-		if (multithreaded)
-			write_nondefault_variables(PGC_SIGHUP);
 #endif
 	}
 }

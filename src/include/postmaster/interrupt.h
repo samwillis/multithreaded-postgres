@@ -25,6 +25,7 @@
 #include "utils/global_lifetime.h"
 
 extern void ProcessMainLoopInterrupts(void);
+extern void ProcessConfigReloadForCurrentWorker(void);
 extern void SignalHandlerForConfigReload(SIGNAL_ARGS);
 extern void SignalHandlerForCrashExit(SIGNAL_ARGS);
 extern void SignalHandlerForShutdownRequest(SIGNAL_ARGS);

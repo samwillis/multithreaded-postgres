@@ -689,9 +689,7 @@ ProcessCheckpointerInterrupts(void)
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 
 		/*
 		 * Checkpointer is the last process to shut down, so we ask it to hold
@@ -834,9 +832,7 @@ CheckpointWriteDelay(int flags, double progress)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			if (CurrentPgRuntime == NULL ||
-				CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-				ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 			/* update shmem copies of config variables */
 			UpdateSharedMemoryConfig();
 		}

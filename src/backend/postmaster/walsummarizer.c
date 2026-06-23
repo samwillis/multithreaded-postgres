@@ -880,15 +880,7 @@ ProcessWalSummarizerInterrupts(void)
 	{
 		ConfigReloadPending = false;
 
-		/*
-		 * A thread-backed WAL summarizer shares GUC storage with the
-		 * postmaster.  The postmaster performs the actual config reload; this
-		 * carrier only needs to observe updated shared values such as
-		 * summarize_wal below.
-		 */
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 	}
 
 	if (ShutdownRequestPending || !summarize_wal)

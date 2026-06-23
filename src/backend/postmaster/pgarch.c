@@ -924,14 +924,11 @@ ProcessPgArchInterrupts(void)
 		ConfigReloadPending = false;
 
 		/*
-		 * Thread-backed workers share GUC storage with the postmaster.  The
-		 * postmaster performs the actual config reload, so the archiver only
-		 * needs to observe the updated shared values and restart if the loaded
-		 * archive module no longer matches.
+		 * Process-backed archivers parse the config file directly.  A
+		 * thread-backed archiver replays the postmaster-written non-default
+		 * GUC snapshot so its session-owned GUC buckets track SIGHUP changes.
 		 */
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 
 		if (XLogArchiveLibrary[0] != '\0' && XLogArchiveCommand[0] != '\0')
 			ereport(ERROR,

@@ -25,6 +25,7 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "postmaster/auxprocess.h"
+#include "postmaster/interrupt.h"
 #include "postmaster/startup.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
@@ -180,14 +181,11 @@ StartupRereadConfig(void)
 	char	   *conninfo = pstrdup(PrimaryConnInfo);
 	char	   *slotname = pstrdup(PrimarySlotName);
 	bool		tempSlot = wal_receiver_create_temp_slot;
-	bool		threaded_worker;
 	bool		conninfoChanged;
 	bool		slotnameChanged;
 	bool		tempSlotChanged = false;
 
-	threaded_worker = PgRuntimeIsThreadBacked(CurrentPgRuntime);
-	if (!threaded_worker)
-		ProcessConfigFile(PGC_SIGHUP);
+	ProcessConfigReloadForCurrentWorker();
 
 	conninfoChanged = strcmp(conninfo, PrimaryConnInfo) != 0;
 	slotnameChanged = strcmp(slotname, PrimarySlotName) != 0;
