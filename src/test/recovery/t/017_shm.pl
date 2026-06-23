@@ -111,71 +111,81 @@ log_ipcs();
 $gnat->start;
 log_ipcs();
 
-my $regress_shlib = $ENV{REGRESS_SHLIB};
-$gnat->safe_psql('postgres', <<EOSQL);
+my $threaded = $gnat->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
+
+SKIP:
+{
+	skip "live backend detection requires a backend OS process that survives postmaster death",
+	  4
+	  if $threaded;
+
+	my $regress_shlib = $ENV{REGRESS_SHLIB};
+	$gnat->safe_psql('postgres', <<EOSQL);
 CREATE FUNCTION wait_pid(int)
    RETURNS void
    AS '$regress_shlib'
    LANGUAGE C STRICT;
 EOSQL
-my $slow_query = 'SELECT wait_pid(pg_backend_pid())';
-my ($stdout, $stderr);
-my $slow_client = IPC::Run::start(
-	[
-		'psql', '--no-psqlrc', '--quiet', '--no-align', '--tuples-only',
-		'--dbname' => $gnat->connstr('postgres'),
-		'--command' => $slow_query
-	],
-	'<' => \undef,
-	'>' => \$stdout,
-	'2>' => \$stderr,
-	IPC::Run::timeout(5 * $PostgreSQL::Test::Utils::timeout_default));
-ok( $gnat->poll_query_until(
-		'postgres',
-		"SELECT 1 FROM pg_stat_activity WHERE query = '$slow_query'", '1'),
-	'slow query started');
-my $slow_pid = $gnat->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_activity WHERE query = '$slow_query'");
-$gnat->kill9;
-unlink($gnat->data_dir . '/postmaster.pid');
-$gnat->rotate_logfile;    # on Windows, can't open old log for writing
-log_ipcs();
-# Reject ordinary startup.  Retry for the same reasons poll_start() does,
-# every 0.1s for at least $PostgreSQL::Test::Utils::timeout_default seconds.
-my $pre_existing_msg = qr/pre-existing shared memory block/;
-{
-	my $max_attempts = 10 * $PostgreSQL::Test::Utils::timeout_default;
-	my $attempts = 0;
-	while ($attempts < $max_attempts)
+	my $slow_query = 'SELECT wait_pid(pg_backend_pid())';
+	my ($stdout, $stderr);
+	my $slow_client = IPC::Run::start(
+		[
+			'psql', '--no-psqlrc', '--quiet', '--no-align', '--tuples-only',
+			'--dbname' => $gnat->connstr('postgres'),
+			'--command' => $slow_query
+		],
+		'<' => \undef,
+		'>' => \$stdout,
+		'2>' => \$stderr,
+		IPC::Run::timeout(5 * $PostgreSQL::Test::Utils::timeout_default));
+	ok( $gnat->poll_query_until(
+			'postgres',
+			"SELECT 1 FROM pg_stat_activity WHERE query = '$slow_query'",
+			'1'),
+		'slow query started');
+	my $slow_pid = $gnat->safe_psql('postgres',
+		"SELECT pid FROM pg_stat_activity WHERE query = '$slow_query'");
+	$gnat->kill9;
+	unlink($gnat->data_dir . '/postmaster.pid');
+	$gnat->rotate_logfile;    # on Windows, can't open old log for writing
+	log_ipcs();
+	# Reject ordinary startup.  Retry for the same reasons poll_start() does,
+	# every 0.1s for at least $PostgreSQL::Test::Utils::timeout_default seconds.
+	my $pre_existing_msg = qr/pre-existing shared memory block/;
 	{
-		last
-		  if $gnat->start(fail_ok => 1)
-		  || slurp_file($gnat->logfile) =~ $pre_existing_msg;
-		usleep(100_000);
-		$attempts++;
+		my $max_attempts = 10 * $PostgreSQL::Test::Utils::timeout_default;
+		my $attempts = 0;
+		while ($attempts < $max_attempts)
+		{
+			last
+			  if $gnat->start(fail_ok => 1)
+			  || slurp_file($gnat->logfile) =~ $pre_existing_msg;
+			usleep(100_000);
+			$attempts++;
+		}
 	}
+	like(slurp_file($gnat->logfile),
+		$pre_existing_msg, 'detected live backend via shared memory');
+	# Reject single-user startup.
+	command_fails_like(
+		[
+			'postgres', '--single',
+			'-D' => $gnat->data_dir,
+			'template1'
+		],
+		$pre_existing_msg,
+		'single-user mode detected live backend via shared memory');
+	log_ipcs();
+
+	# cleanup slow backend
+	PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'QUIT', $slow_pid);
+	$slow_client->finish;    # client has detected backend termination
+	log_ipcs();
+
+	# now startup should work
+	poll_start($gnat);
+	log_ipcs();
 }
-like(slurp_file($gnat->logfile),
-	$pre_existing_msg, 'detected live backend via shared memory');
-# Reject single-user startup.
-command_fails_like(
-	[
-		'postgres', '--single',
-		'-D' => $gnat->data_dir,
-		'template1'
-	],
-	$pre_existing_msg,
-	'single-user mode detected live backend via shared memory');
-log_ipcs();
-
-# cleanup slow backend
-PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'QUIT', $slow_pid);
-$slow_client->finish;    # client has detected backend termination
-log_ipcs();
-
-# now startup should work
-poll_start($gnat);
-log_ipcs();
 
 # finish testing
 $gnat->stop;
