@@ -28,22 +28,13 @@ contrib/test_decoding	contrib	temporarily_blocked	yes	initial Phase 16 threaded-
 contrib/vacuumlo	contrib	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/initdb	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_amcheck	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_archivecleanup	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_basebackup	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_checksums	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_combinebackup	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_config	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_controldata	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_ctl	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_dump	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_resetwal	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_rewind	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_test_fsync	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_test_timing	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_upgrade	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pg_verifybackup	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_waldump	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/bin/pg_walsummary	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/pgbench	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/psql	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/bin/scripts	bin	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
@@ -111,4 +102,3 @@ src/test/perl	src-test	temporarily_blocked	yes	initial Phase 16 threaded-world t
 src/test/postmaster	src-test	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/test/recovery	src-test	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
 src/test/subscription	src-test	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory
-src/tools/pg_bsd_indent	tool	temporarily_blocked	yes	initial Phase 16 threaded-world target does not yet run this enabled check-world leaf	none yet	seeded from current check-world leaf inventory

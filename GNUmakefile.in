@@ -445,10 +445,48 @@ check-threaded-interfaces:
 	@echo "$@: no admitted components yet; manifest covers remaining leaves"
 
 check-threaded-bin:
-	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+	$(MAKE) check-threaded-bin-pg-archivecleanup
+	$(MAKE) check-threaded-bin-pg-checksums
+	$(MAKE) check-threaded-bin-pg-config
+	$(MAKE) check-threaded-bin-pg-controldata
+	$(MAKE) check-threaded-bin-pg-resetwal
+	$(MAKE) check-threaded-bin-pg-test-fsync
+	$(MAKE) check-threaded-bin-pg-test-timing
+	$(MAKE) check-threaded-bin-pg-waldump
+	$(MAKE) check-threaded-bin-pg-walsummary
+
+check-threaded-bin-pg-archivecleanup:
+	$(MAKE) -C src/bin/pg_archivecleanup check
+
+check-threaded-bin-pg-checksums:
+	$(MAKE) -C src/bin/pg_checksums check
+
+check-threaded-bin-pg-config:
+	$(MAKE) -C src/bin/pg_config check
+
+check-threaded-bin-pg-controldata:
+	$(MAKE) -C src/bin/pg_controldata check
+
+check-threaded-bin-pg-resetwal:
+	$(MAKE) -C src/bin/pg_resetwal check
+
+check-threaded-bin-pg-test-fsync:
+	$(MAKE) -C src/bin/pg_test_fsync check
+
+check-threaded-bin-pg-test-timing:
+	$(MAKE) -C src/bin/pg_test_timing check
+
+check-threaded-bin-pg-waldump:
+	$(MAKE) -C src/bin/pg_waldump check
+
+check-threaded-bin-pg-walsummary:
+	$(MAKE) -C src/bin/pg_walsummary check
 
 check-threaded-tools:
-	@echo "$@: no admitted components yet; manifest covers remaining leaves"
+	$(MAKE) check-threaded-tools-pg-bsd-indent
+
+check-threaded-tools-pg-bsd-indent:
+	$(MAKE) -C src/tools/pg_bsd_indent check
 
 check-world-threaded:
 	$(MAKE) check-threaded-world-coverage
@@ -573,4 +611,4 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/dsm.c \
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
-.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
+.PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-contrib check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-interfaces check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
