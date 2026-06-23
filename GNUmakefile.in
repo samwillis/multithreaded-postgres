@@ -111,6 +111,7 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/passwordcheck \
 	contrib/pg_buffercache \
 	contrib/pg_freespacemap \
+	contrib/pg_logicalinspect \
 	contrib/pg_overexplain \
 	contrib/pg_surgery \
 	contrib/pg_trgm \
@@ -638,6 +639,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-passwordcheck-run
 	$(MAKE) check-threaded-contrib-pg-buffercache-run
 	$(MAKE) check-threaded-contrib-pg-freespacemap-run
+	$(MAKE) check-threaded-contrib-pg-logicalinspect-run
 	$(MAKE) check-threaded-contrib-pg-overexplain-run
 	$(MAKE) check-threaded-contrib-pg-surgery-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
@@ -882,6 +884,15 @@ check-threaded-contrib-pg-freespacemap:
 
 check-threaded-contrib-pg-freespacemap-run:
 	$(MAKE) -C contrib/pg_freespacemap check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-pg-logicalinspect: | temp-install
+check-threaded-contrib-pg-logicalinspect: submake-generated-headers
+check-threaded-contrib-pg-logicalinspect:
+	$(MAKE) -j1 -C contrib/pg_logicalinspect checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-logicalinspect-run
+
+check-threaded-contrib-pg-logicalinspect-run:
+	$(MAKE) -C contrib/pg_logicalinspect check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-pg-overexplain: | temp-install
 check-threaded-contrib-pg-overexplain: submake-generated-headers
@@ -1310,6 +1321,7 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-basic-archive check-threaded-contrib-basic-archive-run
 .PHONY: check-threaded-contrib-dblink check-threaded-contrib-dblink-run
 .PHONY: check-threaded-contrib-passwordcheck check-threaded-contrib-passwordcheck-run
+.PHONY: check-threaded-contrib-pg-logicalinspect check-threaded-contrib-pg-logicalinspect-run
 .PHONY: check-threaded-contrib-pg-overexplain check-threaded-contrib-pg-overexplain-run
 .PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
 .PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
