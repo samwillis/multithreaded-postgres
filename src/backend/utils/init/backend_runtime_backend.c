@@ -2800,6 +2800,7 @@ PgBackendEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgBackendExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension_modules->private_states =
 		lappend(extension_modules->private_states, private_state);

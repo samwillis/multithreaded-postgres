@@ -2041,6 +2041,37 @@ PgCurrentLegacySessionRef(void)
 }
 
 
+static bool
+PgSessionExtensionModuleStateOwnsPointer(PgSessionExtensionModuleState *extension_modules,
+										 const void *ptr)
+{
+	uintptr_t	address;
+
+	Assert(extension_modules != NULL);
+
+	if (ptr == NULL)
+		return false;
+
+	address = (uintptr_t) ptr;
+
+	foreach_ptr(PgSessionExtensionPrivateState, private_state,
+				extension_modules->private_states)
+	{
+		uintptr_t	state_start;
+
+		if (private_state->state == NULL || private_state->size == 0)
+			continue;
+
+		state_start = (uintptr_t) private_state->state;
+
+		if (address >= state_start &&
+			address - state_start < private_state->size)
+			return true;
+	}
+
+	return false;
+}
+
 bool
 PgCurrentSessionOwnsPointer(const void *ptr)
 {
@@ -2055,7 +2086,9 @@ PgCurrentSessionOwnsPointer(const void *ptr)
 	session_start = (uintptr_t) CurrentPgSession;
 	session_end = session_start + sizeof(PgSession);
 
-	return address >= session_start && address < session_end;
+	return (address >= session_start && address < session_end) ||
+		PgSessionExtensionModuleStateOwnsPointer(
+			&CurrentPgSession->extension_modules, ptr);
 }
 
 bool
@@ -2074,7 +2107,9 @@ PgCurrentOrEarlySessionOwnsPointer(const void *ptr)
 	session_start = (uintptr_t) &early_session_fallback;
 	session_end = session_start + sizeof(PgSession);
 
-	return address >= session_start && address < session_end;
+	return (address >= session_start && address < session_end) ||
+		PgSessionExtensionModuleStateOwnsPointer(
+			&early_session_extension_modules, ptr);
 }
 
 
@@ -2519,6 +2554,7 @@ PgSessionEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgSessionExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension_modules->private_states =
 		lappend(extension_modules->private_states, private_state);

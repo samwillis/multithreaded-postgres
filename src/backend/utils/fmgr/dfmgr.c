@@ -61,6 +61,7 @@ struct DynamicFileList
 
 static PG_GLOBAL_RUNTIME DynamicFileList *file_list = NULL;
 static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
+static PG_THREAD_LOCAL bool threaded_session_init_in_progress = false;
 
 #ifndef WIN32
 static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -77,6 +78,7 @@ static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX
 static void *internal_load_library(const char *libname);
 static void *internal_load_library_locked(const char *libname);
 static void call_module_init_function(DynamicFileList *file_scanner);
+static void call_module_threaded_session_init_function(DynamicFileList *file_scanner);
 static bool module_needs_session_init(DynamicFileList *file_scanner);
 static void remember_module_session_init(DynamicFileList *file_scanner);
 pg_noreturn static void incompatible_module_error(const char *libname,
@@ -467,6 +469,30 @@ call_module_init_function(DynamicFileList *file_scanner)
 	remember_module_session_init(file_scanner);
 }
 
+static void
+call_module_threaded_session_init_function(DynamicFileList *file_scanner)
+{
+	bool		save_threaded_session_init_in_progress;
+
+	save_threaded_session_init_in_progress = threaded_session_init_in_progress;
+	threaded_session_init_in_progress = true;
+	PG_TRY();
+	{
+		call_module_init_function(file_scanner);
+	}
+	PG_FINALLY();
+	{
+		threaded_session_init_in_progress = save_threaded_session_init_in_progress;
+	}
+	PG_END_TRY();
+}
+
+bool
+dynamic_library_threaded_session_init_in_progress(void)
+{
+	return threaded_session_init_in_progress;
+}
+
 static bool
 module_needs_session_init(DynamicFileList *file_scanner)
 {
@@ -528,7 +554,7 @@ initialize_loaded_modules_for_threaded_session(void)
 									   file_scanner->magic,
 									   PgRuntimeGetExtensionBackendModel());
 			if (module_needs_session_init(file_scanner))
-				call_module_init_function(file_scanner);
+				call_module_threaded_session_init_function(file_scanner);
 
 			file_scanner = next;
 		}

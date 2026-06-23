@@ -1864,6 +1864,7 @@ typedef struct PgExtensionPrivateState
 {
 	const char *key;
 	void	   *state;
+	Size		size;
 	PgExtensionPrivateStateCleanup cleanup;
 } PgExtensionPrivateState;
 

@@ -6378,13 +6378,15 @@ init_custom_variable(const char *name,
 
 	/*
 	 * Only allow custom PGC_POSTMASTER variables to be created during shared
-	 * library preload; any later than that, we can't ensure that the value
+	 * library preload or while replaying an already-loaded module into a
+	 * threaded session.  Any later than that, we can't ensure that the value
 	 * doesn't change after startup.  This is a fatal elog if it happens; just
 	 * erroring out isn't safe because we don't know what the calling loadable
 	 * module might already have hooked into.
 	 */
 	if (context == PGC_POSTMASTER &&
-		!process_shared_preload_libraries_in_progress)
+		!process_shared_preload_libraries_in_progress &&
+		!dynamic_library_threaded_session_init_in_progress())
 		elog(FATAL, "cannot create PGC_POSTMASTER variables after startup");
 
 	/*
