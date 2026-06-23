@@ -15,7 +15,11 @@
 #include "fmgr.h"
 #include "utils/resowner.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_resowner",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 static void ReleaseString(Datum res);
 static char *PrintString(Datum res);

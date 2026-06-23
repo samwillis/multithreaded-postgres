@@ -27,7 +27,13 @@
  */
 typedef struct
 {
+	uint32		last_release_priority;
+} ManyTestReleaseState;
+
+typedef struct
+{
 	ResourceOwnerDesc desc;
+	ManyTestReleaseState *release_state;
 	int			nremembered;
 	int			nforgotten;
 	int			nreleased;
@@ -42,18 +48,13 @@ typedef struct
 	dlist_node	node;
 } ManyTestResource;
 
-/*
- * Current release phase, and priority of last call to the release callback.
- * This is used to check that the resources are released in correct order.
- */
-static ResourceReleasePhase current_release_phase;
-static uint32 last_release_priority = 0;
-
 /* prototypes for local functions */
 static void ReleaseManyTestResource(Datum res);
 static char *PrintManyTest(Datum res);
 static void InitManyTestResourceKind(ManyTestResourceKind *kind, char *name,
-									 ResourceReleasePhase phase, uint32 priority);
+									 ResourceReleasePhase phase,
+									 uint32 priority,
+									 ManyTestReleaseState *release_state);
 static void RememberManyTestResources(ResourceOwner owner,
 									  ManyTestResourceKind *kinds, int nkinds,
 									  int nresources);
@@ -67,13 +68,14 @@ static void
 ReleaseManyTestResource(Datum res)
 {
 	ManyTestResource *mres = (ManyTestResource *) DatumGetPointer(res);
+	ManyTestReleaseState *state = mres->kind->release_state;
 
 	elog(DEBUG1, "releasing resource %p from %s", mres, mres->kind->desc.name);
-	Assert(last_release_priority <= mres->kind->desc.release_priority);
+	Assert(state->last_release_priority <= mres->kind->desc.release_priority);
 
 	dlist_delete(&mres->node);
 	mres->kind->nreleased++;
-	last_release_priority = mres->kind->desc.release_priority;
+	state->last_release_priority = mres->kind->desc.release_priority;
 	pfree(mres);
 }
 
@@ -94,13 +96,15 @@ PrintManyTest(Datum res)
 
 static void
 InitManyTestResourceKind(ManyTestResourceKind *kind, char *name,
-						 ResourceReleasePhase phase, uint32 priority)
+						 ResourceReleasePhase phase, uint32 priority,
+						 ManyTestReleaseState *release_state)
 {
 	kind->desc.name = name;
 	kind->desc.release_phase = phase;
 	kind->desc.release_priority = priority;
 	kind->desc.ReleaseResource = ReleaseManyTestResource;
 	kind->desc.DebugPrint = PrintManyTest;
+	kind->release_state = release_state;
 	kind->nremembered = 0;
 	kind->nforgotten = 0;
 	kind->nreleased = 0;
@@ -212,6 +216,7 @@ test_resowner_many(PG_FUNCTION_ARGS)
 
 	ManyTestResourceKind *before_kinds;
 	ManyTestResourceKind *after_kinds;
+	ManyTestReleaseState release_state = {0};
 
 	/* Sanity check the arguments */
 	if (nkinds < 0)
@@ -232,7 +237,8 @@ test_resowner_many(PG_FUNCTION_ARGS)
 		InitManyTestResourceKind(&before_kinds[i],
 								 psprintf("resource before locks %d", i),
 								 RESOURCE_RELEASE_BEFORE_LOCKS,
-								 RELEASE_PRIO_FIRST + i);
+								 RELEASE_PRIO_FIRST + i,
+								 &release_state);
 	}
 	after_kinds = palloc(nkinds * sizeof(ManyTestResourceKind));
 	for (int i = 0; i < nkinds; i++)
@@ -240,7 +246,8 @@ test_resowner_many(PG_FUNCTION_ARGS)
 		InitManyTestResourceKind(&after_kinds[i],
 								 psprintf("resource after locks %d", i),
 								 RESOURCE_RELEASE_AFTER_LOCKS,
-								 RELEASE_PRIO_FIRST + i);
+								 RELEASE_PRIO_FIRST + i,
+								 &release_state);
 	}
 
 	resowner = ResourceOwnerCreate(CurrentResourceOwner, "TestOwner");
@@ -272,19 +279,16 @@ test_resowner_many(PG_FUNCTION_ARGS)
 
 	/* Start releasing */
 	elog(NOTICE, "releasing resources before locks");
-	current_release_phase = RESOURCE_RELEASE_BEFORE_LOCKS;
-	last_release_priority = 0;
+	release_state.last_release_priority = 0;
 	ResourceOwnerRelease(resowner, RESOURCE_RELEASE_BEFORE_LOCKS, false, false);
 	Assert(GetTotalResourceCount(before_kinds, nkinds) == 0);
 
 	elog(NOTICE, "releasing locks");
-	current_release_phase = RESOURCE_RELEASE_LOCKS;
-	last_release_priority = 0;
+	release_state.last_release_priority = 0;
 	ResourceOwnerRelease(resowner, RESOURCE_RELEASE_LOCKS, false, false);
 
 	elog(NOTICE, "releasing resources after locks");
-	current_release_phase = RESOURCE_RELEASE_AFTER_LOCKS;
-	last_release_priority = 0;
+	release_state.last_release_priority = 0;
 	ResourceOwnerRelease(resowner, RESOURCE_RELEASE_AFTER_LOCKS, false, false);
 	Assert(GetTotalResourceCount(before_kinds, nkinds) == 0);
 	Assert(GetTotalResourceCount(after_kinds, nkinds) == 0);

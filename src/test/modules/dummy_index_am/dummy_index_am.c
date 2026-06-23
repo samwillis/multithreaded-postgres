@@ -19,7 +19,11 @@
 #include "commands/vacuum.h"
 #include "nodes/pathnodes.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "dummy_index_am",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 /* parse table for fillRelOptions */
 static relopt_parse_elt di_relopt_tab[8];
