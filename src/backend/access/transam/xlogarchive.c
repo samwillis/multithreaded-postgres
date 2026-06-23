@@ -31,6 +31,7 @@
 #include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "utils/shellcmd.h"
 #include "utils/wait_event.h"
 
 /*
@@ -175,7 +176,7 @@ RestoreArchivedFile(char *path, const char *xlogfname,
 	/*
 	 * Copy xlog from archival storage to XLOGDIR
 	 */
-	rc = system(xlogRestoreCmd);
+	rc = ExecuteShellCommand(xlogRestoreCmd);
 
 	PostRestoreCommand();
 
@@ -328,7 +329,7 @@ ExecuteRecoveryCommand(const char *command, const char *commandName,
 	 */
 	fflush(NULL);
 	pgstat_report_wait_start(wait_event_info);
-	rc = system(xlogRecoveryCmd);
+	rc = ExecuteShellCommand(xlogRecoveryCmd);
 	pgstat_report_wait_end();
 
 	pfree(xlogRecoveryCmd);
