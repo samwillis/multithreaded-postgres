@@ -43,6 +43,11 @@ src/bin/pg_test_fsync	check-threaded-bin-pg-test-fsync	pg_test_fsync utility TAP
 src/bin/pg_test_timing	check-threaded-bin-pg-test-timing	pg_test_timing utility TAP leaf has no threaded-server dependency and runs through check-threaded-bin
 src/bin/pg_waldump	check-threaded-bin-pg-waldump	pg_waldump offline WAL-reader TAP leaf has no threaded-server dependency and runs through check-threaded-bin
 src/bin/pg_walsummary	check-threaded-bin-pg-walsummary	pg_walsummary offline WAL-summary TAP leaf has no threaded-server dependency and runs through check-threaded-bin
+src/interfaces/ecpg/compatlib	check-threaded-interfaces-ecpg-compatlib	ECPG compatibility library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
+src/interfaces/ecpg/ecpglib	check-threaded-interfaces-ecpg-ecpglib	ECPG client library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
+src/interfaces/ecpg/include	check-threaded-interfaces-ecpg-include	ECPG header check leaf has no threaded-server dependency and runs through check-threaded-interfaces
+src/interfaces/ecpg/pgtypeslib	check-threaded-interfaces-ecpg-pgtypeslib	ECPG pgtypes library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
+src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
