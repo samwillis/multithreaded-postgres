@@ -438,7 +438,12 @@ bool
 AbsorbDataChecksumsBarrier(ProcSignalBarrierType barrier)
 {
 	uint32		target_state;
-	int			current = data_checksums;
+	/*
+	 * Barrier absorption is per backend.  The data_checksums GUC backing
+	 * variable is process-global in threaded mode, so use the backend-local
+	 * checksum state when deciding whether this backend has already moved.
+	 */
+	uint32		current = GetLocalDataChecksumState();
 	bool		found = false;
 
 	/*

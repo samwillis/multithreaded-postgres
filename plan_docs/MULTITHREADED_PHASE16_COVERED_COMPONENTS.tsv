@@ -89,6 +89,7 @@ src/test/modules/spgist_name_ops	check-threaded-test-modules-spgist-name-ops	SP-
 src/test/modules/test_binaryheap	check-threaded-test-modules-test-binaryheap	binary heap regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_bitmapset	check-threaded-test-modules-test-bitmapset	bitmapset regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_bloomfilter	check-threaded-test-modules-test-bloomfilter	Bloom filter regression module declares thread-per-session metadata and runs under threaded_workers.conf
+src/test/modules/test_checksums	check-threaded-test-modules-test-checksums	data-checksum TAP runs under threaded_smoke.conf with backend-local checksum barrier absorption, thread-per-session test module metadata, standby checksum transition coverage, and FPI extension-load coverage; injection-point and expensive pgbench/PITR files remain gated by configured build options
 src/test/modules/test_cloexec	check-threaded-test-modules-test-cloexec	test_cloexec standalone program TAP leaf runs through direct threaded-world prove coverage
 src/test/modules/test_copy_callbacks	check-threaded-test-modules-test-copy-callbacks	COPY callback regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_cplusplusext	check-threaded-test-modules-test-cplusplusext	C++ extension regression module declares thread-per-session metadata and runs under threaded_workers.conf

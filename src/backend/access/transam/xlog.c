@@ -4968,6 +4968,12 @@ SetLocalDataChecksumState(uint32 data_checksum_version)
 	data_checksums = data_checksum_version;
 }
 
+uint32
+GetLocalDataChecksumState(void)
+{
+	return LocalDataChecksumState;
+}
+
 /* guc hook */
 const char *
 show_data_checksums(void)

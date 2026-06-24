@@ -299,6 +299,7 @@ extern const char *show_data_checksums(void);
 extern const char *get_checksum_state_string(uint32 state);
 extern void InitLocalDataChecksumState(void);
 extern void SetLocalDataChecksumState(uint32 data_checksum_version);
+extern uint32 GetLocalDataChecksumState(void);
 extern bool GetDefaultCharSignedness(void);
 extern XLogRecPtr GetFakeLSNForUnloggedRel(void);
 extern void BootStrapXLOG(uint32 data_checksum_version);

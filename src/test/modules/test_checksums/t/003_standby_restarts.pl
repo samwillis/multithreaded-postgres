@@ -18,6 +18,7 @@ use DataChecksums::Utils;
 my $node_primary = PostgreSQL::Test::Cluster->new('standby_restarts_primary');
 $node_primary->init(allows_streaming => 1, no_data_checksums => 1);
 $node_primary->start;
+my $threaded = $node_primary->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
 
 my $slotname = 'physical_slot';
 $node_primary->safe_psql('postgres',
@@ -271,7 +272,14 @@ test_checksum_state($node_standby, 'inprogress-on');
 # Crash the primary before checksums are enabled and promote the standby.  The
 # new primary node will now revert the state of 'off' since checksums weren't
 # fully enabled during the crash.
-$node_primary->teardown_node();
+if ($threaded)
+{
+	$node_primary->kill9();
+}
+else
+{
+	$node_primary->teardown_node();
+}
 $node_standby->promote;
 wait_for_checksum_state($node_standby, 'off');
 
