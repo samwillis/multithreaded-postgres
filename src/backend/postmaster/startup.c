@@ -136,8 +136,6 @@ StartupProcApplyLogicalInterrupts(void)
 		return;
 
 	pending = PgBackendConsumeInterrupts(CurrentPgBackend);
-	if (pending == 0)
-		return;
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_CONFIG_RELOAD))
 	{
@@ -168,6 +166,32 @@ StartupProcApplyLogicalInterrupts(void)
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_LOG_MEMORY_CONTEXT))
 		LogMemoryContextPending = true;
+
+	/*
+	 * Some shared wait helpers drain the logical mailbox through the generic
+	 * backend interrupt adapter before returning to startup-specific code.
+	 * Translate those generic flags back into startup-process state so a
+	 * shutdown or reload request observed during such a wait is not lost.
+	 */
+	if (ProcDiePending)
+		proc_exit(1);
+
+	if (ConfigReloadPending)
+	{
+		ConfigReloadPending = false;
+		got_SIGHUP = true;
+		WakeupRecovery();
+	}
+
+	if (ShutdownRequestPending)
+	{
+		ShutdownRequestPending = false;
+		if (in_restore_command)
+			proc_exit(1);
+		else
+			shutdown_requested = true;
+		WakeupRecovery();
+	}
 }
 
 static void
