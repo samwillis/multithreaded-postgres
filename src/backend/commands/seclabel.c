@@ -20,6 +20,7 @@
 #include "catalog/pg_shseclabel.h"
 #include "commands/seclabel.h"
 #include "miscadmin.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/memutils.h"
@@ -31,7 +32,16 @@ typedef struct
 	check_object_relabel_type hook;
 } LabelProvider;
 
-static PG_GLOBAL_RUNTIME List *label_provider_list = NIL;
+typedef struct
+{
+	List	   *label_provider_list;
+} SecurityLabelProviderState;
+
+#define SECURITY_LABEL_PROVIDER_STATE_KEY "security-label-provider-state"
+
+static SecurityLabelProviderState *GetSecurityLabelProviderState(void);
+static List **SecurityLabelProviderListRef(void);
+static MemoryContext SecurityLabelProviderMemoryContext(void);
 
 static bool
 SecLabelSupportsObjectType(ObjectType objtype)
@@ -118,6 +128,7 @@ ExecSecLabelStmt(SecLabelStmt *stmt)
 	LabelProvider *provider = NULL;
 	ObjectAddress address;
 	Relation	relation;
+	List	   *label_provider_list = *SecurityLabelProviderListRef();
 	ListCell   *lc;
 	bool		missing_ok;
 
@@ -225,6 +236,30 @@ ExecSecLabelStmt(SecLabelStmt *stmt)
 		relation_close(relation, NoLock);
 
 	return address;
+}
+
+static SecurityLabelProviderState *
+GetSecurityLabelProviderState(void)
+{
+	return (SecurityLabelProviderState *)
+		PgSessionEnsureExtensionPrivateState(SECURITY_LABEL_PROVIDER_STATE_KEY,
+											 sizeof(SecurityLabelProviderState),
+											 NULL);
+}
+
+static List **
+SecurityLabelProviderListRef(void)
+{
+	return &GetSecurityLabelProviderState()->label_provider_list;
+}
+
+static MemoryContext
+SecurityLabelProviderMemoryContext(void)
+{
+	if (CurrentPgSession != NULL)
+		return PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession);
+
+	return TopMemoryContext;
 }
 
 /*
@@ -582,11 +617,13 @@ register_label_provider(const char *provider_name, check_object_relabel_type hoo
 {
 	LabelProvider *provider;
 	MemoryContext oldcxt;
+	List	  **label_provider_list;
 
-	oldcxt = MemoryContextSwitchTo(TopMemoryContext);
+	oldcxt = MemoryContextSwitchTo(SecurityLabelProviderMemoryContext());
 	provider = palloc_object(LabelProvider);
 	provider->provider_name = pstrdup(provider_name);
 	provider->hook = hook;
-	label_provider_list = lappend(label_provider_list, provider);
+	label_provider_list = SecurityLabelProviderListRef();
+	*label_provider_list = lappend(*label_provider_list, provider);
 	MemoryContextSwitchTo(oldcxt);
 }

@@ -65,6 +65,7 @@ distclean:
 
 THREADED_WORLD_CORE_CONFIG = $(abs_top_srcdir)/src/test/regress/threaded_workers.conf
 THREADED_WORLD_TAP_CONFIG = $(abs_top_srcdir)/src/test/regress/threaded_smoke.conf
+THREADED_WORLD_TEST_EXT_LIB = $(abs_top_builddir)/src/test/modules/test_extensions/test_ext$(DLSUFFIX)
 THREADED_WORLD_CORE_TAP_DIR = $(abs_top_srcdir)/src/test/modules/test_backend_runtime
 THREADED_WORLD_CORE_TAP_TESTS = \
 	t/001_threaded_runtime.pl \
@@ -186,6 +187,8 @@ define threaded_world_prove
 	  PGPORT=65432 \
 	  top_builddir='$(abs_top_builddir)' \
 	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
+	  REGRESS_SHLIB='$(abs_top_builddir)'/src/test/regress/regress$(DLSUFFIX) \
+	  TEST_EXT_LIB='$(THREADED_WORLD_TEST_EXT_LIB)' \
 	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
 	  GMAKE='$(MAKE)' \
 	  with_icu='$(with_icu)' \
@@ -222,6 +225,8 @@ define threaded_world_prove_fresh_locale_c
 	  PGPORT=65432 \
 	  top_builddir='$(abs_top_builddir)' \
 	  PG_REGRESS='$(abs_top_builddir)'/src/test/regress/pg_regress \
+	  REGRESS_SHLIB='$(abs_top_builddir)'/src/test/regress/regress$(DLSUFFIX) \
+	  TEST_EXT_LIB='$(THREADED_WORLD_TEST_EXT_LIB)' \
 	  share_contrib_dir='$(abs_top_builddir)'/tmp_install$(datadir)/$(datamoduledir) \
 	  GMAKE='$(MAKE)' \
 	  with_icu='$(with_icu)' \
@@ -1264,6 +1269,7 @@ check-threaded-bin:
 	$(MAKE) check-threaded-bin-pg-dump
 	$(MAKE) check-threaded-bin-pg-resetwal
 	$(MAKE) check-threaded-bin-pg-rewind
+	$(MAKE) check-threaded-bin-pg-upgrade
 	$(MAKE) check-threaded-bin-pg-test-fsync
 	$(MAKE) check-threaded-bin-pg-test-timing
 	$(MAKE) check-threaded-bin-pg-verifybackup
@@ -1334,6 +1340,18 @@ check-threaded-bin-pg-rewind: submake-generated-headers
 check-threaded-bin-pg-rewind:
 	$(MAKE) -C src/bin/pg_rewind all
 	$(call threaded_world_prove,src/bin/pg_rewind,t/*.pl)
+
+check-threaded-bin-pg-upgrade: | temp-install
+check-threaded-bin-pg-upgrade: submake-generated-headers
+check-threaded-bin-pg-upgrade: THREADED_WORLD_TAP_CONFIG = $(abs_top_srcdir)/src/test/regress/threaded_pg_upgrade.conf
+check-threaded-bin-pg-upgrade: THREADED_WORLD_TEST_EXT_LIB = $(abs_top_builddir)/src/test/modules/test_extensions/test_ext_threaded$(DLSUFFIX)
+check-threaded-bin-pg-upgrade:
+	$(MAKE) -C src/bin/pg_upgrade all
+	$(MAKE) -C contrib/test_decoding DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/dummy_seclabel DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_extensions DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(INSTALL_SHLIB) '$(THREADED_WORLD_TEST_EXT_LIB)' '$(abs_top_builddir)'/tmp_install$(pkglibdir)/test_ext$(DLSUFFIX)
+	$(call threaded_world_prove_fresh_locale_c,src/bin/pg_upgrade,t/*.pl)
 
 check-threaded-bin-pg-test-fsync: | temp-install
 check-threaded-bin-pg-test-fsync: submake-generated-headers
@@ -1517,7 +1535,7 @@ check-runtime-lifecycles:
 		--source $(top_srcdir)/src/backend/storage/ipc/ipc.c
 
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-initdb check-threaded-bin-pg-amcheck check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-bin-pgbench check-threaded-bin-scripts check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-interfaces-libpq check-threaded-interfaces-libpq-run check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-authentication check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
-.PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-ctl check-threaded-bin-pg-dump check-threaded-bin-pg-rewind check-threaded-bin-pg-verifybackup check-threaded-bin-psql
+.PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-ctl check-threaded-bin-pg-dump check-threaded-bin-pg-rewind check-threaded-bin-pg-upgrade check-threaded-bin-pg-verifybackup check-threaded-bin-psql
 .PHONY: check-threaded-src-test-postmaster check-threaded-src-test-subscription
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auth-delay check-threaded-contrib-auth-delay-run
