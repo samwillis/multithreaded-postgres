@@ -1961,6 +1961,18 @@
 	PG_RUNTIME_CURRENT_FIELD_REF(CurrentPgSessionLogicalReplicationRuntimeState, \
 									 PgCurrentReplicationOriginSessionStateRef, \
 									 session_replication_state)
+#define PgCurrentReplicationOriginCleanupRegisteredRef() \
+	PG_RUNTIME_CURRENT_FIELD_REF(CurrentPgSessionLogicalReplicationRuntimeState, \
+									 PgCurrentReplicationOriginCleanupRegisteredRef, \
+									 replication_origin_cleanup_registered)
+#define PgCurrentPgOutputPublicationCallbackRegisteredRef() \
+	PG_RUNTIME_CURRENT_FIELD_REF(CurrentPgSessionLogicalReplicationRuntimeState, \
+									 PgCurrentPgOutputPublicationCallbackRegisteredRef, \
+									 pgoutput_publication_callback_registered)
+#define PgCurrentPgOutputRelationCallbacksRegisteredRef() \
+	PG_RUNTIME_CURRENT_FIELD_REF(CurrentPgSessionLogicalReplicationRuntimeState, \
+									 PgCurrentPgOutputRelationCallbacksRegisteredRef, \
+									 pgoutput_relation_callbacks_registered)
 #define PgCurrentResourceOwnerObjectRef() \
 	PG_RUNTIME_CURRENT_FIELD_REF(CurrentPgExecutionResourceOwnerRuntimeState, \
 									 PgCurrentResourceOwnerObjectRef, \

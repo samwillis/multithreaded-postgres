@@ -129,7 +129,8 @@ typedef struct ReplicationState
 	XLogRecPtr	local_lsn;
 
 	/*
-	 * PID of backend that's acquired slot, or 0 if none.
+	 * Backend signal identity of the backend that's acquired slot, or 0 if
+	 * none.  In process mode this is the OS PID.
 	 */
 	int			acquired_by;
 
@@ -193,9 +194,21 @@ static PG_GLOBAL_SHMEM ReplicationStateCtl *replication_states_ctl;
  * that backend.)
  */
 #define session_replication_state (*PgCurrentReplicationOriginSessionStateRef())
+#define replorigin_cleanup_registered (*PgCurrentReplicationOriginCleanupRegisteredRef())
 
 /* Magic for on disk files. */
 #define REPLICATION_STATE_MAGIC ((uint32) 0x1257DADE)
+
+/*
+ * Replication origins historically store the owning process PID.  In threaded
+ * mode, multiple logical backends share MyProcPid, so use the SQL-visible
+ * backend signal identity instead.  Process mode keeps returning MyProcPid.
+ */
+static int
+replorigin_current_owner_id(void)
+{
+	return PgCurrentBackendSignalPid();
+}
 
 static void
 replorigin_check_prerequisites(bool check_origins, bool recoveryOK)
@@ -1089,8 +1102,10 @@ static void
 replorigin_session_reset_internal(void)
 {
 	ConditionVariable *cv;
+	int			owner_id;
 
 	Assert(session_replication_state != NULL);
+	owner_id = replorigin_current_owner_id();
 
 	LWLockAcquire(ReplicationOriginLock, LW_EXCLUSIVE);
 
@@ -1102,7 +1117,7 @@ replorigin_session_reset_internal(void)
 	 * origin. This avoids clearing the first process's PID when any other
 	 * session releases the origin.
 	 */
-	if (session_replication_state->acquired_by == MyProcPid)
+	if (session_replication_state->acquired_by == owner_id)
 		session_replication_state->acquired_by = 0;
 
 	session_replication_state->refcount--;
@@ -1144,19 +1159,21 @@ ReplicationOriginExitCleanup(int code, Datum arg)
  * origin, provided they maintain commit order by allowing only one process to
  * commit at a time). For this case the first process must pass acquired_by =
  * 0, and then the other processes sharing that same origin can pass
- * acquired_by = PID of the first process.
+ * acquired_by = signal identity of the first process or threaded backend.
  */
 void
 replorigin_session_setup(ReplOriginId node, int acquired_by)
 {
-	static bool registered_cleanup;
 	int			i;
 	int			free_slot = -1;
+	int			owner_id;
 
-	if (!registered_cleanup)
+	owner_id = replorigin_current_owner_id();
+
+	if (!replorigin_cleanup_registered)
 	{
 		on_shmem_exit(ReplicationOriginExitCleanup, 0);
-		registered_cleanup = true;
+		replorigin_cleanup_registered = true;
 	}
 
 	Assert(max_active_replication_origins > 0);
@@ -1264,7 +1281,7 @@ replorigin_session_setup(ReplOriginId node, int acquired_by)
 
 	if (acquired_by == 0)
 	{
-		session_replication_state->acquired_by = MyProcPid;
+		session_replication_state->acquired_by = owner_id;
 		Assert(session_replication_state->refcount == 0);
 	}
 	else
@@ -1307,7 +1324,7 @@ replorigin_session_reset(void)
 	 * system handles this safely (as happens if the first session exits
 	 * without calling reset), it is best to avoid doing so.
 	 */
-	if (session_replication_state->acquired_by == MyProcPid &&
+	if (session_replication_state->acquired_by == replorigin_current_owner_id() &&
 		session_replication_state->refcount > 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

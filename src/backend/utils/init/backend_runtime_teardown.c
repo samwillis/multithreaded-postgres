@@ -526,6 +526,7 @@ PgBackendResetLogicalReplicationClosedState(PgBackendLogicalReplicationState *lo
 		logical_replication->slotsync_observed_primary_slotname = NULL;
 	}
 
+	PG_RUNTIME_DESTROY_HASH(logical_replication->table_sync_last_start_times);
 	PG_RUNTIME_DESTROY_HASH(logical_replication->parallel_apply_txn_hash);
 
 	PG_RUNTIME_LIST_FREE(logical_replication->on_commit_wakeup_workers_subids);
@@ -557,6 +558,13 @@ PgBackendResetLogicalReplicationClosedState(PgBackendLogicalReplicationState *lo
 	logical_replication->my_logical_rep_worker = NULL;
 	logical_replication->on_commit_wakeup_workers_subids = NIL;
 	logical_replication->table_states_not_ready = NIL;
+	logical_replication->syncing_relations_has_subtables = false;
+	logical_replication->syncing_relations_has_subsequences_non_ready = false;
+	logical_replication->feedback_reply_message = NULL;
+	logical_replication->feedback_send_time = 0;
+	logical_replication->feedback_last_recvpos = InvalidXLogRecPtr;
+	logical_replication->feedback_last_writepos = InvalidXLogRecPtr;
+	logical_replication->status_request_message = NULL;
 	logical_replication->seqinfos = NIL;
 	if (logical_replication->launcher_last_start_times != NULL)
 	{
@@ -1002,7 +1010,11 @@ PgSessionResetLogicalReplicationClosedState(PgSession *session)
 	}
 
 	PG_RUNTIME_DESTROY_HASH(session->logical_replication.pgoutput_relation_sync_cache);
+	session->logical_replication.session_replication_state = NULL;
+	session->logical_replication.replication_origin_cleanup_registered = false;
 	session->logical_replication.pgoutput_publications_valid = false;
+	session->logical_replication.pgoutput_publication_callback_registered = false;
+	session->logical_replication.pgoutput_relation_callbacks_registered = false;
 	session->logical_replication.syncing_relations_state = 0;
 }
 

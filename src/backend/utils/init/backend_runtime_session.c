@@ -1186,6 +1186,9 @@ PgSessionAdoptEarlyLogicalReplicationState(PgSession *session)
 	Assert(!early_session_logical_replication.pgoutput_publications_valid);
 	Assert(early_session_logical_replication.pgoutput_relation_sync_cache == NULL);
 	Assert(early_session_logical_replication.syncing_relations_state == 0);
+	Assert(!early_session_logical_replication.replication_origin_cleanup_registered);
+	Assert(!early_session_logical_replication.pgoutput_publication_callback_registered);
+	Assert(!early_session_logical_replication.pgoutput_relation_callbacks_registered);
 
 	PgSessionInitializeLogicalReplicationState(&session->logical_replication);
 	PgSessionInitializeLogicalReplicationState(&early_session_logical_replication);

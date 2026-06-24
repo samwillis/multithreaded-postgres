@@ -1579,16 +1579,20 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 	 */
 	elog(DEBUG1, "serializing snapshot to %s", path);
 
-	/* to make sure only we will write to this tempfile, include pid */
+	/*
+	 * To make sure only we will write to this tempfile, include the backend's
+	 * signal identity.  In threaded mode several logical backends can share
+	 * MyProcPid, but each has a distinct signal id.
+	 */
 	sprintf(tmppath, "%s/%X-%X.snap.%d.tmp",
 			PG_LOGICAL_SNAPSHOTS_DIR,
-			LSN_FORMAT_ARGS(lsn), MyProcPid);
+			LSN_FORMAT_ARGS(lsn), PgCurrentBackendSignalPid());
 
 	/*
 	 * Unlink temporary file if it already exists, needs to have been before a
 	 * crash/error since we won't enter this function twice from within a
-	 * single decoding slot/backend and the temporary file contains the pid of
-	 * the current process.
+	 * single decoding slot/backend and the temporary file contains the signal
+	 * id of the current backend.
 	 */
 	if (unlink(tmppath) != 0 && errno != ENOENT)
 		ereport(ERROR,
@@ -2019,9 +2023,9 @@ CheckPointSnapBuild(void)
 
 		/*
 		 * temporary filenames from SnapBuildSerialize() include the LSN and
-		 * everything but are postfixed by .$pid.tmp. We can just remove them
-		 * the same as other files because there can be none that are
-		 * currently being written that are older than cutoff.
+		 * everything but are postfixed by the backend signal id and .tmp. We
+		 * can just remove them the same as other files because there can be
+		 * none that are currently being written that are older than cutoff.
 		 *
 		 * We just log a message if a file doesn't fit the pattern, it's
 		 * probably some editors lock/state file or similar...

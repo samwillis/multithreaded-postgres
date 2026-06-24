@@ -605,7 +605,15 @@ typedef struct PgBackendLogicalReplicationState
 	XLogRecPtr	skip_xact_finish_lsn;
 	BufFile    *stream_fd;
 	XLogRecPtr	last_flushpos;
+	StringInfo	feedback_reply_message;
+	TimestampTz feedback_send_time;
+	XLogRecPtr	feedback_last_recvpos;
+	XLogRecPtr	feedback_last_writepos;
+	StringInfo	status_request_message;
 	List	   *table_states_not_ready;
+	HTAB	   *table_sync_last_start_times;
+	bool		syncing_relations_has_subtables;
+	bool		syncing_relations_has_subsequences_non_ready;
 	StringInfo	copybuf;
 	List	   *seqinfos;
 	bool		xlog_logical_info;
@@ -1702,6 +1710,9 @@ typedef struct PgSessionLogicalReplicationState
 	bool		pgoutput_publications_valid;
 	HTAB	   *pgoutput_relation_sync_cache;
 	int			syncing_relations_state;
+	bool		replication_origin_cleanup_registered;
+	bool		pgoutput_publication_callback_registered;
+	bool		pgoutput_relation_callbacks_registered;
 } PgSessionLogicalReplicationState;
 
 typedef struct PgSessionGeneralGUCState
@@ -2768,12 +2779,15 @@ extern int *PgCurrentWalReceiverTimeoutRef(void);
 extern int *PgCurrentLogicalDecodingWorkMemRef(void);
 extern int *PgCurrentDebugLogicalReplicationStreamingRef(void);
 extern struct ReplicationState **PgCurrentReplicationOriginSessionStateRef(void);
+extern bool *PgCurrentReplicationOriginCleanupRegisteredRef(void);
 extern MemoryContext *PgCurrentLogicalRepRelMapContextRef(void);
 extern HTAB **PgCurrentLogicalRepRelMapRef(void);
 extern MemoryContext *PgCurrentLogicalRepPartMapContextRef(void);
 extern HTAB **PgCurrentLogicalRepPartMapRef(void);
 extern bool *PgCurrentPgOutputPublicationsValidRef(void);
 extern HTAB **PgCurrentPgOutputRelationSyncCacheRef(void);
+extern bool *PgCurrentPgOutputPublicationCallbackRegisteredRef(void);
+extern bool *PgCurrentPgOutputRelationCallbacksRegisteredRef(void);
 extern int *PgCurrentLogicalRepSyncingRelationsStateRef(void);
 extern bool *PgCurrentAllowAlterSystemRef(void);
 extern bool *PgCurrentRowSecurityRef(void);

@@ -1013,7 +1013,15 @@ PgBackendAdoptEarlyLogicalReplicationState(PgBackend *backend)
 	Assert(early_backend_logical_replication.on_commit_wakeup_workers_subids ==
 		   NIL);
 	Assert(early_backend_logical_replication.stream_fd == NULL);
+	Assert(early_backend_logical_replication.feedback_reply_message == NULL);
+	Assert(early_backend_logical_replication.feedback_send_time == 0);
+	Assert(early_backend_logical_replication.feedback_last_recvpos ==
+		   InvalidXLogRecPtr);
+	Assert(early_backend_logical_replication.feedback_last_writepos ==
+		   InvalidXLogRecPtr);
+	Assert(early_backend_logical_replication.status_request_message == NULL);
 	Assert(early_backend_logical_replication.table_states_not_ready == NIL);
+	Assert(early_backend_logical_replication.table_sync_last_start_times == NULL);
 	Assert(early_backend_logical_replication.copybuf == NULL);
 	Assert(early_backend_logical_replication.seqinfos == NIL);
 	Assert(early_backend_logical_replication.slotsync_observed_primary_conninfo

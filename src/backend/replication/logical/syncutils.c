@@ -206,12 +206,10 @@ FetchRelationStates(bool *has_pending_subtables,
 					bool *has_pending_subsequences,
 					bool *started_tx)
 {
-	/*
-	 * has_subtables and has_subsequences_non_ready are declared as static,
-	 * since the same value can be used until the system table is invalidated.
-	 */
-	static bool has_subtables = false;
-	static bool has_subsequences_non_ready = false;
+	bool	   *has_subtables =
+		&PgCurrentLogicalReplicationState()->syncing_relations_has_subtables;
+	bool	   *has_subsequences_non_ready =
+		&PgCurrentLogicalReplicationState()->syncing_relations_has_subsequences_non_ready;
 
 	*started_tx = false;
 
@@ -222,7 +220,7 @@ FetchRelationStates(bool *has_pending_subtables,
 		SubscriptionRelState *rstate;
 
 		relation_states_validity = SYNC_RELATIONS_STATE_REBUILD_STARTED;
-		has_subsequences_non_ready = false;
+		*has_subsequences_non_ready = false;
 
 		/* Clean the old lists. */
 		list_free_deep(table_states_not_ready);
@@ -243,7 +241,7 @@ FetchRelationStates(bool *has_pending_subtables,
 		foreach_ptr(SubscriptionRelState, subrel, rstates)
 		{
 			if (get_rel_relkind(subrel->relid) == RELKIND_SEQUENCE)
-				has_subsequences_non_ready = true;
+				*has_subsequences_non_ready = true;
 			else
 			{
 				rstate = palloc_object(SubscriptionRelState);
@@ -261,7 +259,7 @@ FetchRelationStates(bool *has_pending_subtables,
 		 * table_states_not_ready was empty we still need to check again to
 		 * see if there are 0 tables.
 		 */
-		has_subtables = (table_states_not_ready != NIL) ||
+		*has_subtables = (table_states_not_ready != NIL) ||
 			HasSubscriptionTables(MySubscription->oid);
 
 		/*
@@ -276,8 +274,8 @@ FetchRelationStates(bool *has_pending_subtables,
 	}
 
 	if (has_pending_subtables)
-		*has_pending_subtables = has_subtables;
+		*has_pending_subtables = *has_subtables;
 
 	if (has_pending_subsequences)
-		*has_pending_subsequences = has_subsequences_non_ready;
+		*has_pending_subsequences = *has_subsequences_non_ready;
 }

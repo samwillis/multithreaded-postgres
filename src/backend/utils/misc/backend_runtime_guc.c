@@ -551,6 +551,12 @@ PgCurrentReplicationOriginSessionStateRef(void)
 	return &PgCurrentSessionLogicalReplicationState()->session_replication_state;
 }
 
+bool *
+PgCurrentReplicationOriginCleanupRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->replication_origin_cleanup_registered;
+}
+
 MemoryContext *
 PgCurrentLogicalRepRelMapContextRef(void)
 {
@@ -585,6 +591,18 @@ HTAB **
 PgCurrentPgOutputRelationSyncCacheRef(void)
 {
 	return &PgCurrentSessionLogicalReplicationState()->pgoutput_relation_sync_cache;
+}
+
+bool *
+PgCurrentPgOutputPublicationCallbackRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->pgoutput_publication_callback_registered;
+}
+
+bool *
+PgCurrentPgOutputRelationCallbacksRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->pgoutput_relation_callbacks_registered;
 }
 
 int *
