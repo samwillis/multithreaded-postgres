@@ -1290,6 +1290,7 @@ PgRuntimeShouldThreadBackend(BackendType backend_type)
 		backend_type == B_ARCHIVER ||
 		backend_type == B_AUTOVAC_LAUNCHER ||
 		backend_type == B_AUTOVAC_WORKER ||
+		backend_type == B_DEAD_END_BACKEND ||
 		backend_type == B_BG_WRITER ||
 		backend_type == B_CHECKPOINTER ||
 		backend_type == B_LOGGER ||

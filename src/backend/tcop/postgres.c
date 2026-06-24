@@ -893,6 +893,26 @@ ProcessClientReadInterrupt(bool blocked)
 		else
 			SetLatch(MyLatch);
 	}
+	else if (ClientBackendInterruptsPending(backend))
+	{
+		/*
+		 * Threaded backends receive postmaster shutdown requests through the
+		 * logical interrupt mailbox.  Startup-packet reads are not command
+		 * reads yet, so drain the mailbox before deciding whether this read
+		 * should turn into the pre-auth ProcDie path above.
+		 */
+		PgCurrentBackendApplyInterrupts();
+		if (pending_state->proc_die_pending)
+		{
+			if (blocked)
+			{
+				if (ClientInterruptsPending(backend, pending_state))
+					ProcessInterrupts();
+			}
+			else
+				SetLatch(MyLatch);
+		}
+	}
 
 	errno = save_errno;
 }

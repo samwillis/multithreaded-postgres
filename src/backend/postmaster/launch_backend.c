@@ -490,6 +490,7 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 		child_type != B_BACKEND &&
 		child_type != B_AUTOVAC_LAUNCHER &&
 		child_type != B_AUTOVAC_WORKER &&
+		child_type != B_DEAD_END_BACKEND &&
 		child_type != B_BG_WRITER &&
 		child_type != B_BG_WORKER &&
 		child_type != B_CHECKPOINTER &&
@@ -504,7 +505,8 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 		errno = ENOSYS;
 		return false;
 	}
-	if (child_type == B_BACKEND &&
+	if ((child_type == B_BACKEND ||
+		 child_type == B_DEAD_END_BACKEND) &&
 		(client_sock == NULL ||
 		 startup_data == NULL ||
 		 startup_data_len != sizeof(BackendStartupData)))
@@ -537,7 +539,8 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 		return false;
 	}
 
-	if (IsExternalConnectionBackend(child_type))
+	if (IsExternalConnectionBackend(child_type) ||
+		child_type == B_DEAD_END_BACKEND)
 		((BackendStartupData *) startup_data)->fork_started = GetCurrentTimestamp();
 
 #ifdef WIN32
@@ -557,7 +560,8 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 	thread_start->publication.pmchild = pmchild;
 	thread_start->child_type = child_type;
 	thread_start->child_slot = child_slot;
-	if (child_type == B_BACKEND)
+	if (child_type == B_BACKEND ||
+		child_type == B_DEAD_END_BACKEND)
 	{
 		thread_start->startup_data = *((BackendStartupData *) startup_data);
 		thread_start->client_sock = *client_sock;
@@ -582,7 +586,9 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 	thread_start->startup_log_timezone = log_timezone;
 	pg_atomic_init_u32(&thread_start->launch_registered, 0);
 
-	if (child_type == B_BACKEND && thread_start->client_sock.sock < 0)
+	if ((child_type == B_BACKEND ||
+		 child_type == B_DEAD_END_BACKEND) &&
+		thread_start->client_sock.sock < 0)
 	{
 		int			save_errno = errno;
 
@@ -603,7 +609,8 @@ postmaster_backend_thread_launch(PMChild *pmchild,
 						  backend_thread_entry, thread_start);
 	if (rc != 0)
 	{
-		if (child_type == B_BACKEND)
+		if (child_type == B_BACKEND ||
+			child_type == B_DEAD_END_BACKEND)
 			closesocket(thread_start->client_sock.sock);
 		backend_thread_start_release(thread_start);
 		errno = rc;
@@ -1246,7 +1253,8 @@ backend_thread_entry(void *arg)
 	MyStartTime = timestamptz_to_time_t(MyStartTimestamp);
 	backend_thread_init_random_state();
 
-	if (thread_start->child_type == B_BACKEND)
+	if (thread_start->child_type == B_BACKEND ||
+		thread_start->child_type == B_DEAD_END_BACKEND)
 		backend_thread_run_backend(thread_start);
 	else
 		backend_thread_run_worker(thread_start);
