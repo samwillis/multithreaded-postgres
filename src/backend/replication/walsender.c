@@ -403,6 +403,13 @@ WalSndErrorCleanup(void)
 	pgstat_report_wait_end();
 	pgaio_error_cleanup();
 
+	/*
+	 * A logical output plugin can ERROR while StartLogicalReplication() is
+	 * inside WalSndLoop(), before the normal decoding-context teardown.
+	 */
+	if (logical_decoding_ctx != NULL)
+		WalSndFreeLogicalDecodingContext();
+
 	if (xlogreader != NULL && xlogreader->seg.ws_file >= 0)
 		wal_segment_close(xlogreader);
 

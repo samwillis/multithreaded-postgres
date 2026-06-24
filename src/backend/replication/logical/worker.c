@@ -6022,6 +6022,17 @@ DisableSubscriptionAndExit(void)
 	HOLD_INTERRUPTS();
 
 	EmitErrorReport();
+
+	/*
+	 * If a streamed transaction fails while replaying its spool file,
+	 * stream_fd can point to a BufFile owned by TopTransactionContext and
+	 * TopTransactionResourceOwner.  AbortOutOfAnyTransaction() will release
+	 * that storage and the underlying files, so do not leave a stale handle
+	 * for threaded backend closed-state cleanup to close a second time.
+	 */
+	stream_fd = NULL;
+	MemoryContextSwitchTo(TopMemoryContext);
+
 	AbortOutOfAnyTransaction();
 	FlushErrorState();
 

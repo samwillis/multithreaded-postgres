@@ -1751,10 +1751,14 @@ ReplSlotSyncWorkerMain(const void *startup_data, size_t startup_data_len)
 	before_shmem_exit(slotsync_worker_onexit, (Datum) 0);
 
 	/*
-	 * Establishes SIGALRM handler and initialize timeout module. It is needed
-	 * by InitPostgres to register different timeouts.
+	 * Initialize timeout state needed by InitPostgres. Threaded workers cannot
+	 * install process-wide SIGALRM delivery without changing the postmaster and
+	 * sibling backends.
 	 */
-	InitializeTimeouts();
+	if (threaded_worker)
+		InitializeLogicalTimeouts();
+	else
+		InitializeTimeouts();
 
 	/* Load the libpq-specific functions */
 	load_file("libpqwalreceiver", false);

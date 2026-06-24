@@ -236,8 +236,14 @@ FetchRelationStates(bool *has_pending_subtables,
 		rstates = GetSubscriptionRelations(MySubscription->oid, true, true,
 										   true);
 
-		/* Allocate the tracking info in a permanent memory context. */
-		oldctx = MemoryContextSwitchTo(CacheMemoryContext);
+		/*
+		 * Keep the tracking info under the logical worker lifetime.  In threaded
+		 * mode CacheMemoryContext is reset before backend closed-state cleanup,
+		 * but table_states_not_ready belongs to backend logical-replication
+		 * state and is freed from that later cleanup.
+		 */
+		Assert(ApplyContext != NULL);
+		oldctx = MemoryContextSwitchTo(ApplyContext);
 		foreach_ptr(SubscriptionRelState, subrel, rstates)
 		{
 			if (get_rel_relkind(subrel->relid) == RELKIND_SEQUENCE)
