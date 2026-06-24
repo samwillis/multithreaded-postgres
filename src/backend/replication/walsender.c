@@ -774,7 +774,13 @@ UploadManifest(void)
 	 */
 	if (uploaded_manifest_mcxt != NULL)
 		MemoryContextDelete(uploaded_manifest_mcxt);
-	MemoryContextSetParent(mcxt, CacheMemoryContext);
+	/*
+	 * This is retained walsender command state, not session catalog/cache
+	 * state.  In threaded mode, closed-session reset deletes CacheMemoryContext
+	 * before closed-backend reset reaches the walsender state, so parenting
+	 * this under CacheMemoryContext can leave uploaded_manifest_mcxt dangling.
+	 */
+	MemoryContextSetParent(mcxt, TopMemoryContext);
 	uploaded_manifest = ib;
 	uploaded_manifest_mcxt = mcxt;
 
