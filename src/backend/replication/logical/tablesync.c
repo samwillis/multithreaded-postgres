@@ -1198,6 +1198,16 @@ copy_table(Relation rel)
 	walrcv_clear_result(res);
 
 	copybuf = makeStringInfo();
+	/*
+	 * copy_read_data() stores walreceiver-owned buffers in copybuf->data.  Keep
+	 * copybuf itself as the cursor state, but make sure the StringInfo wrapper
+	 * never owns the data pointer that backend closed-state reset will see.
+	 */
+	pfree(copybuf->data);
+	copybuf->data = NULL;
+	copybuf->len = 0;
+	copybuf->maxlen = 0;
+	copybuf->cursor = 0;
 
 	pstate = make_parsestate(NULL);
 	(void) addRangeTableEntryForRelation(pstate, rel, AccessShareLock,

@@ -488,7 +488,10 @@ PgBackendResetLogicalReplicationClosedState(PgBackendLogicalReplicationState *lo
 
 	if (logical_replication->copybuf != NULL)
 	{
-		PgBackendResetStringInfo(logical_replication->copybuf);
+		/*
+		 * Table-sync COPY stores walreceiver-owned buffers in copybuf->data;
+		 * only the StringInfo wrapper belongs to this backend state.
+		 */
 		pfree(logical_replication->copybuf);
 		logical_replication->copybuf = NULL;
 	}
