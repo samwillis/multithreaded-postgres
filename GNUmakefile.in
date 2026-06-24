@@ -76,6 +76,45 @@ THREADED_WORLD_CORE_TAP_TESTS = \
 	t/007_phase15_pooled_protocol_mode.pl \
 	t/008_phase15_pooled_protocol_postmaster_death.pl \
 	t/009_phase15_pooled_deep_waits_pinned.pl
+THREADED_WORLD_SUBSCRIPTION_TESTS = \
+	t/001_rep_changes.pl \
+	t/002_types.pl \
+	t/003_constraints.pl \
+	t/004_sync.pl \
+	t/006_rewrite.pl \
+	t/007_ddl.pl \
+	t/008_diff_schema.pl \
+	t/009_matviews.pl \
+	t/010_truncate.pl \
+	t/011_generated.pl \
+	t/012_collation.pl \
+	t/013_partition.pl \
+	t/014_binary.pl \
+	t/015_stream.pl \
+	t/016_stream_subxact.pl \
+	t/017_stream_ddl.pl \
+	t/018_stream_subxact_abort.pl \
+	t/019_stream_subxact_ddl_abort.pl \
+	t/020_messages.pl \
+	t/021_twophase.pl \
+	t/022_twophase_cascade.pl \
+	t/023_twophase_stream.pl \
+	t/024_add_drop_pub.pl \
+	t/025_rep_changes_for_schema.pl \
+	t/026_stats.pl \
+	t/027_nosuperuser.pl \
+	t/028_row_filter.pl \
+	t/029_on_error.pl \
+	t/030_origin.pl \
+	t/031_column_list.pl \
+	t/032_subscribe_use_index.pl \
+	t/033_run_as_table_owner.pl \
+	t/034_temporal.pl \
+	t/035_conflicts.pl \
+	t/036_sequences.pl \
+	t/037_except.pl \
+	t/038_walsnd_shutdown_timeout.pl \
+	t/100_bugs.pl
 THREADED_WORLD_PROVE = $(if $(PROVE),$(PROVE),prove)
 THREADED_WORLD_TAP_PERL5LIB = \
 	$(abs_top_builddir)/.perl5/lib/perl5:$(abs_top_builddir)/.perl5/lib/perl5/darwin-thread-multi-2level:$(abs_top_srcdir)/src/test/perl
@@ -221,6 +260,7 @@ check-threaded-src-test:
 	$(MAKE) check-threaded-src-test-regress
 	$(MAKE) check-threaded-src-test-isolation
 	$(MAKE) check-threaded-src-test-authentication
+	$(MAKE) check-threaded-src-test-subscription
 	$(MAKE) check-threaded-test-modules
 
 check-threaded-src-test-regress: CHECKPREP_TOP=src/test/regress
@@ -241,6 +281,13 @@ check-threaded-src-test-authentication: submake-generated-headers
 check-threaded-src-test-authentication:
 	$(call threaded_world_prove,src/test/authentication,t/001_password.pl t/003_peer.pl t/004_file_inclusion.pl t/005_sspi.pl t/007_pre_auth.pl)
 	$(call threaded_world_prove_fresh_locale_c,src/test/authentication,t/002_saslprep.pl t/006_login_trigger.pl)
+
+check-threaded-src-test-subscription: CHECKPREP_TOP=src/test/subscription
+check-threaded-src-test-subscription: | temp-install
+check-threaded-src-test-subscription: submake-generated-headers
+check-threaded-src-test-subscription:
+	$(call threaded_world_prove,src/test/subscription,$(THREADED_WORLD_SUBSCRIPTION_TESTS))
+	$(call threaded_world_prove_fresh_locale_c,src/test/subscription,t/005_encoding.pl)
 
 check-threaded-test-modules: | temp-install
 check-threaded-test-modules:
@@ -1448,6 +1495,7 @@ check-runtime-lifecycles:
 
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-initdb check-threaded-bin-pg-amcheck check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-bin-pgbench check-threaded-bin-scripts check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-interfaces-libpq check-threaded-interfaces-libpq-run check-threaded-pl check-threaded-plpgsql check-threaded-src-test check-threaded-src-test-authentication check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
 .PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-ctl check-threaded-bin-pg-dump check-threaded-bin-pg-rewind check-threaded-bin-pg-verifybackup check-threaded-bin-psql
+.PHONY: check-threaded-src-test-subscription
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auth-delay check-threaded-contrib-auth-delay-run
 .PHONY: check-threaded-contrib-auto-explain check-threaded-contrib-auto-explain-run
