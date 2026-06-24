@@ -1089,6 +1089,8 @@ PgBackendAdoptEarlyRecoveryState(PgBackend *backend)
 	Assert(backend != NULL);
 	Assert(early_backend_recovery.recovery_lock_hash == NULL);
 	Assert(early_backend_recovery.recovery_lock_xid_hash == NULL);
+	Assert(early_backend_recovery.startup_observed_primary_conninfo == NULL);
+	Assert(early_backend_recovery.startup_observed_primary_slotname == NULL);
 
 	backend->recovery = early_backend_recovery;
 	PgBackendInitializeRecoveryState(&early_backend_recovery);

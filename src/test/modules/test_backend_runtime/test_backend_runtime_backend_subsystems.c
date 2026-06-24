@@ -2530,6 +2530,11 @@ test_backend_recovery_state_is_backend_local(PG_FUNCTION_ARGS)
 		recovery1->startup_progress_timer_expired = true;
 		recovery1->local_hot_standby_active = true;
 		recovery1->local_promote_is_triggered = true;
+		recovery1->startup_observed_primary_conninfo =
+			(char *) &fake_backend1;
+		recovery1->startup_observed_primary_slotname =
+			(char *) &fake_backend1;
+		recovery1->startup_observed_wal_receiver_create_temp_slot = true;
 		recovery1->recovery_lock_hash = (HTAB *) &fake_backend1;
 		recovery1->recovery_lock_xid_hash = (HTAB *) &fake_backend1;
 		recovery1->got_standby_deadlock_timeout = true;
@@ -2547,6 +2552,9 @@ test_backend_recovery_state_is_backend_local(PG_FUNCTION_ARGS)
 		ok = ok && !recovery2->startup_progress_timer_expired;
 		ok = ok && !recovery2->local_hot_standby_active;
 		ok = ok && !recovery2->local_promote_is_triggered;
+		ok = ok && recovery2->startup_observed_primary_conninfo == NULL;
+		ok = ok && recovery2->startup_observed_primary_slotname == NULL;
+		ok = ok && !recovery2->startup_observed_wal_receiver_create_temp_slot;
 		ok = ok && recovery2->recovery_lock_hash == NULL;
 		ok = ok && recovery2->recovery_lock_xid_hash == NULL;
 		ok = ok && !recovery2->got_standby_deadlock_timeout;
@@ -2562,6 +2570,11 @@ test_backend_recovery_state_is_backend_local(PG_FUNCTION_ARGS)
 		recovery2->startup_progress_timer_expired = true;
 		recovery2->local_hot_standby_active = true;
 		recovery2->local_promote_is_triggered = true;
+		recovery2->startup_observed_primary_conninfo =
+			(char *) &fake_backend2;
+		recovery2->startup_observed_primary_slotname =
+			(char *) &fake_backend2;
+		recovery2->startup_observed_wal_receiver_create_temp_slot = true;
 		recovery2->recovery_lock_hash = (HTAB *) &fake_backend2;
 		recovery2->recovery_lock_xid_hash = (HTAB *) &fake_backend2;
 		recovery2->got_standby_deadlock_timeout = true;
@@ -2579,6 +2592,11 @@ test_backend_recovery_state_is_backend_local(PG_FUNCTION_ARGS)
 		ok = ok && recovery1->startup_progress_timer_expired;
 		ok = ok && recovery1->local_hot_standby_active;
 		ok = ok && recovery1->local_promote_is_triggered;
+		ok = ok && recovery1->startup_observed_primary_conninfo ==
+			(char *) &fake_backend1;
+		ok = ok && recovery1->startup_observed_primary_slotname ==
+			(char *) &fake_backend1;
+		ok = ok && recovery1->startup_observed_wal_receiver_create_temp_slot;
 		ok = ok && recovery1->recovery_lock_hash == (HTAB *) &fake_backend1;
 		ok = ok && recovery1->recovery_lock_xid_hash == (HTAB *) &fake_backend1;
 		ok = ok && recovery1->got_standby_deadlock_timeout;
@@ -2596,6 +2614,11 @@ test_backend_recovery_state_is_backend_local(PG_FUNCTION_ARGS)
 		ok = ok && recovery2->startup_progress_timer_expired;
 		ok = ok && recovery2->local_hot_standby_active;
 		ok = ok && recovery2->local_promote_is_triggered;
+		ok = ok && recovery2->startup_observed_primary_conninfo ==
+			(char *) &fake_backend2;
+		ok = ok && recovery2->startup_observed_primary_slotname ==
+			(char *) &fake_backend2;
+		ok = ok && recovery2->startup_observed_wal_receiver_create_temp_slot;
 		ok = ok && recovery2->recovery_lock_hash == (HTAB *) &fake_backend2;
 		ok = ok && recovery2->recovery_lock_xid_hash == (HTAB *) &fake_backend2;
 		ok = ok && recovery2->got_standby_deadlock_timeout;

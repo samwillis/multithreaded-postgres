@@ -304,6 +304,10 @@ PgBackendResetRecoveryClosedState(PgBackendRecoveryState *recovery)
 
 	PG_RUNTIME_DESTROY_HASH(recovery->recovery_lock_hash);
 	PG_RUNTIME_DESTROY_HASH(recovery->recovery_lock_xid_hash);
+	if (recovery->startup_observed_primary_conninfo != NULL)
+		pfree(recovery->startup_observed_primary_conninfo);
+	if (recovery->startup_observed_primary_slotname != NULL)
+		pfree(recovery->startup_observed_primary_slotname);
 
 	PgBackendInitializeRecoveryState(recovery);
 }

@@ -493,7 +493,21 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 	 * recovery, if required.
 	 */
 	if (ArchiveRecoveryRequested)
+	{
 		OwnLatch(&XLogRecoveryCtl->recoveryWakeupLatch);
+
+		/*
+		 * Thread-backed startup processes receive postmaster signals as
+		 * logical backend interrupts.  Publish the recovery latch while we own
+		 * it so config reload, shutdown, and promote interrupts wake the same
+		 * wait points that process-mode signal handlers wake via
+		 * WakeupRecovery().
+		 */
+		if (PgRuntimeIsThreadBacked(CurrentPgRuntime) &&
+			CurrentPgBackend != NULL)
+			PgBackendSetInterruptLatch(CurrentPgBackend,
+									   &XLogRecoveryCtl->recoveryWakeupLatch);
+	}
 
 	/*
 	 * Set the WAL reading processor now, as it will be needed when reading
@@ -1603,7 +1617,12 @@ ShutdownWalRecovery(void)
 	 * it, but let's do it for the sake of tidiness.
 	 */
 	if (ArchiveRecoveryRequested)
+	{
+		if (PgRuntimeIsThreadBacked(CurrentPgRuntime) &&
+			CurrentPgBackend != NULL && MyLatch != NULL)
+			PgBackendSetInterruptLatch(CurrentPgBackend, MyLatch);
 		DisownLatch(&XLogRecoveryCtl->recoveryWakeupLatch);
+	}
 }
 
 /*

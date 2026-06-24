@@ -182,7 +182,11 @@ RepackWorkerShutdown(int code, Datum arg)
 				   PROCSIG_REPACK_MESSAGE,
 				   shared->backend_proc_number);
 
-	dsm_detach(worker_dsm_segment);
+	if (worker_dsm_segment != NULL)
+	{
+		dsm_detach(worker_dsm_segment);
+		worker_dsm_segment = NULL;
+	}
 }
 
 bool

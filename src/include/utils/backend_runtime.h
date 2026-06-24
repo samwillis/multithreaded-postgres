@@ -681,6 +681,9 @@ typedef struct PgBackendRecoveryState
 	int			standby_state;
 	bool		local_hot_standby_active;
 	bool		local_promote_is_triggered;
+	char	   *startup_observed_primary_conninfo;
+	char	   *startup_observed_primary_slotname;
+	bool		startup_observed_wal_receiver_create_temp_slot;
 	HTAB	   *recovery_lock_hash;
 	HTAB	   *recovery_lock_xid_hash;
 	volatile sig_atomic_t got_standby_deadlock_timeout;

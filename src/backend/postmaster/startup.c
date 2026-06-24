@@ -89,6 +89,7 @@ static void StartupProcSigHupHandler(SIGNAL_ARGS);
 
 /* Logical interrupts */
 static void StartupProcApplyLogicalInterrupts(void);
+static void StartupRememberWalReceiverConfig(void);
 
 /* Callbacks */
 static void StartupProcExit(int code, Datum arg);
@@ -169,6 +170,24 @@ StartupProcApplyLogicalInterrupts(void)
 		LogMemoryContextPending = true;
 }
 
+static void
+StartupRememberWalReceiverConfig(void)
+{
+	PgBackendRecoveryState *recovery = PgCurrentRecoveryState();
+
+	if (recovery->startup_observed_primary_conninfo != NULL)
+		pfree(recovery->startup_observed_primary_conninfo);
+	if (recovery->startup_observed_primary_slotname != NULL)
+		pfree(recovery->startup_observed_primary_slotname);
+
+	recovery->startup_observed_primary_conninfo =
+		pstrdup(PrimaryConnInfo != NULL ? PrimaryConnInfo : "");
+	recovery->startup_observed_primary_slotname =
+		pstrdup(PrimarySlotName != NULL ? PrimarySlotName : "");
+	recovery->startup_observed_wal_receiver_create_temp_slot =
+		wal_receiver_create_temp_slot;
+}
+
 /*
  * Re-read the config file.
  *
@@ -178,26 +197,38 @@ StartupProcApplyLogicalInterrupts(void)
 static void
 StartupRereadConfig(void)
 {
-	char	   *conninfo = pstrdup(PrimaryConnInfo);
-	char	   *slotname = pstrdup(PrimarySlotName);
-	bool		tempSlot = wal_receiver_create_temp_slot;
+	PgBackendRecoveryState *recovery = PgCurrentRecoveryState();
+	const char *conninfo;
+	const char *slotname;
+	bool		tempSlot;
 	bool		conninfoChanged;
 	bool		slotnameChanged;
 	bool		tempSlotChanged = false;
 
+	conninfo = recovery->startup_observed_primary_conninfo != NULL ?
+		recovery->startup_observed_primary_conninfo :
+		PrimaryConnInfo != NULL ? PrimaryConnInfo : "";
+	slotname = recovery->startup_observed_primary_slotname != NULL ?
+		recovery->startup_observed_primary_slotname :
+		PrimarySlotName != NULL ? PrimarySlotName : "";
+	tempSlot = recovery->startup_observed_wal_receiver_create_temp_slot;
+
 	ProcessConfigReloadForCurrentWorker();
 
-	conninfoChanged = strcmp(conninfo, PrimaryConnInfo) != 0;
-	slotnameChanged = strcmp(slotname, PrimarySlotName) != 0;
+	conninfoChanged = strcmp(conninfo,
+							 PrimaryConnInfo != NULL ? PrimaryConnInfo : "") != 0;
+	slotnameChanged = strcmp(slotname,
+							 PrimarySlotName != NULL ? PrimarySlotName : "") != 0;
 
 	/*
 	 * wal_receiver_create_temp_slot is used only when we have no slot
 	 * configured.  We do not need to track this change if it has no effect.
 	 */
-	if (!slotnameChanged && strcmp(PrimarySlotName, "") == 0)
+	if (!slotnameChanged &&
+		strcmp(PrimarySlotName != NULL ? PrimarySlotName : "", "") == 0)
 		tempSlotChanged = tempSlot != wal_receiver_create_temp_slot;
-	pfree(conninfo);
-	pfree(slotname);
+
+	StartupRememberWalReceiverConfig();
 
 	if (conninfoChanged || slotnameChanged || tempSlotChanged)
 		StartupRequestWalReceiverRestart();
@@ -310,6 +341,7 @@ StartupProcessMain(const void *startup_data, size_t startup_data_len)
 	RegisterTimeout(STANDBY_DEADLOCK_TIMEOUT, StandbyDeadLockHandler);
 	RegisterTimeout(STANDBY_TIMEOUT, StandbyTimeoutHandler);
 	RegisterTimeout(STANDBY_LOCK_TIMEOUT, StandbyLockTimeoutHandler);
+	StartupRememberWalReceiverConfig();
 
 	/*
 	 * Unblock signals (they were blocked when the postmaster forked us)
@@ -338,6 +370,7 @@ PreRestoreCommand(void)
 	 * Check if we had already received the signal, so that we don't miss a
 	 * shutdown request received just before this.
 	 */
+	StartupProcApplyLogicalInterrupts();
 	in_restore_command = true;
 	if (shutdown_requested)
 		proc_exit(1);
@@ -346,6 +379,7 @@ PreRestoreCommand(void)
 void
 PostRestoreCommand(void)
 {
+	StartupProcApplyLogicalInterrupts();
 	in_restore_command = false;
 }
 
