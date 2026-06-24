@@ -730,8 +730,7 @@ ProcessParallelApplyInterrupts(void)
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		if (!ParallelApplyWorkerThreadedRuntime())
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 	}
 }
 

@@ -4988,9 +4988,7 @@ static void
 ProcessLogicalRepConfigReload(void)
 {
 	ConfigReloadPending = false;
-
-	if (!LogicalRepWorkerThreadedRuntime())
-		ProcessConfigFile(PGC_SIGHUP);
+	ProcessConfigReloadForCurrentWorker();
 }
 
 void
