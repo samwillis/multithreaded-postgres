@@ -44,6 +44,7 @@ contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, sec
 contrib/spi	check-threaded-contrib-spi-run	spi trigger/SPI regression runs under threaded_workers.conf with session-local refint plan cache state
 contrib/tablefunc	check-threaded-contrib-tablefunc-run	tablefunc set-returning and crosstab regression runs under threaded_workers.conf
 contrib/tcn	check-threaded-contrib-tcn-run	tcn trigger notification isolation test runs under threaded_workers.conf
+contrib/test_decoding	check-threaded-contrib-test-decoding-run	test_decoding SQL, isolation, and replication-stat TAP coverage run under threaded configs after REPACK decoding worker DSM teardown and recovery shutdown paths were hardened
 contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
 contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf

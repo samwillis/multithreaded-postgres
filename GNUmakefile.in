@@ -171,6 +171,7 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/spi \
 	contrib/tablefunc \
 	contrib/tcn \
+	contrib/test_decoding \
 	contrib/tsm_system_rows \
 	contrib/tsm_system_time \
 	contrib/unaccent \
@@ -804,6 +805,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-spi-run
 	$(MAKE) check-threaded-contrib-tablefunc-run
 	$(MAKE) check-threaded-contrib-tcn-run
+	$(MAKE) check-threaded-contrib-test-decoding-run
 	$(MAKE) check-threaded-contrib-tsm-system-rows-run
 	$(MAKE) check-threaded-contrib-tsm-system-time-run
 	$(MAKE) check-threaded-contrib-unaccent-run
@@ -1220,6 +1222,17 @@ check-threaded-contrib-tcn:
 
 check-threaded-contrib-tcn-run:
 	$(MAKE) -C contrib/tcn check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-test-decoding: | temp-install
+check-threaded-contrib-test-decoding: submake-generated-headers
+check-threaded-contrib-test-decoding:
+	$(MAKE) -j1 -C contrib/test_decoding checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-test-decoding-run
+
+check-threaded-contrib-test-decoding-run:
+	$(MAKE) -C contrib/test_decoding DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C contrib/test_decoding check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(call threaded_world_prove,contrib/test_decoding,t/*.pl)
 
 check-threaded-contrib-tsm-system-rows: | temp-install
 check-threaded-contrib-tsm-system-rows: submake-generated-headers
