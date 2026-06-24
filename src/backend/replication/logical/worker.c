@@ -2311,7 +2311,7 @@ apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 		size_t		nbytes;
 		int			len;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		/* read length of the on-disk record */
 		nbytes = BufFileReadMaybeEOF(stream_fd, &len, sizeof(len), true);
@@ -4018,7 +4018,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		bool		endofstream = false;
 		long		wait_time;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		MemoryContextSwitchTo(ApplyMessageContext);
 
@@ -4029,7 +4029,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			/* Loop to process all available data (without blocking). */
 			for (;;)
 			{
-				CHECK_FOR_INTERRUPTS();
+				ProcessLogicalRepWorkerInterrupts();
 
 				if (len == 0)
 				{
@@ -4201,7 +4201,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		if (rc & WL_LATCH_SET)
 		{
 			ResetLatch(MyLatch);
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 		}
 
 		if (ConfigReloadPending)
@@ -4991,6 +4991,23 @@ ProcessLogicalRepConfigReload(void)
 
 	if (!LogicalRepWorkerThreadedRuntime())
 		ProcessConfigFile(PGC_SIGHUP);
+}
+
+void
+ProcessLogicalRepWorkerInterrupts(void)
+{
+	PgCurrentBackendApplyInterrupts();
+	CHECK_FOR_INTERRUPTS();
+
+	if (ShutdownRequestPending)
+	{
+		if (MySubscription != NULL)
+			ereport(LOG,
+					(errmsg("logical replication worker for subscription \"%s\" has finished",
+							MySubscription->name)));
+
+		PgBackendExit(0);
+	}
 }
 
 /*

@@ -512,7 +512,7 @@ copy_sequences(WalReceiverConn *conn)
 			Relation	sequence_rel = NULL;
 			int			seqidx;
 
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 
 			if (ConfigReloadPending)
 				ProcessSequenceSyncConfigReload();
@@ -666,7 +666,7 @@ LogicalRepSyncSequences(void)
 		Relation	sequence_rel;
 		MemoryContext oldctx;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		subrel = (Form_pg_subscription_rel) GETSTRUCT(tup);
 

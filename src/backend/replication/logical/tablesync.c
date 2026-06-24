@@ -146,7 +146,7 @@ wait_for_table_state_change(Oid relid, char expected_state)
 		LogicalRepWorker *worker;
 		XLogRecPtr	statelsn;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		InvalidateCatalogSnapshot();
 		state = GetSubscriptionRelState(MyLogicalRepWorker->subid,
@@ -194,7 +194,7 @@ wait_for_worker_state_change(char expected_state)
 	{
 		LogicalRepWorker *worker;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		/*
 		 * Done if already in correct state.  (We assume this fetch is atomic
@@ -670,7 +670,7 @@ copy_read_data(void *outbuf, int minread, int maxread)
 			/* Try read the data. */
 			len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 
 			if (len == 0)
 				break;
