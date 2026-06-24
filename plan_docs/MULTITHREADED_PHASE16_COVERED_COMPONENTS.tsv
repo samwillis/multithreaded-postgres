@@ -5,6 +5,7 @@ contrib/auto_explain	check-threaded-contrib-auto-explain-run	auto_explain custom
 contrib/basebackup_to_shell	check-threaded-contrib-basebackup-to-shell-run	basebackup_to_shell TAP runs base-backup shell target coverage under threaded_smoke.conf with shared-preload custom GUC reload visibility and threaded postmaster child reaping scoped away from backend-owned popen children
 contrib/basic_archive	check-threaded-contrib-basic-archive-run	basic_archive archive-library regression runs under threaded_workers.conf with threaded dynamic-library/GUC replay serialization covering archive module custom GUC prefix reservation across auxiliary workers
 contrib/bloom	check-threaded-contrib-bloom-run	bloom index access method regression runs under threaded_workers.conf
+contrib/bool_plperl	check-threaded-contrib-bool-plperl-run	bool_plperl and bool_plperlu transform regressions run under threaded_workers.conf after PL/Perl and the transform module declare thread-per-session metadata
 contrib/btree_gin	check-threaded-contrib-btree-gin-run	btree_gin regression, including all GIN operator class SQL coverage, runs under threaded_workers.conf
 contrib/btree_gist	check-threaded-contrib-btree-gist-run	btree_gist regression, including all GiST operator class SQL coverage, runs under threaded_workers.conf
 contrib/citext	check-threaded-contrib-citext-run	citext regression, including ACL and UTF-8 SQL coverage, runs under threaded_workers.conf
@@ -16,9 +17,11 @@ contrib/earthdistance	check-threaded-contrib-earthdistance-run	earthdistance reg
 contrib/file_fdw	check-threaded-contrib-file-fdw-run	file_fdw foreign-table regression runs under threaded_workers.conf
 contrib/fuzzystrmatch	check-threaded-contrib-fuzzystrmatch-run	fuzzystrmatch regression, including UTF-8 SQL coverage, runs under threaded_workers.conf
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
+contrib/hstore_plperl	check-threaded-contrib-hstore-plperl-run	hstore_plperl, hstore_plperlu, and create_transform regressions run under threaded_workers.conf after PL/Perl and the transform module declare thread-per-session metadata; hstore_plperl keeps hstore lookup pointers in runtime-owned extension state
 contrib/intagg	check-threaded-contrib-intagg-run	intagg SQL-only extension check runs in threaded-world temp install
 contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs under threaded_workers.conf
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
+contrib/jsonb_plperl	check-threaded-contrib-jsonb-plperl-run	jsonb_plperl and jsonb_plperlu transform regressions run under threaded_workers.conf after PL/Perl and the transform module declare thread-per-session metadata
 contrib/lo	check-threaded-contrib-lo-run	lo large-object trigger regression runs under threaded_workers.conf
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
 contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf runs through direct threaded-world prove coverage
@@ -72,6 +75,7 @@ src/interfaces/ecpg/include	check-threaded-interfaces-ecpg-include	ECPG header c
 src/interfaces/ecpg/pgtypeslib	check-threaded-interfaces-ecpg-pgtypeslib	ECPG pgtypes library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf runs through direct threaded-world prove coverage
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
+src/pl/plperl	check-threaded-plperl	PL/Perl trusted, untrusted, SPI, trigger, shared hash, utility, Unicode, transaction, environment, and plperl/plperlu interaction regressions run under threaded_workers.conf with thread-per-session metadata and an alternate plperl_init expectation for threaded custom-GUC replay visibility across sessions
 src/test/authentication	check-threaded-src-test-authentication	authentication TAP coverage runs under threaded TAP; password, peer, file-inclusion, SSPI, and pre-auth files use the default C.UTF-8 template, while SASLprep and login-trigger files use fresh LC_CTYPE=C initdbs so threaded postmaster/database locale constraints are preserved; SSPI and injection-point paths remain gated by platform/configuration
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
 src/test/postmaster	check-threaded-src-test-postmaster	postmaster TAP start/stop, connection-limit, and SSL/GSS negotiation coverage runs under threaded TAP after admitting dead-end backend thread carriers and draining logical shutdown interrupts during pre-auth client reads; direct Phase 16 probe passed t/001_basic.pl, t/002_connection_limits.pl, t/003_start_stop.pl, and t/004_negotiate.pl

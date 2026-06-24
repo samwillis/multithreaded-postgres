@@ -56,7 +56,8 @@ EXTERN_C void boot_PostgreSQL__InServer__SPI(pTHX_ CV *cv);
 
 PG_MODULE_MAGIC_EXT(
 					.name = "plperl",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /**********************************************************************
