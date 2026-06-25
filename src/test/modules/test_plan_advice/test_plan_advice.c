@@ -24,9 +24,13 @@
 #include "pg_plan_advice.h"
 #include "utils/guc.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_plan_advice",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
-static bool in_recursion = false;
+static PG_THREAD_LOCAL bool in_recursion = false;
 
 static char *test_plan_advice_advisor(PlannerGlobal *glob,
 									  Query *parse,
@@ -42,6 +46,9 @@ void
 _PG_init(void)
 {
 	void		(*add_advisor_fn) (pg_plan_advice_advisor_hook hook);
+
+	if (dynamic_library_threaded_session_init_in_progress())
+		return;
 
 	/*
 	 * Ask pg_plan_advice to get advice strings from test_plan_advice_advisor

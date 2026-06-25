@@ -184,6 +184,12 @@ _PG_init(void)
 
 	/* Install hooks */
 	pgpa_planner_install_hooks();
+	if (explain_per_plan_hook == pg_plan_advice_explain_per_plan_hook)
+	{
+		explain_state->hooks_installed = true;
+		return;
+	}
+
 	if (!explain_state->hooks_installed)
 	{
 		prev_explain_per_plan = explain_per_plan_hook;
