@@ -25,6 +25,9 @@
 #include "commands/explain_state.h"
 #include "funcapi.h"
 #include "optimizer/planner.h"
+#ifndef WIN32
+#include "port/pg_pthread.h"
+#endif
 #include "storage/dsm_registry.h"
 #include "utils/guc.h"
 
@@ -40,6 +43,7 @@ PG_MODULE_MAGIC_EXT(
 
 typedef struct PgPlanAdviceExplainRuntimeState
 {
+	bool		hooks_installed;
 	explain_per_plan_hook_type prev_explain_per_plan;
 	int			es_extension_id;
 } PgPlanAdviceExplainRuntimeState;
@@ -66,6 +70,7 @@ pg_plan_advice_session_state(void)
 	if (!state->initialized)
 	{
 		state->always_explain_supplied_advice = true;
+		state->planner_extension_id = -1;
 		state->initialized = true;
 	}
 
@@ -74,6 +79,11 @@ pg_plan_advice_session_state(void)
 
 #define pgpa_memory_context (*PgCurrentPgPlanAdviceContextRef())
 #define advisor_hook_list (*PgCurrentPgPlanAdviceAdvisorHookListRef())
+
+#ifndef WIN32
+static PG_GLOBAL_RUNTIME pthread_mutex_t PgPlanAdviceAdvisorHookListMutex =
+	PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 /* Saved hook value */
 #define prev_explain_per_plan \
@@ -92,6 +102,9 @@ static void pg_plan_advice_explain_per_plan_hook(PlannedStmt *plannedstmt,
 												 QueryEnvironment *queryEnv);
 static bool pg_plan_advice_advice_check_hook(char **newval, void **extra,
 											 GucSource source);
+static bool pg_plan_advice_advisor_hook_list_lock(void);
+static void pg_plan_advice_advisor_hook_list_unlock(bool locked);
+static List *pg_plan_advice_copy_advisor_hooks(void);
 static DefElem *find_defelem_by_defname(List *deflist, char *defname);
 
 /*
@@ -100,6 +113,8 @@ static DefElem *find_defelem_by_defname(List *deflist, char *defname);
 void
 _PG_init(void)
 {
+	PgPlanAdviceExplainRuntimeState *explain_state;
+
 	DefineCustomStringVariable("pg_plan_advice.advice",
 							   "advice to apply during query planning",
 							   NULL,
@@ -157,6 +172,8 @@ _PG_init(void)
 
 	MarkGUCPrefixReserved("pg_plan_advice");
 
+	explain_state = pg_plan_advice_explain_runtime_state();
+
 	/* Get an ID that we can use to cache data in an ExplainState. */
 	es_extension_id = GetExplainExtensionId("pg_plan_advice");
 
@@ -167,8 +184,12 @@ _PG_init(void)
 
 	/* Install hooks */
 	pgpa_planner_install_hooks();
-	prev_explain_per_plan = explain_per_plan_hook;
-	explain_per_plan_hook = pg_plan_advice_explain_per_plan_hook;
+	if (!explain_state->hooks_installed)
+	{
+		prev_explain_per_plan = explain_per_plan_hook;
+		explain_per_plan_hook = pg_plan_advice_explain_per_plan_hook;
+		explain_state->hooks_installed = true;
+	}
 }
 
 /*
@@ -178,10 +199,20 @@ _PG_init(void)
 MemoryContext
 pg_plan_advice_get_mcxt(void)
 {
-	return PgRuntimeGetOwnedMemoryContextWithSizes(
-		PgCurrentPgPlanAdviceContextRef(),
-		"pg_plan_advice",
-		ALLOCSET_DEFAULT_SIZES);
+	if (pgpa_memory_context == NULL)
+	{
+		MemoryContext oldcontext;
+
+		oldcontext = MemoryContextSwitchTo(
+			PgCurrentRuntimeExtensionModuleMemoryContext());
+		pgpa_memory_context =
+			AllocSetContextCreate(PgCurrentRuntimeExtensionModuleMemoryContext(),
+								  "pg_plan_advice",
+								  ALLOCSET_DEFAULT_SIZES);
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	return pgpa_memory_context;
 }
 
 /*
@@ -207,13 +238,15 @@ pg_plan_advice_get_supplied_query_advice(PlannerGlobal *glob,
 										 int cursorOptions,
 										 ExplainState *es)
 {
+	List	   *advisor_hooks;
 	ListCell   *lc;
 
 	/*
 	 * If any advisors are loaded, consult them. The first one that produces a
 	 * non-NULL string wins.
 	 */
-	foreach(lc, advisor_hook_list)
+	advisor_hooks = pg_plan_advice_copy_advisor_hooks();
+	foreach(lc, advisor_hooks)
 	{
 		pg_plan_advice_advisor_hook hook = lfirst(lc);
 		char	   *advice_string;
@@ -239,10 +272,21 @@ void
 pg_plan_advice_add_advisor(pg_plan_advice_advisor_hook hook)
 {
 	MemoryContext oldcontext;
+	bool		locked;
 
 	oldcontext = MemoryContextSwitchTo(pg_plan_advice_get_mcxt());
-	advisor_hook_list = lappend(advisor_hook_list, hook);
-	MemoryContextSwitchTo(oldcontext);
+	locked = pg_plan_advice_advisor_hook_list_lock();
+	PG_TRY();
+	{
+		if (!list_member_ptr(advisor_hook_list, hook))
+			advisor_hook_list = lappend(advisor_hook_list, hook);
+	}
+	PG_FINALLY();
+	{
+		pg_plan_advice_advisor_hook_list_unlock(locked);
+		MemoryContextSwitchTo(oldcontext);
+	}
+	PG_END_TRY();
 }
 
 /*
@@ -252,10 +296,87 @@ void
 pg_plan_advice_remove_advisor(pg_plan_advice_advisor_hook hook)
 {
 	MemoryContext oldcontext;
+	bool		locked;
 
 	oldcontext = MemoryContextSwitchTo(pg_plan_advice_get_mcxt());
-	advisor_hook_list = list_delete_ptr(advisor_hook_list, hook);
-	MemoryContextSwitchTo(oldcontext);
+	locked = pg_plan_advice_advisor_hook_list_lock();
+	PG_TRY();
+	{
+		advisor_hook_list = list_delete_ptr(advisor_hook_list, hook);
+	}
+	PG_FINALLY();
+	{
+		pg_plan_advice_advisor_hook_list_unlock(locked);
+		MemoryContextSwitchTo(oldcontext);
+	}
+	PG_END_TRY();
+}
+
+static bool
+pg_plan_advice_advisor_hook_list_lock(void)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!multithreaded)
+		return false;
+
+	HOLD_INTERRUPTS();
+	rc = pthread_mutex_lock(&PgPlanAdviceAdvisorHookListMutex);
+	if (rc != 0)
+	{
+		RESUME_INTERRUPTS();
+		errno = rc;
+		ereport(FATAL,
+				(errmsg("could not enter pg_plan_advice advisor hook critical section: %m")));
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+static void
+pg_plan_advice_advisor_hook_list_unlock(bool locked)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!locked)
+		return;
+
+	rc = pthread_mutex_unlock(&PgPlanAdviceAdvisorHookListMutex);
+	RESUME_INTERRUPTS();
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL,
+			 "could not leave pg_plan_advice advisor hook critical section: %m");
+	}
+#else
+	(void) locked;
+#endif
+}
+
+static List *
+pg_plan_advice_copy_advisor_hooks(void)
+{
+	List	   *advisor_hooks = NIL;
+	bool		locked;
+
+	locked = pg_plan_advice_advisor_hook_list_lock();
+	PG_TRY();
+	{
+		advisor_hooks = list_copy(advisor_hook_list);
+	}
+	PG_FINALLY();
+	{
+		pg_plan_advice_advisor_hook_list_unlock(locked);
+	}
+	PG_END_TRY();
+
+	return advisor_hooks;
 }
 
 /*

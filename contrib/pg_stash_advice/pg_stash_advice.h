@@ -77,6 +77,7 @@ typedef struct pgsa_shared_state
 
 typedef struct PgStashAdviceBackendState
 {
+	bool		cleanup_registered;
 	pgsa_shared_state *state;
 	dsa_area   *dsa_area;
 	dshash_table *stash_dshash;

@@ -92,12 +92,12 @@ typedef struct pgpa_join_state
 typedef struct PgPlanAdvicePlannerRuntimeState
 {
 	bool		initialized;
+	bool		hooks_installed;
 	build_simple_rel_hook_type prev_build_simple_rel;
 	join_path_setup_hook_type prev_join_path_setup;
 	joinrel_setup_hook_type prev_joinrel_setup;
 	planner_setup_hook_type prev_planner_setup;
 	planner_shutdown_hook_type prev_planner_shutdown;
-	int			planner_extension_id;
 } PgPlanAdvicePlannerRuntimeState;
 
 static PgPlanAdvicePlannerRuntimeState *
@@ -111,10 +111,7 @@ pgpa_planner_runtime_state(void)
 			sizeof(PgPlanAdvicePlannerRuntimeState),
 			NULL);
 	if (!state->initialized)
-	{
-		state->planner_extension_id = -1;
 		state->initialized = true;
-	}
 
 	return state;
 }
@@ -131,7 +128,7 @@ pgpa_planner_runtime_state(void)
 #define prev_planner_shutdown \
 	(pgpa_planner_runtime_state()->prev_planner_shutdown)
 #define planner_extension_id \
-	(pgpa_planner_runtime_state()->planner_extension_id)
+	(pg_plan_advice_session_state()->planner_extension_id)
 
 /* Function prototypes. */
 static void pgpa_planner_setup(PlannerGlobal *glob, Query *parse,
@@ -216,7 +213,19 @@ static const char *pgpa_jointype_to_cstring(JoinType jointype);
 void
 pgpa_planner_install_hooks(void)
 {
+	PgPlanAdvicePlannerRuntimeState *state = pgpa_planner_runtime_state();
+
 	planner_extension_id = GetPlannerExtensionId("pg_plan_advice");
+
+	if (planner_setup_hook == pgpa_planner_setup)
+	{
+		state->hooks_installed = true;
+		return;
+	}
+
+	if (state->hooks_installed)
+		return;
+
 	prev_planner_setup = planner_setup_hook;
 	planner_setup_hook = pgpa_planner_setup;
 	prev_planner_shutdown = planner_shutdown_hook;
@@ -227,6 +236,7 @@ pgpa_planner_install_hooks(void)
 	joinrel_setup_hook = pgpa_joinrel_setup;
 	prev_join_path_setup = join_path_setup_hook;
 	join_path_setup_hook = pgpa_join_path_setup;
+	state->hooks_installed = true;
 }
 
 /*

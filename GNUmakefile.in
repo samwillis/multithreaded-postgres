@@ -158,8 +158,10 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/pg_freespacemap \
 	contrib/pg_logicalinspect \
 	contrib/pg_overexplain \
+	contrib/pg_plan_advice \
 	contrib/pg_prewarm \
 	contrib/pg_stat_statements \
+	contrib/pg_stash_advice \
 	contrib/pg_surgery \
 	contrib/pg_trgm \
 	contrib/pg_visibility \
@@ -799,8 +801,10 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-pg-freespacemap-run
 	$(MAKE) check-threaded-contrib-pg-logicalinspect-run
 	$(MAKE) check-threaded-contrib-pg-overexplain-run
+	$(MAKE) check-threaded-contrib-pg-plan-advice-run
 	$(MAKE) check-threaded-contrib-pg-prewarm-run
 	$(MAKE) check-threaded-contrib-pg-stat-statements-run
+	$(MAKE) check-threaded-contrib-pg-stash-advice-run
 	$(MAKE) check-threaded-contrib-pg-surgery-run
 	$(MAKE) check-threaded-contrib-pg-trgm-run
 	$(MAKE) check-threaded-contrib-pg-visibility-run
@@ -1111,6 +1115,15 @@ check-threaded-contrib-pg-overexplain:
 check-threaded-contrib-pg-overexplain-run:
 	$(MAKE) -C contrib/pg_overexplain check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-pg-plan-advice: | temp-install
+check-threaded-contrib-pg-plan-advice: submake-generated-headers
+check-threaded-contrib-pg-plan-advice:
+	$(MAKE) -j1 -C contrib/pg_plan_advice checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-plan-advice-run
+
+check-threaded-contrib-pg-plan-advice-run:
+	$(MAKE) -C contrib/pg_plan_advice check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-pg-prewarm: | temp-install
 check-threaded-contrib-pg-prewarm: submake-generated-headers
 check-threaded-contrib-pg-prewarm:
@@ -1130,6 +1143,16 @@ check-threaded-contrib-pg-stat-statements:
 check-threaded-contrib-pg-stat-statements-run:
 	$(MAKE) -C contrib/pg_stat_statements check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 	$(call threaded_world_prove,contrib/pg_stat_statements,t/*.pl)
+
+check-threaded-contrib-pg-stash-advice: | temp-install
+check-threaded-contrib-pg-stash-advice: submake-generated-headers
+check-threaded-contrib-pg-stash-advice:
+	$(MAKE) -j1 -C contrib/pg_stash_advice checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pg-stash-advice-run
+
+check-threaded-contrib-pg-stash-advice-run:
+	$(MAKE) -C contrib/pg_stash_advice check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(call threaded_world_prove,contrib/pg_stash_advice,t/*.pl)
 
 check-threaded-contrib-pg-surgery: | temp-install
 check-threaded-contrib-pg-surgery: submake-generated-headers
@@ -1613,8 +1636,10 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-passwordcheck check-threaded-contrib-passwordcheck-run
 .PHONY: check-threaded-contrib-pg-logicalinspect check-threaded-contrib-pg-logicalinspect-run
 .PHONY: check-threaded-contrib-pg-overexplain check-threaded-contrib-pg-overexplain-run
+.PHONY: check-threaded-contrib-pg-plan-advice check-threaded-contrib-pg-plan-advice-run
 .PHONY: check-threaded-contrib-pg-prewarm check-threaded-contrib-pg-prewarm-run
 .PHONY: check-threaded-contrib-pg-stat-statements check-threaded-contrib-pg-stat-statements-run
+.PHONY: check-threaded-contrib-pg-stash-advice check-threaded-contrib-pg-stash-advice-run
 .PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
 .PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
 .PHONY: check-threaded-test-modules-test-checksums check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser check-threaded-test-modules-test-autovacuum check-threaded-test-modules-worker-spi check-threaded-test-modules-xid-wraparound
