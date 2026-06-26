@@ -324,6 +324,7 @@ PgBackendExitCleanup(int code)
 {
 	PgBackendExitState *exit_state = CurrentBackendExitState();
 	PgBackendExitCallback *callback;
+	bool		thread_carrier;
 
 	if (exit_state->proc_exit_done)
 		return;
@@ -392,17 +393,25 @@ PgBackendExitCleanup(int code)
 
 	/*
 	 * on_proc_exit callbacks, notably socket_close(), own live connection
-	 * shutdown.  Reset the retained connection object here as a final
-	 * closed-state backstop for early-exit and non-socket paths, and rely on
-	 * PgConnectionResetClosedState() being idempotent when socket_close()
-	 * already ran.
+	 * shutdown in process mode.  Only threaded carriers need to reset runtime
+	 * objects for reuse after those callbacks have run; a process backend exits
+	 * after this cleanup and leaves remaining private memory to the OS.
 	 */
-	if (CurrentPgConnection != NULL)
-		PgConnectionResetClosedState(CurrentPgConnection);
-	PgSessionResetClosedState(CurrentPgSession);
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+	if (thread_carrier)
+	{
+		if (CurrentPgConnection != NULL)
+			PgConnectionResetClosedState(CurrentPgConnection);
+		PgSessionResetClosedState(CurrentPgSession);
+	}
 	PgRuntimeReportBridgeFallbackStats();
-	PgBackendResetClosedState(CurrentPgBackend);
-	PgExecutionResetClosedState(CurrentPgExecution);
+	if (thread_carrier)
+	{
+		PgBackendResetClosedState(CurrentPgBackend);
+		PgExecutionResetClosedState(CurrentPgExecution);
+	}
 
 	exit_state->proc_exit_done = true;
 }

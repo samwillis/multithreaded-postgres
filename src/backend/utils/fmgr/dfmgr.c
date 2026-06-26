@@ -528,8 +528,12 @@ remember_module_session_init(DynamicFileList *file_scanner)
 	if (list_member_ptr(*dynamic_library_inits, file_scanner))
 		return;
 
-	oldcontext = MemoryContextSwitchTo(
-		PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession));
+	/*
+	 * Keep this bookkeeping list independent from extension-owned session
+	 * state.  The list cells contain only process-lifetime DynamicFileList
+	 * pointers and are freed explicitly when the threaded session closes.
+	 */
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 	*dynamic_library_inits = lappend(*dynamic_library_inits, file_scanner);
 	MemoryContextSwitchTo(oldcontext);
 }

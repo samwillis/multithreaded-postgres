@@ -172,6 +172,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION bool
 static PG_GLOBAL_IMMUTABLE char StaticDateStyleDefault[] = "ISO, MDY";
 static PG_GLOBAL_IMMUTABLE char StaticTimeZoneDefault[] = "GMT";
 static PG_GLOBAL_IMMUTABLE char StaticTextSearchDefault[] = "pg_catalog.simple";
+static PG_GLOBAL_IMMUTABLE char StaticSearchPathDefault[] = "\"$user\", public";
 static PG_GLOBAL_IMMUTABLE char StaticEmptyDefault[] = "";
 static PG_GLOBAL_IMMUTABLE char StaticExtensionControlPathDefault[] = "$system";
 static PG_GLOBAL_IMMUTABLE char StaticRoleDefault[] = "none";
@@ -676,6 +677,7 @@ PgSessionStringIsStaticGUCDefault(const char *strval)
 	return strval == StaticDateStyleDefault ||
 		strval == StaticTimeZoneDefault ||
 		strval == StaticTextSearchDefault ||
+		strval == StaticSearchPathDefault ||
 		strval == StaticEmptyDefault ||
 		strval == StaticExtensionControlPathDefault ||
 		strval == StaticRoleDefault ||
@@ -1868,7 +1870,8 @@ PgSessionInitializeNamespaceState(PgSessionNamespaceState *namespace_state)
 	namespace_state->my_temp_namespace = InvalidOid;
 	namespace_state->my_temp_toast_namespace = InvalidOid;
 	namespace_state->my_temp_namespace_subid = InvalidSubTransactionId;
-	namespace_state->namespace_search_path_value = NULL;
+	namespace_state->namespace_search_path_value =
+		PgSessionDefaultGUCString(StaticSearchPathDefault);
 	namespace_state->search_path_cache = NULL;
 	namespace_state->last_search_path_cache_entry = NULL;
 	namespace_state->initialized = true;
@@ -1878,10 +1881,12 @@ static void
 PgSessionAdoptEarlyNamespaceState(PgSession *session)
 {
 	char	   *namespace_search_path_value;
+	char	   *session_default_search_path_value;
 
 	Assert(session != NULL);
 
-	if (!early_session_namespace.initialized)
+	if (!early_session_namespace.initialized ||
+		early_session_namespace.namespace_search_path_value == NULL)
 		PgSessionInitializeNamespaceState(&early_session_namespace);
 
 	namespace_search_path_value = early_session_namespace.namespace_search_path_value;
@@ -1889,8 +1894,12 @@ PgSessionAdoptEarlyNamespaceState(PgSession *session)
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(
 		early_session_namespace.search_path_cache_context);
 	PgSessionInitializeNamespaceState(&session->namespace_state);
+	session_default_search_path_value =
+		session->namespace_state.namespace_search_path_value;
 	session->namespace_state.namespace_search_path_value =
 		namespace_search_path_value;
+	if (session_default_search_path_value != namespace_search_path_value)
+		guc_free_string(session_default_search_path_value);
 	PgSessionInitializeNamespaceState(&early_session_namespace);
 }
 
@@ -2780,17 +2789,21 @@ PgSessionNamespaceState *
 PgCurrentSessionNamespaceState(void)
 {
 	PgSessionNamespaceState *namespace_state;
-
-	if (likely(CurrentPgSessionNamespaceRuntimeState != NULL &&
-			   CurrentPgSessionNamespaceRuntimeState->initialized))
-		return CurrentPgSessionNamespaceRuntimeState;
+	PgSessionNamespaceState *fast_namespace_state;
 
 	if (CurrentPgSession == NULL)
 		namespace_state = &early_session_namespace;
 	else
 		namespace_state = &CurrentPgSession->namespace_state;
 
-	if (!namespace_state->initialized)
+	fast_namespace_state = CurrentPgSessionNamespaceRuntimeState;
+	if (likely(fast_namespace_state == namespace_state &&
+			   fast_namespace_state->initialized &&
+			   fast_namespace_state->namespace_search_path_value != NULL))
+		return fast_namespace_state;
+
+	if (!namespace_state->initialized ||
+		namespace_state->namespace_search_path_value == NULL)
 		PgSessionInitializeNamespaceState(namespace_state);
 
 	return namespace_state;
@@ -2824,7 +2837,7 @@ PgCurrentNamespaceState(void)
 char **
 PgCurrentNamespaceSearchPathRef(void)
 {
-	return &PG_RUNTIME_FAST_INITIALIZED_BUCKET_ACCESSOR(CurrentPgSessionNamespaceRuntimeState, PgCurrentSessionNamespaceState)->namespace_search_path_value;
+	return &PgCurrentSessionNamespaceState()->namespace_search_path_value;
 }
 
 PgSessionLocaleState *

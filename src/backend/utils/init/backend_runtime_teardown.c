@@ -1174,8 +1174,7 @@ PgSessionResetDynamicLibraryInitsClosedState(PgSession *session)
 {
 	Assert(session != NULL);
 
-	if (session->dynamic_library_context == NULL &&
-		session->dynamic_library_inits != NIL)
+	if (session->dynamic_library_inits != NIL)
 		list_free(session->dynamic_library_inits);
 
 	session->dynamic_library_inits = NIL;
@@ -1370,13 +1369,39 @@ PgSessionResetNamespaceClosedState(PgSession *session)
 		session->namespace_state.search_path_context);
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(
 		session->namespace_state.search_path_cache_context);
-	PgSessionInitializeNamespaceState(&session->namespace_state);
+	session->namespace_state.active_search_path = NIL;
+	session->namespace_state.active_creation_namespace = InvalidOid;
+	session->namespace_state.active_temp_creation_pending = false;
+	session->namespace_state.active_path_generation = 1;
+	session->namespace_state.base_search_path = NIL;
+	session->namespace_state.base_creation_namespace = InvalidOid;
+	session->namespace_state.base_temp_creation_pending = false;
+	session->namespace_state.namespace_user = InvalidOid;
+	session->namespace_state.base_search_path_valid = true;
+	session->namespace_state.search_path_cache_valid = false;
+	session->namespace_state.search_path_context = NULL;
+	session->namespace_state.search_path_cache_context = NULL;
+	session->namespace_state.my_temp_namespace = InvalidOid;
+	session->namespace_state.my_temp_toast_namespace = InvalidOid;
+	session->namespace_state.my_temp_namespace_subid = InvalidSubTransactionId;
+	session->namespace_state.namespace_search_path_value = NULL;
+	session->namespace_state.search_path_cache = NULL;
+	session->namespace_state.last_search_path_cache_entry = NULL;
+	session->namespace_state.initialized = true;
 }
 
 void
 PgSessionResetClosedState(PgSession *session)
 {
 	if (session == NULL)
+		return;
+
+	/*
+	 * Bootstrap exits the process after proc_exit(); its adopted early session
+	 * state is not a reusable backend session and may contain partially
+	 * initialized callback/list state.
+	 */
+	if (IsBootstrapProcessingMode())
 		return;
 
 #define PG_SESSION_RESET_BUCKET(field, reset) \

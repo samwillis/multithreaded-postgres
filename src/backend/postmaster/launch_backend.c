@@ -1231,8 +1231,8 @@ backend_thread_entry(void *arg)
 	MemoryContextInit();
 	InitializeTransactionState();
 	InitializeThreadedSessionGUCOptions();
-	InitializeLatchWaitSet();
 	InstallPgThreadBackendRuntimeState(&thread_start->runtime_state);
+	InitializeLatchWaitSet();
 	on_proc_exit(backend_thread_shutdown_wait_event_support, 0);
 	read_nondefault_variables();
 	InitializeThreadedSessionRequiredGUCOptions();

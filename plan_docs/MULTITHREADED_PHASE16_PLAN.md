@@ -284,7 +284,7 @@ Prefer a deterministic text report suitable for review:
 
 ```text
 covered: contrib/citext
-excluded: src/pl/tcl release_blocker "Tcl interpreter dependency unavailable"
+excluded: src/test/ssl configure_disabled "with_ssl=no in this build"
 missing: contrib/example_module
 stale: contrib/removed_module
 ```
@@ -382,10 +382,11 @@ Required `src/test` coverage:
 Required `src/pl` coverage:
 
 - PL/pgSQL remains a required core language and should stay covered.
-- PL/Perl, PL/Python, and PL/Tcl need threaded checks or release-blocking
-  manifest rows. PL/Python now has Python-enabled scratch threaded evidence,
-  but remains a `configure_disabled` manifest row in this default `with_python=no`
-  build so the verifier's enabled-leaf contract stays exact.
+- PL/Perl, PL/Python, and PL/Tcl need threaded checks or justified manifest
+  rows. PL/Python and PL/Tcl now have dependency-enabled scratch threaded
+  evidence, but remain `configure_disabled` manifest rows in this default
+  `with_python=no`/`with_tcl=no` build so the verifier's enabled-leaf contract
+  stays exact.
 - Contrib language adapters such as `hstore_plperl`, `jsonb_plpython`, and
   related modules should be tied to the corresponding procedural-language
   classification.
@@ -563,8 +564,15 @@ shared `plpy` SPI exception hash private context under
 `PgRuntime.extension_modules`, and brackets Python execution/reset paths with
 the GIL. A Python-enabled scratch build under `/tmp/phase16-python-worktree`
 passes the PL/Python and PL/Python transform threaded checks listed in the
-Gate G evidence section; pooled-protocol migration remains a separate
-classification from thread-per-session admission.
+Gate G evidence section.
+
+Current PL/Tcl admission evidence keeps Tcl interpreter/procedure state in
+`PgSession.extension_modules`, relies on dynamic-library `_PG_init()` replay for
+per-session custom GUC and interpreter setup, and declares the module
+thread-per-session after a Tcl-enabled scratch build under
+`/tmp/phase16-tcl-worktree` passes the threaded PL/Tcl regression suite. Pooled
+protocol migration remains a separate classification from thread-per-session
+admission.
 
 For security and external-library modules:
 
@@ -670,11 +678,13 @@ Current branch evidence as of June 26, 2026:
   `configure_disabled` rows for optional dependency leaves that are real
   `check-world` components but absent from this local configure, plus the
   existing `src/test/perl` support-module `not_applicable` row.
-- `check-world-threaded` passes on the current Linux build after threaded DSM,
-  DSA, plan-cache, GUC, dynamic-library, WAL-insert, wait-event teardown, WAL
-  summarizer interrupt, basebackup target, extension GUC, sync-rep default, and
-  pg_upgrade prepared-transaction hardening. The current evidence log is
-  `/tmp/phase16-main-check-world-threaded-clean.log`, with status `0`.
+- `MALLOC_CHECK_=3 gmake check-world-threaded` passes on the current Linux build
+  after threaded DSM, DSA, plan-cache, GUC, dynamic-library, WAL-insert,
+  wait-event teardown, WAL summarizer interrupt, basebackup target, extension
+  GUC, sync-rep default, pg_upgrade prepared-transaction hardening, threaded
+  latch-waitset runtime ordering, and dynamic-library session-init bookkeeping
+  hardening. The current evidence log is `/tmp/phase16-check-world-threaded.log`,
+  with status `0`.
 - The current full threaded-world pass includes core regression, isolation,
   authentication, postmaster, recovery, subscription, `src/test/modules`,
   `src/pl`, contrib, interfaces, `src/bin`, and `src/tools/pg_bsd_indent`.
@@ -699,19 +709,20 @@ Current branch evidence as of June 26, 2026:
 - Current optional dependency probes show that this workstation still cannot
   exercise the full optional matrix in the default tree without system packages:
   ICU configure failed on missing `icu-uc`/`icu-i18n`
-  (`/tmp/phase16-optional-configure.log`), OpenSSL configure failed on missing
-  `libcrypto` (`/tmp/phase16-py-tcl-configure.log`), and PL/Tcl configure failed
-  on missing `tclsh`/Tcl
-  (`/tmp/phase16-py-tcl-no-ssl-configure.log`). PL/Python is different now:
-  a Python-enabled scratch tree at `/tmp/phase16-python-worktree`, configured
-  with `--with-python`, local headers from `/tmp/phase16-local-deps/root`, and
-  threaded `TEMP_CONFIG`, passes `MALLOC_CHECK_=3 gmake -C src/pl/plpython
-  check` with all 23 PL/Python regression tests, plus sequential
-  `MALLOC_CHECK_=3` threaded checks for `contrib/hstore_plpython`,
-  `contrib/jsonb_plpython`, and `contrib/ltree_plpython`. The PL/Python and
-  PL/Python transform rows remain `configure_disabled` in this default build but
-  are no longer release-blocking; PL/Tcl remains release-blocking until a
-  dependency-enabled threaded run exists.
+  (`/tmp/phase16-optional-configure.log`) and OpenSSL configure failed on
+  missing `libcrypto` (`/tmp/phase16-py-tcl-configure.log`). PL/Python and
+  PL/Tcl now have dependency-enabled threaded evidence from scratch trees:
+  `/tmp/phase16-python-worktree`, configured with `--with-python`, local headers
+  from `/tmp/phase16-local-deps/root`, and threaded `TEMP_CONFIG`, passes
+  `MALLOC_CHECK_=3 gmake -C src/pl/plpython check` with all 23 PL/Python
+  regression tests plus sequential `MALLOC_CHECK_=3` threaded checks for
+  `contrib/hstore_plpython`, `contrib/jsonb_plpython`, and
+  `contrib/ltree_plpython`; `/tmp/phase16-tcl-worktree`, configured with
+  `--with-tcl`, local Tcl 8.6.14 under `/tmp/phase16-tcl-prefix`, and threaded
+  `TEMP_CONFIG`, passes `MALLOC_CHECK_=3 gmake -C src/pl/tcl check` with all 8
+  PL/Tcl regression tests. The optional language rows remain
+  `configure_disabled` in this default build but are no longer
+  release-blocking.
 - TAP-enabled process-mode `check-world` also passes in `/tmp/phase16-tap-src`,
   configured with `--without-icu --with-perl --enable-tap-tests
   PG_TEST_EXTRA=`. The evidence log is
