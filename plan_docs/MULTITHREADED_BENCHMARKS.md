@@ -1,9 +1,78 @@
 Multithreaded PostgreSQL Benchmarks
 ===================================
 
-This document records the latest full Phase 15 benchmark run for the
-multithreaded PostgreSQL branch. It is meant to be a stable comparison point
-for future protocol-carrier pool work, not a production benchmark claim.
+This document records benchmark evidence for the multithreaded PostgreSQL
+branch. The latest full benchmark suite remains the Phase 15 run below; the
+Phase 16 section records the focused Gate G baseline gathered after broad
+threaded-world hardening.
+
+Phase 16 focused Gate G baseline
+--------------------------------
+
+This focused run checks the three performance lanes required for Phase 16
+closeout: process mode, thread-per-session mode, and pooled protocol mode. It
+is not a replacement for the full 12-profile Phase 15 suite, but it gives a
+post-Phase-16 baseline for hot-path overhead, mostly-idle pooled sessions, and
+stateful pooled session parking.
+
+| Field | Value |
+| --- | --- |
+| Date | June 26, 2026 |
+| Branch | `phase16-plan` |
+| Commit | `a3e3d8be4eac` |
+| Branch install | `/tmp/phase16-branch-install` |
+| Vanilla install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Client install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Focused result directory | `/home/sam/codex-work/mtpg-bench-results/phase16_gate_g_focused_20260626_174004` |
+| Stateful rerun directory | `/home/sam/codex-work/mtpg-bench-results/phase16_gate_g_stateful_20260626_174432` |
+| Focused runner | `src/tools/benchmark/mtpg_phase15_benchmark_suite.pl --profiles=pinned_hot,pool_idle_100ms,pool_stateful_1000ms --quick` |
+| Stateful rerun | `src/tools/benchmark/mtpg_phase15_benchmark_suite.pl --profiles=pool_stateful_1000ms` |
+| Result status | All recorded rows had `failed_transactions = 0` |
+
+Focused hot-path sample:
+
+| Workload | Vanilla TPS | Branch process TPS | Process / vanilla | Branch threaded TPS | Threaded / vanilla |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `builtin_select_prepared` | 270840.3 | 247229.8 | 0.913 | 211557.2 | 0.781 |
+| `select1_prepared` | 400158.3 | 348827.8 | 0.872 | 355526.8 | 0.888 |
+| `bench_one_prepared` | 336945.3 | 295653.7 | 0.877 | 246822.7 | 0.733 |
+| `kv_read_prepared` | 282869.1 | 249558.5 | 0.882 | 217557.0 | 0.769 |
+
+Focused 200-client, 100 ms sleep/wake pooled sample:
+
+| Lane | TPS | Ratio to vanilla | Max server processes | Max server threads | Max PSS KB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vanilla` | 1982.9 | 1.000 | 208 | 208 | 320875 |
+| `branch_process` | 1979.5 | 0.998 | 208 | 208 | 294993 |
+| `branch_threaded` | 1982.7 | 1.000 | 1 | 208 | 237783 |
+| `branch_pool_32` | 1909.8 | 0.963 | 1 | 40 | 213099 |
+| `branch_pool_64` | 1940.0 | 0.978 | 1 | 65 | 221437 |
+| `branch_pool_128` | 1940.7 | 0.979 | 1 | 64 | 218145 |
+| `branch_pool_192` | 1936.2 | 0.976 | 1 | 68 | 221518 |
+
+Normal-duration stateful pooled rerun:
+
+| Lane | TPS | Ratio to vanilla | Max server processes | Max server threads | Max PSS KB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vanilla` | 99.7 | 1.000 | 109 | 109 | 261644 |
+| `branch_process` | 99.7 | 0.999 | 109 | 109 | 212148 |
+| `branch_threaded` | 99.7 | 1.000 | 1 | 109 | 207243 |
+| `branch_pool_16` | 98.2 | 0.985 | 1 | 24 | 176385 |
+| `branch_pool_32` | 98.8 | 0.990 | 1 | 41 | 181833 |
+| `branch_pool_64` | 99.0 | 0.993 | 1 | 51 | 186651 |
+
+Performance classification:
+
+- Hot tiny-query overhead remains in the known hot-path bucket. The focused
+  Phase 16 sample is not worse than the Phase 15 full-suite shape, but it is
+  still behind vanilla on several tiny-query workloads.
+- Mostly-idle pooled throughput remains close to process/threaded throughput
+  while using materially fewer server threads.
+- The short 5-second stateful quick sample under-shot the older baseline for
+  pooled lanes, so it was rerun with the normal 30-second, two-run profile. The
+  normal run restored the expected 0.985x to 0.993x vanilla range, so the short
+  sample is classified as warmup/short-run noise rather than a Phase 16
+  regression.
 
 Run metadata
 ------------
