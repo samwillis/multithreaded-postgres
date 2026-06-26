@@ -12,6 +12,10 @@
  */
 #include "test_backend_runtime.h"
 
+#ifdef ssl_loaded_verify_locations
+#undef ssl_loaded_verify_locations
+#endif
+
 #ifndef WIN32
 #include <sys/socket.h>
 #endif

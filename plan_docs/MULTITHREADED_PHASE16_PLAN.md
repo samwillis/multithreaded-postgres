@@ -580,6 +580,25 @@ For security and external-library modules:
 - synchronize or isolate process-global mutable state;
 - retain a release-blocking manifest row until tests prove the assumption.
 
+Current external-library module evidence comes from
+`/tmp/phase16-optional-deps-src`, configured against locally extracted
+dependency packages under `/tmp/phase16-debroot` with `--enable-tap-tests`,
+`--with-ssl=openssl`, `--with-gssapi`, `--with-ldap`, `--with-selinux`,
+`--with-uuid=e2fs`, `--with-libcurl`, `--with-libxml`, and `--with-libxslt`.
+That scratch build passes threaded checks for `contrib/pgcrypto`,
+`contrib/uuid-ossp`, `contrib/xml2`, SSL including `contrib/sslinfo`, ICU,
+LDAP, Kerberos, `src/interfaces/libpq-oauth`,
+`src/test/modules/ldap_password_func`, and
+`src/test/modules/ssl_passphrase_callback`; exact target and log details are
+recorded in the Gate G evidence section and the exclusions manifest.
+
+`contrib/sepgsql` now declares thread-per-session module metadata and admits
+threaded shared-preload replay without re-installing runtime-global hooks in
+each session. A full sepgsql policy regression still needs an SELinux-enabled
+host with file-context policy and the `sepgsql_regression_test_mode` boolean,
+but the loader path is covered by a clean threaded postmaster boot with
+`shared_preload_libraries='sepgsql'`.
+
 ## Step 11: Add Failure-Path Stress
 
 Add extension- and module-focused failure coverage after enough components are
@@ -683,8 +702,9 @@ Current branch evidence as of June 27, 2026:
   wait-event teardown, WAL summarizer interrupt, basebackup target, extension
   GUC, sync-rep default, pg_upgrade prepared-transaction hardening, threaded
   latch-waitset runtime ordering, and dynamic-library session-init bookkeeping
-  hardening. The current evidence log is
-  `/tmp/phase16-check-world-threaded-after-injection.log`, with status `0`.
+  hardening, plus the optional-dependency module admission work recorded below.
+  The current evidence log is
+  `/tmp/phase16-check-world-threaded-after-optional-deps.log`, with status `0`.
 - The current full threaded-world pass includes core regression, isolation,
   authentication, postmaster, recovery, subscription, `src/test/modules`,
   `src/pl`, contrib, interfaces, `src/bin`, and `src/tools/pg_bsd_indent`.
@@ -706,23 +726,73 @@ Current branch evidence as of June 27, 2026:
   are now still visible in
   `plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv` as checked
   `configure_disabled` rows rather than hidden omissions.
-- Current optional dependency probes show that this workstation still cannot
-  exercise the full optional matrix in the default tree without system packages:
-  ICU configure failed on missing `icu-uc`/`icu-i18n`
-  (`/tmp/phase16-optional-configure.log`) and OpenSSL configure failed on
-  missing `libcrypto` (`/tmp/phase16-py-tcl-configure.log`). PL/Python and
-  PL/Tcl now have dependency-enabled threaded evidence from scratch trees:
-  `/tmp/phase16-python-worktree`, configured with `--with-python`, local headers
-  from `/tmp/phase16-local-deps/root`, and threaded `TEMP_CONFIG`, passes
-  `MALLOC_CHECK_=3 gmake -C src/pl/plpython check` with all 23 PL/Python
-  regression tests plus sequential `MALLOC_CHECK_=3` threaded checks for
-  `contrib/hstore_plpython`, `contrib/jsonb_plpython`, and
-  `contrib/ltree_plpython`; `/tmp/phase16-tcl-worktree`, configured with
-  `--with-tcl`, local Tcl 8.6.14 under `/tmp/phase16-tcl-prefix`, and threaded
-  `TEMP_CONFIG`, passes `MALLOC_CHECK_=3 gmake -C src/pl/tcl check` with all 8
-  PL/Tcl regression tests. The optional language rows remain
-  `configure_disabled` in this default build but are no longer
-  release-blocking.
+- The current default tree still has optional dependency leaves represented as
+  checked `configure_disabled` manifest rows when the configure option is off.
+  Dependency-enabled threaded evidence now exists for the main optional
+  external-library matrix in `/tmp/phase16-optional-deps-src`, configured
+  against locally extracted packages in `/tmp/phase16-debroot` with
+  `--enable-tap-tests`, `--with-ssl=openssl`, `--with-gssapi`, `--with-ldap`,
+  `--with-selinux`, `--with-uuid=e2fs`, `--with-libcurl`, `--with-libxml`, and
+  `--with-libxslt`. The threaded `TEMP_CONFIG` for these runs is
+  `/tmp/phase16-optional-deps-src/src/test/regress/threaded_smoke.conf`, which
+  sets `multithreaded=on`, `io_method=sync`, and `summarize_wal=off`.
+- Optional-deps threaded checks passing in that scratch build:
+  `MALLOC_CHECK_=3 gmake -C contrib/pgcrypto check`
+  (`/tmp/phase16-optional-pgcrypto.log`);
+  `MALLOC_CHECK_=3 gmake -C contrib/uuid-ossp check`
+  (`/tmp/phase16-optional-uuid-ossp.log`);
+  `MALLOC_CHECK_=3 gmake -C contrib/xml2 check`
+  (`/tmp/phase16-optional-xml2.log`);
+  `MALLOC_CHECK_=3 PG_TEST_EXTRA=ssl gmake -C src/test/ssl check`
+  (`/tmp/phase16-optional-ssl.log`), which includes
+  `src/test/ssl/t/003_sslinfo.pl` and `EXTRA_INSTALL=contrib/sslinfo`;
+  `MALLOC_CHECK_=3 gmake -C src/test/modules/ssl_passphrase_callback check`
+  (`/tmp/phase16-optional-ssl-passphrase.log`);
+  `LANG=C MALLOC_CHECK_=3 gmake -C src/test/icu check`
+  (`/tmp/phase16-optional-icu.log`);
+  `MALLOC_CHECK_=3 gmake -C src/interfaces/libpq-oauth check`
+  (`/tmp/phase16-optional-libpq-oauth.log`);
+  `MALLOC_CHECK_=3 PG_TEST_EXTRA=ldap gmake -C src/test/ldap check`
+  (`/tmp/phase16-optional-ldap.log`);
+  `MALLOC_CHECK_=3 PG_TEST_EXTRA=ldap gmake -C src/test/modules/ldap_password_func check`
+  (`/tmp/phase16-optional-ldap-password-func.log`); and
+  `MALLOC_CHECK_=3 PG_TEST_EXTRA=kerberos gmake -C src/test/kerberos check`
+  (`/tmp/phase16-optional-kerberos.log`).
+- The optional-deps work admitted thread-per-session module metadata for
+  `contrib/pgcrypto`, `contrib/uuid-ossp`, `contrib/xml2`,
+  `contrib/sslinfo`, `contrib/sepgsql`,
+  `src/test/modules/ldap_password_func`, and
+  `src/test/modules/ssl_passphrase_callback`. It also moved
+  `ssl_passphrase_callback`'s mutable passphrase pointer into
+  extension-private session state, added test-scoped OpenLDAP helper overrides
+  (`PG_TEST_OPENLDAP_SLAPD`, `PG_TEST_OPENLDAP_SCHEMA_DIR`), added
+  test-scoped Kerberos helper overrides (`PG_TEST_KRB5_BIN_DIR`,
+  `PG_TEST_KRB5_SBIN_DIR`, `PG_TEST_KRB5_KDB_MODULE_DIR`), and documented that
+  ICU threaded checks need `LANG=C` so process `LC_CTYPE` matches the temporary
+  database locale.
+- `contrib/sepgsql` is configured and built in the optional-deps scratch tree,
+  but full policy TAP remains blocked on this host because SELinux is disabled
+  and the file-context database is unavailable: `sestatus` reports disabled,
+  `matchpathcon -n .` cannot open the file contexts database, and
+  `getsebool sepgsql_regression_test_mode` reports SELinux is disabled. After
+  adding thread-per-session module metadata and splitting threaded
+  shared-preload replay from runtime-global hook installation, a clean manual
+  threaded postmaster boot with `shared_preload_libraries='sepgsql'` passes and
+  `psql` reports `shared_preload_libraries=sepgsql` and `multithreaded=on`; see
+  `/tmp/phase16-sepgsql-load-clean-postmaster.log` and
+  `/tmp/phase16-sepgsql-load-clean-psql.log`.
+- PL/Python and PL/Tcl have separate dependency-enabled threaded evidence from
+  scratch trees: `/tmp/phase16-python-worktree`, configured with
+  `--with-python`, local headers from `/tmp/phase16-local-deps/root`, and
+  threaded `TEMP_CONFIG`, passes `MALLOC_CHECK_=3 gmake -C src/pl/plpython
+  check` with all 23 PL/Python regression tests plus sequential
+  `MALLOC_CHECK_=3` threaded checks for `contrib/hstore_plpython`,
+  `contrib/jsonb_plpython`, and `contrib/ltree_plpython`;
+  `/tmp/phase16-tcl-worktree`, configured with `--with-tcl`, local Tcl 8.6.14
+  under `/tmp/phase16-tcl-prefix`, and threaded `TEMP_CONFIG`, passes
+  `MALLOC_CHECK_=3 gmake -C src/pl/tcl check` with all 8 PL/Tcl regression
+  tests. The optional language rows remain `configure_disabled` in this
+  default build but are no longer release-blocking.
 - Injection-point optional coverage now has dependency-enabled threaded
   evidence from `/tmp/phase16-injection-src`, configured with `--without-icu
   --enable-tap-tests --enable-injection-points`. After hardening
