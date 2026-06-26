@@ -32,7 +32,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "plpython",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 PG_FUNCTION_INFO_V1(plpython3_validator);
@@ -41,42 +42,80 @@ PG_FUNCTION_INFO_V1(plpython3_inline_handler);
 
 
 static PLyTrigType PLy_procedure_is_trigger(Form_pg_proc procStruct);
+static void PLy_initialize_session(void);
 static void plpython_error_callback(void *arg);
 static void plpython_inline_error_callback(void *arg);
 
 static PLyExecutionContext *PLy_push_execution_context(bool atomic_context);
 static void PLy_pop_execution_context(void);
 
-/* initialize global variables */
-PyObject   *PLy_interp_globals = NULL;
-
-/* this doesn't need to be global; use PLy_current_execution_context() */
-static PLyExecutionContext *PLy_execution_contexts = NULL;
+#define PLy_execution_contexts (*(PLyExecutionContext **) PgCurrentPLpythonExecutionContextsRef())
 
 
 void
 _PG_init(void)
 {
-	PyObject   *main_mod;
-	PyObject   *main_dict;
-	PyObject   *GD;
-	PyObject   *plpy_mod;
+	PyGILState_STATE gilstate;
 
 	pg_bindtextdomain(TEXTDOMAIN);
 
-	/* Add plpy to table of built-in modules. */
-	PyImport_AppendInittab("plpy", PyInit_plpy);
+	/*
+	 * The Python interpreter is process-wide.  The dynamic file manager
+	 * serializes _PG_init() replay in threaded mode, so this one-time boot is
+	 * protected there while the dictionaries and execution stack below remain
+	 * session-owned.
+	 */
+	if (!Py_IsInitialized())
+	{
+		/* Add plpy to table of built-in modules. */
+		if (PyImport_AppendInittab("plpy", PyInit_plpy) == -1)
+			elog(ERROR, "could not add \"%s\" to Python built-in modules",
+				 "plpy");
 
-	/* Initialize Python interpreter. */
-	Py_Initialize();
+		/* Initialize Python interpreter. */
+		Py_Initialize();
+		PyEval_SaveThread();
+	}
+
+	gilstate = PyGILState_Ensure();
+	PG_TRY();
+	{
+		PLy_initialize_session();
+	}
+	PG_CATCH();
+	{
+		PLy_reset_session_state();
+		PyGILState_Release(gilstate);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	PyGILState_Release(gilstate);
+}
+
+static void
+PLy_initialize_session(void)
+{
+	PyObject   *main_mod;
+	PyObject   *main_dict;
+	PyObject   *session_globals;
+	PyObject   *GD;
+	PyObject   *plpy_mod;
+
+	if (PLy_interp_globals != NULL)
+	{
+		init_procedure_caches();
+		return;
+	}
 
 	main_mod = PyImport_AddModule("__main__");
 	if (main_mod == NULL || PyErr_Occurred())
 		PLy_elog(ERROR, "could not import \"%s\" module", "__main__");
-	Py_INCREF(main_mod);
 
 	main_dict = PyModule_GetDict(main_mod);
 	if (main_dict == NULL)
+		PLy_elog(ERROR, NULL);
+	session_globals = PyDict_Copy(main_dict);
+	if (session_globals == NULL)
 		PLy_elog(ERROR, NULL);
 
 	/*
@@ -85,7 +124,9 @@ _PG_init(void)
 	GD = PyDict_New();
 	if (GD == NULL)
 		PLy_elog(ERROR, NULL);
-	PyDict_SetItemString(main_dict, "GD", GD);
+	if (PyDict_SetItemString(session_globals, "GD", GD) == -1)
+		PLy_elog(ERROR, NULL);
+	Py_DECREF(GD);
 
 	/*
 	 * Import plpy.
@@ -93,16 +134,14 @@ _PG_init(void)
 	plpy_mod = PyImport_ImportModule("plpy");
 	if (plpy_mod == NULL)
 		PLy_elog(ERROR, "could not import \"%s\" module", "plpy");
-	if (PyDict_SetItemString(main_dict, "plpy", plpy_mod) == -1)
+	if (PyDict_SetItemString(session_globals, "plpy", plpy_mod) == -1)
 		PLy_elog(ERROR, NULL);
+	Py_DECREF(plpy_mod);
 
 	if (PyErr_Occurred())
 		PLy_elog(FATAL, "untrapped error in initialization");
 
-	Py_INCREF(main_dict);
-	PLy_interp_globals = main_dict;
-
-	Py_DECREF(main_mod);
+	PLy_interp_globals = session_globals;
 
 	init_procedure_caches();
 
@@ -118,6 +157,7 @@ plpython3_validator(PG_FUNCTION_ARGS)
 	HeapTuple	tuple;
 	Form_pg_proc procStruct;
 	PLyTrigType is_trigger;
+	PyGILState_STATE gilstate;
 
 	if (!CheckFunctionValidatorAccess(fcinfo->flinfo->fn_oid, funcoid))
 		PG_RETURN_VOID();
@@ -136,7 +176,18 @@ plpython3_validator(PG_FUNCTION_ARGS)
 	ReleaseSysCache(tuple);
 
 	/* We can't validate triggers against any particular table ... */
-	(void) PLy_procedure_get(funcoid, InvalidOid, is_trigger);
+	gilstate = PyGILState_Ensure();
+	PG_TRY();
+	{
+		(void) PLy_procedure_get(funcoid, InvalidOid, is_trigger);
+	}
+	PG_CATCH();
+	{
+		PyGILState_Release(gilstate);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	PyGILState_Release(gilstate);
 
 	PG_RETURN_VOID();
 }
@@ -148,71 +199,83 @@ plpython3_call_handler(PG_FUNCTION_ARGS)
 	Datum		retval;
 	PLyExecutionContext *exec_ctx;
 	ErrorContextCallback plerrcontext;
+	PyGILState_STATE gilstate;
 
-	nonatomic = fcinfo->context &&
-		IsA(fcinfo->context, CallContext) &&
-		!castNode(CallContext, fcinfo->context)->atomic;
-
-	/* Note: SPI_finish() happens in plpy_exec.c, which is dubious design */
-	SPI_connect_ext(nonatomic ? SPI_OPT_NONATOMIC : 0);
-
-	/*
-	 * Push execution context onto stack.  It is important that this get
-	 * popped again, so avoid putting anything that could throw error between
-	 * here and the PG_TRY.
-	 */
-	exec_ctx = PLy_push_execution_context(!nonatomic);
-
+	gilstate = PyGILState_Ensure();
 	PG_TRY();
 	{
-		Oid			funcoid = fcinfo->flinfo->fn_oid;
-		PLyProcedure *proc;
+		nonatomic = fcinfo->context &&
+			IsA(fcinfo->context, CallContext) &&
+			!castNode(CallContext, fcinfo->context)->atomic;
+
+		/* Note: SPI_finish() happens in plpy_exec.c, which is dubious design */
+		SPI_connect_ext(nonatomic ? SPI_OPT_NONATOMIC : 0);
 
 		/*
-		 * Setup error traceback support for ereport().  Note that the PG_TRY
-		 * structure pops this for us again at exit, so we needn't do that
-		 * explicitly, nor do we risk the callback getting called after we've
-		 * destroyed the exec_ctx.
+		 * Push execution context onto stack.  It is important that this get
+		 * popped again, so avoid putting anything that could throw error
+		 * between here and the PG_TRY.
 		 */
-		plerrcontext.callback = plpython_error_callback;
-		plerrcontext.arg = exec_ctx;
-		plerrcontext.previous = error_context_stack;
-		error_context_stack = &plerrcontext;
+		exec_ctx = PLy_push_execution_context(!nonatomic);
 
-		if (CALLED_AS_TRIGGER(fcinfo))
+		PG_TRY(plpython_call);
 		{
-			Relation	tgrel = ((TriggerData *) fcinfo->context)->tg_relation;
-			HeapTuple	trv;
+			Oid			funcoid = fcinfo->flinfo->fn_oid;
+			PLyProcedure *proc;
 
-			proc = PLy_procedure_get(funcoid, RelationGetRelid(tgrel), PLPY_TRIGGER);
-			exec_ctx->curr_proc = proc;
-			trv = PLy_exec_trigger(fcinfo, proc);
-			retval = PointerGetDatum(trv);
+			/*
+			 * Setup error traceback support for ereport().  Note that the
+			 * PG_TRY structure pops this for us again at exit, so we needn't
+			 * do that explicitly, nor do we risk the callback getting called
+			 * after we've destroyed the exec_ctx.
+			 */
+			plerrcontext.callback = plpython_error_callback;
+			plerrcontext.arg = exec_ctx;
+			plerrcontext.previous = error_context_stack;
+			error_context_stack = &plerrcontext;
+
+			if (CALLED_AS_TRIGGER(fcinfo))
+			{
+				Relation	tgrel = ((TriggerData *) fcinfo->context)->tg_relation;
+				HeapTuple	trv;
+
+				proc = PLy_procedure_get(funcoid, RelationGetRelid(tgrel), PLPY_TRIGGER);
+				exec_ctx->curr_proc = proc;
+				trv = PLy_exec_trigger(fcinfo, proc);
+				retval = PointerGetDatum(trv);
+			}
+			else if (CALLED_AS_EVENT_TRIGGER(fcinfo))
+			{
+				proc = PLy_procedure_get(funcoid, InvalidOid, PLPY_EVENT_TRIGGER);
+				exec_ctx->curr_proc = proc;
+				PLy_exec_event_trigger(fcinfo, proc);
+				retval = (Datum) 0;
+			}
+			else
+			{
+				proc = PLy_procedure_get(funcoid, InvalidOid, PLPY_NOT_TRIGGER);
+				exec_ctx->curr_proc = proc;
+				retval = PLy_exec_function(fcinfo, proc);
+			}
 		}
-		else if (CALLED_AS_EVENT_TRIGGER(fcinfo))
+		PG_CATCH(plpython_call);
 		{
-			proc = PLy_procedure_get(funcoid, InvalidOid, PLPY_EVENT_TRIGGER);
-			exec_ctx->curr_proc = proc;
-			PLy_exec_event_trigger(fcinfo, proc);
-			retval = (Datum) 0;
+			PLy_pop_execution_context();
+			PyErr_Clear();
+			PG_RE_THROW();
 		}
-		else
-		{
-			proc = PLy_procedure_get(funcoid, InvalidOid, PLPY_NOT_TRIGGER);
-			exec_ctx->curr_proc = proc;
-			retval = PLy_exec_function(fcinfo, proc);
-		}
+		PG_END_TRY(plpython_call);
+
+		/* Destroy the execution context */
+		PLy_pop_execution_context();
 	}
 	PG_CATCH();
 	{
-		PLy_pop_execution_context();
-		PyErr_Clear();
+		PyGILState_Release(gilstate);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	/* Destroy the execution context */
-	PLy_pop_execution_context();
+	PyGILState_Release(gilstate);
 
 	return retval;
 }
@@ -226,72 +289,94 @@ plpython3_inline_handler(PG_FUNCTION_ARGS)
 	PLyProcedure proc;
 	PLyExecutionContext *exec_ctx;
 	ErrorContextCallback plerrcontext;
+	PyGILState_STATE gilstate;
 
-	/* Note: SPI_finish() happens in plpy_exec.c, which is dubious design */
-	SPI_connect_ext(codeblock->atomic ? 0 : SPI_OPT_NONATOMIC);
-
-	MemSet(fcinfo, 0, SizeForFunctionCallInfo(0));
-	MemSet(&flinfo, 0, sizeof(flinfo));
-	fake_fcinfo->flinfo = &flinfo;
-	flinfo.fn_oid = InvalidOid;
-	flinfo.fn_mcxt = CurrentMemoryContext;
-
-	MemSet(&proc, 0, sizeof(PLyProcedure));
-	proc.mcxt = AllocSetContextCreate(
-		PgRuntimeGetOwnedMemoryContextWithSizes(
-			PgCurrentPLpythonMemoryContextRef(),
-			"PL/Python session",
-			ALLOCSET_DEFAULT_SIZES),
-		"__plpython_inline_block",
-		ALLOCSET_DEFAULT_SIZES);
-	proc.pyname = MemoryContextStrdup(proc.mcxt, "__plpython_inline_block");
-	proc.langid = codeblock->langOid;
-
-	/*
-	 * This is currently sufficient to get PLy_exec_function to work, but
-	 * someday we might need to be honest and use PLy_output_setup_func.
-	 */
-	proc.result.typoid = VOIDOID;
-
-	/*
-	 * Push execution context onto stack.  It is important that this get
-	 * popped again, so avoid putting anything that could throw error between
-	 * here and the PG_TRY.
-	 */
-	exec_ctx = PLy_push_execution_context(codeblock->atomic);
-
+	gilstate = PyGILState_Ensure();
 	PG_TRY();
 	{
-		/*
-		 * Setup error traceback support for ereport().
-		 * plpython_inline_error_callback doesn't currently need exec_ctx, but
-		 * for consistency with plpython3_call_handler we do it the same way.
-		 */
-		plerrcontext.callback = plpython_inline_error_callback;
-		plerrcontext.arg = exec_ctx;
-		plerrcontext.previous = error_context_stack;
-		error_context_stack = &plerrcontext;
+		/* Note: SPI_finish() happens in plpy_exec.c, which is dubious design */
+		SPI_connect_ext(codeblock->atomic ? 0 : SPI_OPT_NONATOMIC);
 
-		PLy_procedure_compile(&proc, codeblock->source_text);
-		exec_ctx->curr_proc = &proc;
-		PLy_exec_function(fake_fcinfo, &proc);
+		MemSet(fcinfo, 0, SizeForFunctionCallInfo(0));
+		MemSet(&flinfo, 0, sizeof(flinfo));
+		fake_fcinfo->flinfo = &flinfo;
+		flinfo.fn_oid = InvalidOid;
+		flinfo.fn_mcxt = CurrentMemoryContext;
+
+		MemSet(&proc, 0, sizeof(PLyProcedure));
+		proc.mcxt = AllocSetContextCreate(
+			PgRuntimeGetOwnedMemoryContextWithSizes(
+				PgCurrentPLpythonMemoryContextRef(),
+				"PL/Python session",
+				ALLOCSET_DEFAULT_SIZES),
+			"__plpython_inline_block",
+			ALLOCSET_DEFAULT_SIZES);
+		proc.pyname = MemoryContextStrdup(proc.mcxt, "__plpython_inline_block");
+		proc.langid = codeblock->langOid;
+
+		/*
+		 * This is currently sufficient to get PLy_exec_function to work, but
+		 * someday we might need to be honest and use PLy_output_setup_func.
+		 */
+		proc.result.typoid = VOIDOID;
+
+		/*
+		 * Push execution context onto stack.  It is important that this get
+		 * popped again, so avoid putting anything that could throw error
+		 * between here and the PG_TRY.
+		 */
+		exec_ctx = PLy_push_execution_context(codeblock->atomic);
+
+		PG_TRY(plpython_inline);
+		{
+			/*
+			 * Setup error traceback support for ereport().
+			 * plpython_inline_error_callback doesn't currently need exec_ctx,
+			 * but for consistency with plpython3_call_handler we do it the
+			 * same way.
+			 */
+			plerrcontext.callback = plpython_inline_error_callback;
+			plerrcontext.arg = exec_ctx;
+			plerrcontext.previous = error_context_stack;
+			error_context_stack = &plerrcontext;
+
+			PLy_procedure_compile(&proc, codeblock->source_text);
+			exec_ctx->curr_proc = &proc;
+			PLy_exec_function(fake_fcinfo, &proc);
+		}
+		PG_CATCH(plpython_inline);
+		{
+			PLy_pop_execution_context();
+			PLy_procedure_delete(&proc);
+			PyErr_Clear();
+			PG_RE_THROW();
+		}
+		PG_END_TRY(plpython_inline);
+
+		/* Destroy the execution context */
+		PLy_pop_execution_context();
+
+		/* Now clean up the transient procedure we made */
+		PLy_procedure_delete(&proc);
 	}
 	PG_CATCH();
 	{
-		PLy_pop_execution_context();
-		PLy_procedure_delete(&proc);
-		PyErr_Clear();
+		PyGILState_Release(gilstate);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	/* Destroy the execution context */
-	PLy_pop_execution_context();
-
-	/* Now clean up the transient procedure we made */
-	PLy_procedure_delete(&proc);
+	PyGILState_Release(gilstate);
 
 	PG_RETURN_VOID();
+}
+
+void
+PLy_reset_session_state(void)
+{
+	Py_XDECREF(PLy_interp_globals);
+	PLy_interp_globals = NULL;
+	PLy_execution_contexts = NULL;
+	explicit_subtransactions = NIL;
 }
 
 static PLyTrigType

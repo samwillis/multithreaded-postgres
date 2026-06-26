@@ -1486,6 +1486,9 @@ PgSessionInitializeExtensionModuleState(PgSessionExtensionModuleState *extension
 	Assert(extension_modules != NULL);
 
 	extension_modules->plpgsql_state = NULL;
+	extension_modules->plpython_interp_globals = NULL;
+	extension_modules->plpython_execution_contexts = NULL;
+	extension_modules->plpython_explicit_subtransactions = NIL;
 	extension_modules->plpython_procedure_cache = NULL;
 	extension_modules->plpython_memory_context = NULL;
 	extension_modules->plpython_reset_registered = false;
@@ -3127,6 +3130,24 @@ void **
 PgCurrentPLpgSQLSessionStateRef(void)
 {
 	return &PgCurrentSessionExtensionModuleState()->plpgsql_state;
+}
+
+void **
+PgCurrentPLpythonInterpGlobalsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_interp_globals;
+}
+
+void **
+PgCurrentPLpythonExecutionContextsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_execution_contexts;
+}
+
+List **
+PgCurrentPLpythonExplicitSubtransactionsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_explicit_subtransactions;
 }
 
 void **

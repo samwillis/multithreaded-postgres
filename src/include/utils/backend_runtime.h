@@ -1903,6 +1903,9 @@ typedef PgExtensionPrivateState PgSessionExtensionPrivateState;
 typedef struct PgSessionExtensionModuleState
 {
 	void	   *plpgsql_state;
+	void	   *plpython_interp_globals;
+	void	   *plpython_execution_contexts;
+	List	   *plpython_explicit_subtransactions;
 	void	   *plpython_procedure_cache;
 	MemoryContext plpython_memory_context;
 	bool		plpython_reset_registered;
@@ -3242,6 +3245,9 @@ extern PgSessionExtensionModuleState *PgCurrentSessionExtensionModuleState(void)
 extern void *PgSessionGetExtensionPrivateState(const char *key);
 extern void *PgSessionEnsureExtensionPrivateState(const char *key, Size size,
 												 PgSessionExtensionPrivateStateCleanup cleanup);
+extern void **PgCurrentPLpythonInterpGlobalsRef(void);
+extern void **PgCurrentPLpythonExecutionContextsRef(void);
+extern List **PgCurrentPLpythonExplicitSubtransactionsRef(void);
 extern void **PgCurrentPLpythonProcedureCacheRef(void);
 extern MemoryContext *PgCurrentPLpythonMemoryContextRef(void);
 extern bool *PgCurrentPLpythonResetRegisteredRef(void);

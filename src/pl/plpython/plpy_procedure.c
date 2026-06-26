@@ -446,8 +446,11 @@ PLy_procedure_cache_reset_callback(void *arg)
 {
 	HASH_SEQ_STATUS scan;
 	PLyProcedureEntry *entry;
+	PyGILState_STATE gilstate;
 
 	(void) arg;
+
+	gilstate = PyGILState_Ensure();
 
 	if (PLy_procedure_cache != NULL)
 	{
@@ -461,7 +464,11 @@ PLy_procedure_cache_reset_callback(void *arg)
 		PLy_procedure_cache = NULL;
 	}
 
+	PLy_reset_session_state();
+	PyGC_Collect();
 	PLy_procedure_reset_registered = false;
+
+	PyGILState_Release(gilstate);
 }
 
 /*
