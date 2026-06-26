@@ -229,6 +229,11 @@ $oldnode->append_conf('postgresql.conf', 'log_statement = none');
 # Set wal_level = replica to run the regression tests in the same
 # wal_level as when 'make check' runs.
 $oldnode->append_conf('postgresql.conf', 'wal_level = replica');
+
+# pg_regress normally enables prepared transactions when it creates a
+# temporary instance.  Here pg_upgrade supplies its own already-running old
+# cluster, so mirror that regression-test setting explicitly.
+$oldnode->append_conf('postgresql.conf', 'max_prepared_transactions = 2');
 $oldnode->start;
 
 my $result;

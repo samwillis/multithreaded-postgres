@@ -31,6 +31,7 @@
 #include "replication/reorderbuffer.h"
 #include "replication/logicalworker.h"
 #include "replication/slotsync.h"
+#include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "storage/bufmgr.h"
 #include "storage/buf_internals.h"
@@ -71,7 +72,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_BACKEND PgBackend early_backend_fallback = {
 		.mode = InitProcessing
 	},
 	.replication = {
-		.sync_rep_wait_mode = -1,
+		.sync_rep_wait_mode = SYNC_REP_WAIT_FLUSH,
 		.walreceiver_recv_file = -1,
 		.walreceiver_primary_has_standby_xmin = true
 	},
@@ -961,7 +962,7 @@ PgBackendInitializeReplicationState(PgBackendReplicationState *replication)
 	Assert(replication != NULL);
 
 	MemSet(replication, 0, sizeof(*replication));
-	replication->sync_rep_wait_mode = -1;
+	replication->sync_rep_wait_mode = SYNC_REP_WAIT_FLUSH;
 	replication->walreceiver_recv_file = -1;
 	replication->walreceiver_primary_has_standby_xmin = true;
 }

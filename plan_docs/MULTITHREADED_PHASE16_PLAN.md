@@ -657,12 +657,35 @@ Current branch evidence as of June 26, 2026:
 - `check-threaded-world-coverage` passes with `141 covered`, `1 excluded`, and
   `142 enabled leaves`.
 - `check-world-threaded` passes on the current Linux build after threaded DSM,
-  DSA, plan-cache, GUC, dynamic-library, WAL-insert, and wait-event teardown
-  hardening.
+  DSA, plan-cache, GUC, dynamic-library, WAL-insert, wait-event teardown, WAL
+  summarizer interrupt, basebackup target, extension GUC, sync-rep default, and
+  pg_upgrade prepared-transaction hardening. The current evidence log is
+  `/tmp/phase16-main-check-world-threaded-clean.log`, with status `0`.
+- The current full threaded-world pass includes core regression, isolation,
+  authentication, postmaster, recovery, subscription, `src/test/modules`,
+  `src/pl`, contrib, interfaces, `src/bin`, and `src/tools/pg_bsd_indent`.
+  Important non-contrib TAP leaves in that pass include recovery
+  `Files=52, Tests=631`, subscription, `src/bin/pg_basebackup`, `src/bin/pg_combinebackup`
+  (`Files=11, Tests=81`), `src/bin/pg_upgrade` (`Files=8, Tests=136`),
+  `src/bin/pg_verifybackup`, `src/bin/pg_walsummary`, `src/bin/pgbench`,
+  `src/bin/psql`, and `src/bin/scripts`.
+- A threaded immediate-shutdown blocker found during `src/bin/pg_combinebackup`
+  coverage was fixed by making the WAL summarizer honor `ProcDiePending` after
+  consuming logical backend interrupts. The focused
+  `check-threaded-bin-pg-combinebackup` leaf now passes before the full
+  threaded-world pass and no longer leaves recalcitrant WAL summarizer
+  postmasters behind.
 - process-mode `check-world` passes on the current Linux build. This configure
   has `enable_tap_tests = no`, `enable_injection_points = no`, `with_icu = no`,
   `with_python = no`, and `with_tcl = no`, so optional leaves not enabled by
   this build remain outside the current enabled-leaf count.
+- TAP-enabled process-mode `check-world` also passes in `/tmp/phase16-tap-src`,
+  configured with `--without-icu --with-perl --enable-tap-tests
+  PG_TEST_EXTRA=`. The evidence log is
+  `/tmp/phase16-tap-check-world-after-pg-upgrade-config.log`; it includes
+  recovery `t/009_twophase.pl` and `t/027_stream_regress.pl`,
+  `contrib/basebackup_to_shell/t/001_basic.pl`, `src/bin/pg_basebackup`, and
+  `src/bin/pg_upgrade/t/002_pg_upgrade.pl`.
 - ASAN evidence exists from `/tmp/phase16-asan-src`, configured with
   `--enable-cassert --enable-debug`, `CFLAGS=-O1 -g -fsanitize=address
   -fno-omit-frame-pointer`, and `LDFLAGS=-fsanitize=address`. With

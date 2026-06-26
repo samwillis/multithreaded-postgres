@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "backup/basebackup_target.h"
+#include "utils/backend_runtime.h"
 #include "utils/global_lifetime.h"
 #include "utils/memutils.h"
 
@@ -173,9 +174,7 @@ BaseBackupGetSink(BaseBackupTargetHandle *handle, bbsink *next_sink)
 static MemoryContext
 basebackup_target_memory_context(void)
 {
-	if (PostmasterContext != NULL)
-		return PostmasterContext;
-	return TopMemoryContext;
+	return PgCurrentRuntimeExtensionModuleMemoryContext();
 }
 
 /*
