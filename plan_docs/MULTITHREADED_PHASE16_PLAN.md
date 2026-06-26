@@ -654,8 +654,11 @@ closed.
 
 Current branch evidence as of June 26, 2026:
 
-- `check-threaded-world-coverage` passes with `141 covered`, `1 excluded`, and
-  `142 enabled leaves`.
+- `check-threaded-world-coverage` passes with `141 covered`, `21 excluded`,
+  and `142 enabled leaves`. The extra exclusion rows are checked
+  `configure_disabled` rows for optional dependency leaves that are real
+  `check-world` components but absent from this local configure, plus the
+  existing `src/test/perl` support-module `not_applicable` row.
 - `check-world-threaded` passes on the current Linux build after threaded DSM,
   DSA, plan-cache, GUC, dynamic-library, WAL-insert, wait-event teardown, WAL
   summarizer interrupt, basebackup target, extension GUC, sync-rep default, and
@@ -678,7 +681,20 @@ Current branch evidence as of June 26, 2026:
 - process-mode `check-world` passes on the current Linux build. This configure
   has `enable_tap_tests = no`, `enable_injection_points = no`, `with_icu = no`,
   `with_python = no`, and `with_tcl = no`, so optional leaves not enabled by
-  this build remain outside the current enabled-leaf count.
+  this build remain outside the current enabled-leaf count. The optional leaves
+  are now still visible in
+  `plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv` as checked
+  `configure_disabled` rows rather than hidden omissions.
+- Current optional dependency probes show that this workstation cannot exercise
+  the full optional matrix without system packages: ICU configure failed on
+  missing `icu-uc`/`icu-i18n`
+  (`/tmp/phase16-optional-configure.log`), OpenSSL configure failed on missing
+  `libcrypto` (`/tmp/phase16-py-tcl-configure.log`), PL/Python configure found
+  Python 3.12 but failed on missing `Python.h`
+  (`/tmp/phase16-python-configure.log`), and PL/Tcl configure failed on missing
+  `tclsh`/Tcl (`/tmp/phase16-py-tcl-no-ssl-configure.log`). The PL/Python,
+  PL/Tcl, and PL/Python transform rows are marked release-blocking for full
+  optional-language Gate G closeout.
 - TAP-enabled process-mode `check-world` also passes in `/tmp/phase16-tap-src`,
   configured with `--without-icu --with-perl --enable-tap-tests
   PG_TEST_EXTRA=`. The evidence log is

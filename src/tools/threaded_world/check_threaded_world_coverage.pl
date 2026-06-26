@@ -77,7 +77,7 @@ for my $name (sort keys %excluded)
 		&& $row->{release_blocker} !~ /^(?:yes|no)$/;
 	push @errors, "configure_disabled row must name configure condition: $name"
 		if $status eq 'configure_disabled'
-		&& $row->{reason} !~ /\b(?:with_|enable_|PORTNAME|configured|configure)\b/;
+		&& $row->{reason} !~ /(?:\bwith_[A-Za-z0-9_]*|\benable_[A-Za-z0-9_]*|\bPORTNAME\b|\bconfigured\b|\bconfigure\b)/;
 }
 
 for my $name (@components)
