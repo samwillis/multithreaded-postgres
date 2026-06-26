@@ -671,7 +671,7 @@ This section records the current evidence gathered on the `phase16-plan`
 branch. It is an evidence log, not by itself a declaration that Gate G is
 closed.
 
-Current branch evidence as of June 26, 2026:
+Current branch evidence as of June 27, 2026:
 
 - `check-threaded-world-coverage` passes with `141 covered`, `22 excluded`,
   and `142 enabled leaves`. The extra exclusion rows are checked
@@ -683,8 +683,8 @@ Current branch evidence as of June 26, 2026:
   wait-event teardown, WAL summarizer interrupt, basebackup target, extension
   GUC, sync-rep default, pg_upgrade prepared-transaction hardening, threaded
   latch-waitset runtime ordering, and dynamic-library session-init bookkeeping
-  hardening. The current evidence log is `/tmp/phase16-check-world-threaded.log`,
-  with status `0`.
+  hardening. The current evidence log is
+  `/tmp/phase16-check-world-threaded-after-injection.log`, with status `0`.
 - The current full threaded-world pass includes core regression, isolation,
   authentication, postmaster, recovery, subscription, `src/test/modules`,
   `src/pl`, contrib, interfaces, `src/bin`, and `src/tools/pg_bsd_indent`.
@@ -723,6 +723,18 @@ Current branch evidence as of June 26, 2026:
   PL/Tcl regression tests. The optional language rows remain
   `configure_disabled` in this default build but are no longer
   release-blocking.
+- Injection-point optional coverage now has dependency-enabled threaded
+  evidence from `/tmp/phase16-injection-src`, configured with `--without-icu
+  --enable-tap-tests --enable-injection-points`. After hardening
+  `src/test/modules/injection_points` for thread-per-session module loading,
+  SQL-visible backend identity, and per-session DSM attachment state,
+  `MALLOC_CHECK_=3 gmake -C src/test/modules/injection_points check
+  TEMP_CONFIG=/tmp/phase16-injection-src/src/test/regress/threaded_smoke.conf`
+  passes its regression and isolation suites; the dependent injection-point
+  leaves also pass with `MALLOC_CHECK_=3 gmake -C src/test/modules/gin check`
+  and `MALLOC_CHECK_=3 gmake -C src/test/modules/typcache check` under the same
+  threaded `TEMP_CONFIG`. These rows remain `configure_disabled` only because
+  the default build has `enable_injection_points=no`.
 - TAP-enabled process-mode `check-world` also passes in `/tmp/phase16-tap-src`,
   configured with `--without-icu --with-perl --enable-tap-tests
   PG_TEST_EXTRA=`. The evidence log is

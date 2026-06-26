@@ -28,6 +28,7 @@
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/injection_point.h"
@@ -35,7 +36,11 @@
 #include "utils/tuplestore.h"
 #include "utils/wait_event.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "injection_points",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 /* Maximum number of waits usable in injection points at once */
 #define INJ_MAX_WAIT	8
@@ -43,9 +48,9 @@ PG_MODULE_MAGIC;
 
 /*
  * List of injection points stored in TopMemoryContext attached
- * locally to this process.
+ * locally to this session.
  */
-static List *inj_list_local = NIL;
+static PG_THREAD_LOCAL List *inj_list_local = NIL;
 
 /*
  * Shared state information for injection points.
@@ -68,8 +73,11 @@ typedef struct InjectionPointSharedState
 	ConditionVariable wait_point;
 } InjectionPointSharedState;
 
-/* Pointer to shared-memory state. */
-static InjectionPointSharedState *inj_state = NULL;
+/* Pointer to preloaded shared-memory state. */
+static PG_GLOBAL_SHMEM InjectionPointSharedState *inj_preloaded_state = NULL;
+
+/* Per-session attachment to shared-memory state. */
+static PG_THREAD_LOCAL InjectionPointSharedState *inj_state = NULL;
 
 extern PGDLLEXPORT void injection_error(const char *name,
 										const void *private_data,
@@ -81,8 +89,8 @@ extern PGDLLEXPORT void injection_wait(const char *name,
 									   const void *private_data,
 									   void *arg);
 
-/* track if injection points attached in this process are linked to it */
-static bool injection_point_local = false;
+/* track if injection points attached in this session are linked to it */
+static PG_THREAD_LOCAL bool injection_point_local = false;
 
 static void injection_shmem_request(void *arg);
 static void injection_shmem_init(void *arg);
@@ -112,7 +120,7 @@ injection_shmem_request(void *arg)
 {
 	ShmemRequestStruct(.name = "injection_points",
 					   .size = sizeof(InjectionPointSharedState),
-					   .ptr = (void **) &inj_state,
+					   .ptr = (void **) &inj_preloaded_state,
 		);
 }
 
@@ -123,7 +131,7 @@ injection_shmem_init(void *arg)
 	 * First time through, so initialize.  This is shared with the dynamic
 	 * initialization using a DSM.
 	 */
-	injection_point_init_state(inj_state, NULL);
+	injection_point_init_state(inj_preloaded_state, NULL);
 }
 
 /*
@@ -136,6 +144,12 @@ injection_init_shmem(void)
 
 	if (inj_state != NULL)
 		return;
+
+	if (inj_preloaded_state != NULL)
+	{
+		inj_state = inj_preloaded_state;
+		return;
+	}
 
 	inj_state = GetNamedDSMSegment("injection_points",
 								   sizeof(InjectionPointSharedState),
@@ -157,7 +171,7 @@ injection_point_allowed(const InjectionPointCondition *condition)
 	switch (condition->type)
 	{
 		case INJ_CONDITION_PID:
-			if (MyProcPid != condition->pid)
+			if (PgCurrentBackendSignalPid() != condition->pid)
 				result = false;
 			break;
 		case INJ_CONDITION_ALWAYS:
@@ -310,7 +324,7 @@ injection_points_attach(PG_FUNCTION_ARGS)
 	if (injection_point_local)
 	{
 		condition.type = INJ_CONDITION_PID;
-		condition.pid = MyProcPid;
+		condition.pid = PgCurrentBackendSignalPid();
 	}
 
 	InjectionPointAttach(name, "injection_points", function, &condition,
