@@ -924,6 +924,8 @@ procedural languages, and contrib extensions without delaying Phase 13
 wait-observability or Phase 14/15 protocol-scheduler work.
 
 Detailed working plan: `MULTITHREADED_PHASE16_PLAN.md`.
+Phase 16 lock-order and debug-surface evidence:
+`MULTITHREADED_PHASE16_LOCKS_AND_DEBUG.md`.
 
 Primary coverage contract:
 

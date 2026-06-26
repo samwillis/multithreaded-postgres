@@ -601,6 +601,14 @@ Expected work:
 Keep debug views focused on validation and operations. Do not add broad
 introspection tables unless they answer a concrete Phase 16 debugging need.
 
+Current lock-order and debug-surface evidence is recorded in
+`MULTITHREADED_PHASE16_LOCKS_AND_DEBUG.md`. The current documented Phase 16
+cross-lock order is `DynamicFileManagerMutex -> ThreadedGUCMutex`; the current
+debug decision is to rely on the coverage verifier, Phase 16 manifests,
+lifecycle/global-lifetime checks, existing backend/session observability, and
+component-named `check-world-threaded` output rather than adding a broad new
+SQL introspection view.
+
 ## Step 13: Add Sanitizer Runs
 
 Run sanitizers where feasible and document any platform-specific limitations.
@@ -671,6 +679,11 @@ Current branch evidence as of June 26, 2026:
   pooled protocol lanes. Hot tiny-query overhead remains a known optimization
   bucket; mostly-idle and stateful pooled protocol profiles remain close to
   process/threaded throughput while using fewer server threads.
+- Lock-order and debug-surface evidence is recorded in
+  `MULTITHREADED_PHASE16_LOCKS_AND_DEBUG.md`. The only currently allowed
+  Phase 16 cross-lock order is `DynamicFileManagerMutex -> ThreadedGUCMutex`,
+  used by dynamic-library initialization and threaded config replay when
+  modules define custom GUCs.
 
 ## Workstream Ordering
 
