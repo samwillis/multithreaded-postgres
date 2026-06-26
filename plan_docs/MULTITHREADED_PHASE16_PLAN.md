@@ -709,6 +709,13 @@ Current branch evidence as of June 27, 2026:
   `configure_disabled` rows for optional dependency leaves that are real
   `check-world` components but absent from this local configure, plus the
   existing `src/test/perl` support-module `not_applicable` row.
+- `MALLOC_CHECK_=3 gmake check-phase16-gate-g-local` passes on the current
+  Linux default configure after adding a top-level `temp-install` prerequisite
+  to the local Gate G bundle. The evidence log is
+  `/tmp/phase16-gate-g-local-fresh-temp-install.log`, with status `0`; it
+  rebuilt `tmp_install`, ran process-mode `check-world`,
+  `check-world-threaded`, `check-runtime-lifecycles`, and
+  `check-global-lifetimes`.
 - `MALLOC_CHECK_=3 gmake check-world-threaded` passes on the current Linux build
   after threaded DSM, DSA, plan-cache, GUC, dynamic-library, WAL-insert,
   wait-event teardown, WAL summarizer interrupt, basebackup target, extension
@@ -907,7 +914,9 @@ Phase 16 is complete only when:
 The local source tree now exposes `check-phase16-gate-g-local` as the repeatable
 local closeout bundle for the default configure. It runs process-mode
 `check-world`, `check-world-threaded`, `check-runtime-lifecycles`, and
-`check-global-lifetimes`. This target is deliberately local: optional
+`check-global-lifetimes`, and depends on a fresh top-level `temp-install` so
+process and threaded submakes do not accidentally reuse stale test modules from
+an older temporary install. This target is deliberately local: optional
 dependency builds, sanitizer runs, Windows-only `pgevent`, SELinux policy
 coverage, and performance baselines remain recorded as separate Gate G evidence
 because they require different configure options or host capabilities.
