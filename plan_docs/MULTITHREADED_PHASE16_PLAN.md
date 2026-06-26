@@ -654,7 +654,7 @@ closed.
 
 Current branch evidence as of June 26, 2026:
 
-- `check-threaded-world-coverage` passes with `141 covered`, `21 excluded`,
+- `check-threaded-world-coverage` passes with `141 covered`, `22 excluded`,
   and `142 enabled leaves`. The extra exclusion rows are checked
   `configure_disabled` rows for optional dependency leaves that are real
   `check-world` components but absent from this local configure, plus the

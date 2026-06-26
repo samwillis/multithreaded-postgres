@@ -24,6 +24,8 @@ my %make_vars = read_make_vars(File::Spec->catfile($top_builddir, 'src', 'Makefi
 my @roots = check_world_roots();
 my @components = sort map { derive_leaf_components($_) } @roots;
 my %component = map { $_ => 1 } @components;
+my @disabled_components = sort unique(map { derive_disabled_leaf_components($_) } @roots);
+my %disabled_component = map { $_ => 1 } @disabled_components;
 my %target_graph = read_make_target_graph(File::Spec->catfile($top_srcdir, 'GNUmakefile.in'));
 my %world_threaded_targets = reachable_targets('check-world-threaded', \%target_graph);
 
@@ -70,6 +72,9 @@ for my $name (sort keys %excluded)
 		if $component{$name} && $status eq 'configure_disabled';
 	push @errors, "non-configure-disabled exclusion is not an enabled check-world leaf: $name"
 		if !$component{$name} && $status ne 'configure_disabled';
+	push @errors, "configure_disabled exclusion is not a disabled check-world leaf: $name"
+		if !$component{$name} && $status eq 'configure_disabled'
+		&& !$disabled_component{$name};
 	push @errors, "exclusion row missing reason: $name"
 		unless length $row->{reason};
 	push @errors, "temporary blocker must set release_blocker to yes or no: $name"
@@ -85,6 +90,13 @@ for my $name (@components)
 	next if exists $covered{$name};
 	next if exists $excluded{$name};
 	push @errors, "enabled check-world leaf has no threaded coverage or exclusion: $name";
+}
+
+for my $name (@disabled_components)
+{
+	next if exists $excluded{$name}
+		&& $excluded{$name}->{status} eq 'configure_disabled';
+	push @errors, "disabled check-world leaf has no configure_disabled exclusion: $name";
 }
 
 if (@errors)
@@ -137,11 +149,50 @@ sub derive_leaf_components
 	return @leaves ? @leaves : ($component);
 }
 
+sub derive_disabled_leaf_components
+{
+	my ($component) = @_;
+	my $dir = File::Spec->catdir($top_srcdir, split('/', $component));
+	my $makefile = File::Spec->catfile($dir, 'Makefile');
+
+	return () unless -f $makefile;
+
+	my @leaves;
+	for my $subdir (disabled_subdirs($makefile))
+	{
+		next if $subdir =~ /\$\(/;
+		push @leaves, derive_leaf_components("$component/$subdir");
+	}
+
+	for my $subdir (active_subdirs($makefile))
+	{
+		next if $subdir =~ /\$\(/;
+		push @leaves, derive_disabled_leaf_components("$component/$subdir");
+	}
+
+	return unique(@leaves);
+}
+
 sub active_subdirs
+{
+	my ($makefile) = @_;
+	my ($active_subdirs, undef) = analyze_subdirs($makefile);
+	return @$active_subdirs;
+}
+
+sub disabled_subdirs
+{
+	my ($makefile) = @_;
+	my (undef, $disabled_subdirs) = analyze_subdirs($makefile);
+	return @$disabled_subdirs;
+}
+
+sub analyze_subdirs
 {
 	my ($makefile) = @_;
 	my @lines = logical_makefile_lines($makefile);
 	my @subdirs;
+	my @disabled_subdirs;
 	my @frames;
 	my $active = 1;
 
@@ -194,19 +245,24 @@ sub active_subdirs
 			next;
 		}
 
-		next unless $active;
-
 		if ($line =~ /^SUBDIRS\s*([+:]?=)\s*(.*)$/)
 		{
 			my ($op, $value) = ($1, $2);
 			my @items = grep { length && $_ !~ /\$\(/ } split /\s+/, trim($value);
-			@subdirs = () if $op ne '+=';
-			push @subdirs, @items;
+			if ($active)
+			{
+				@subdirs = () if $op ne '+=';
+				push @subdirs, @items;
+			}
+			else
+			{
+				push @disabled_subdirs, @items;
+			}
 		}
 	}
 
 	die "unterminated conditional in $makefile\n" if @frames;
-	return @subdirs;
+	return (\@subdirs, \@disabled_subdirs);
 }
 
 sub logical_makefile_lines
@@ -327,6 +383,12 @@ sub plain_make_target
 {
 	my ($value) = @_;
 	return defined $value && $value =~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+}
+
+sub unique
+{
+	my %seen;
+	return grep { !$seen{$_}++ } @_;
 }
 
 sub read_covered_components
