@@ -904,6 +904,14 @@ Phase 16 is complete only when:
 - sanitizer evidence has been recorded where feasible;
 - performance baselines have been recorded and any regression is classified.
 
+The local source tree now exposes `check-phase16-gate-g-local` as the repeatable
+local closeout bundle for the default configure. It runs process-mode
+`check-world`, `check-world-threaded`, `check-runtime-lifecycles`, and
+`check-global-lifetimes`. This target is deliberately local: optional
+dependency builds, sanitizer runs, Windows-only `pgevent`, SELinux policy
+coverage, and performance baselines remain recorded as separate Gate G evidence
+because they require different configure options or host capabilities.
+
 Gate G should not pass with unknown/default process-only bundled modules. A
 module may remain process-only only when the manifest says that explicitly and
 the project accepts the release impact.
