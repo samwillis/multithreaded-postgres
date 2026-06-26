@@ -18,6 +18,9 @@
 
 #include "postgres.h"
 
+#include <signal.h>
+#include <unistd.h>
+
 #include "access/relation.h"
 #include "catalog/pg_type.h"
 #include "fmgr.h"
@@ -31,6 +34,7 @@
 #include "storage/lwlock.h"
 #include "storage/proc.h"
 #include "storage/procnumber.h"
+#include "storage/procsignal.h"
 #include "storage/read_stream.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -40,7 +44,11 @@
 #include "utils/wait_event.h"
 
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_aio",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 
 /* In shared memory */
@@ -85,7 +93,7 @@ static const ShmemCallbacks inj_io_shmem_callbacks = {
 };
 
 
-static PgAioHandle *last_handle;
+static PG_THREAD_LOCAL PgAioHandle *last_handle;
 
 
 
@@ -172,6 +180,26 @@ errno_from_string(PG_FUNCTION_ARGS)
 			errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			errmsg_internal("%s is not a supported errno value", sym));
 	PG_RETURN_INT32(0);
+}
+
+PG_FUNCTION_INFO_V1(signal_io_worker);
+Datum
+signal_io_worker(PG_FUNCTION_ARGS)
+{
+	int			pid = PG_GETARG_INT32(0);
+	PGPROC	   *proc;
+
+	proc = AuxiliarySignalPidGetProc(pid);
+	if (proc == NULL || proc->backendType != B_IO_WORKER)
+		PG_RETURN_BOOL(false);
+
+	if (proc->pid == PostmasterPid && proc->backendId == (PgBackendId) pid)
+		PG_RETURN_BOOL(SendBackendInterrupt(pid,
+											PG_BACKEND_INTERRUPT_PROC_DIE,
+											MyProcPid,
+											getuid()) == 0);
+
+	PG_RETURN_BOOL(kill(proc->pid, SIGINT) == 0);
 }
 
 PG_FUNCTION_INFO_V1(grow_rel);

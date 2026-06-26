@@ -20,6 +20,7 @@ io_max_workers=32
 ));
 
 $node->start();
+$node->safe_psql('postgres', 'CREATE EXTENSION test_aio');
 
 # Test changing the number of I/O worker processes while also evaluating the
 # handling of their termination.
@@ -106,9 +107,10 @@ sub terminate_io_worker
 		qq(SELECT pid FROM pg_stat_activity WHERE
 			backend_type = 'io worker' ORDER BY RANDOM() LIMIT 1));
 
-	# terminate IO worker with SIGINT
-	is(PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'INT', $pid),
-		0, "random io worker process signalled with INT");
+	# Terminate IO worker with SIGINT, using a logical signal target when the
+	# worker is thread-backed.
+	is($node->safe_psql('postgres', qq(SELECT signal_io_worker($pid))),
+		't', "random io worker signalled with INT");
 
 	# Check that worker exits
 	ok( $node->poll_query_until(

@@ -8,6 +8,10 @@ CREATE FUNCTION errno_from_string(sym text)
 RETURNS pg_catalog.int4 STRICT
 AS 'MODULE_PATHNAME' LANGUAGE C;
 
+CREATE FUNCTION signal_io_worker(pid int)
+RETURNS pg_catalog.bool STRICT
+AS 'MODULE_PATHNAME' LANGUAGE C;
+
 
 CREATE FUNCTION grow_rel(rel regclass, nblocks int)
 RETURNS pg_catalog.void STRICT
