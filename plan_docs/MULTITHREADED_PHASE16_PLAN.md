@@ -638,6 +638,40 @@ If a broad extension mechanism adds measurable overhead, classify it as:
 
 Do not accept major unexplained regressions as a Gate G closeout condition.
 
+## Current Gate G Evidence
+
+This section records the current evidence gathered on the `phase16-plan`
+branch. It is an evidence log, not by itself a declaration that Gate G is
+closed.
+
+Current branch evidence as of June 26, 2026:
+
+- `check-threaded-world-coverage` passes with `141 covered`, `1 excluded`, and
+  `142 enabled leaves`.
+- `check-world-threaded` passes on the current Linux build after threaded DSM,
+  DSA, plan-cache, GUC, dynamic-library, WAL-insert, and wait-event teardown
+  hardening.
+- process-mode `check-world` passes on the current Linux build. This configure
+  has `enable_tap_tests = no`, `enable_injection_points = no`, `with_icu = no`,
+  `with_python = no`, and `with_tcl = no`, so optional leaves not enabled by
+  this build remain outside the current enabled-leaf count.
+- ASAN evidence exists from `/tmp/phase16-asan-src`, configured with
+  `--enable-cassert --enable-debug`, `CFLAGS=-O1 -g -fsanitize=address
+  -fno-omit-frame-pointer`, and `LDFLAGS=-fsanitize=address`. With
+  `ASAN_OPTIONS=detect_leaks=0`, both `check-threaded-smoke` and targeted
+  recovery `t/027_stream_regress.pl` passed after the Phase 16 teardown fixes.
+- TSAN was attempted in `/tmp/phase16-tsan-src` with GCC 13 and
+  `-fsanitize=thread`, but configure could not run even its trivial test
+  executable because the TSAN runtime terminated with `FATAL:
+  ThreadSanitizer: unexpected memory mapping`. `clang` was not installed in
+  this workspace, so TSAN is currently recorded as a platform/toolchain
+  limitation rather than a PostgreSQL test result.
+- Focused Phase 16 performance evidence is recorded in
+  `MULTITHREADED_BENCHMARKS.md`, including process, thread-per-session, and
+  pooled protocol lanes. Hot tiny-query overhead remains a known optimization
+  bucket; mostly-idle and stateful pooled protocol profiles remain close to
+  process/threaded throughput while using fewer server threads.
+
 ## Workstream Ordering
 
 Recommended implementation order:
