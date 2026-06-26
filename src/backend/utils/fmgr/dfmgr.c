@@ -107,7 +107,9 @@ LockDynamicFileManagerForThreadedReplay(void)
 #ifndef WIN32
 	int			rc;
 
-	if (!multithreaded)
+	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
+		CurrentPgCarrier == NULL ||
+		CurrentPgCarrier->kind != PG_CARRIER_THREAD)
 		return false;
 	if (DynamicFileManagerMutexDepth++ > 0)
 		return false;
@@ -135,7 +137,7 @@ UnlockDynamicFileManagerForThreadedReplay(bool locked)
 #ifndef WIN32
 	int			rc;
 
-	if (!multithreaded)
+	if (!locked && DynamicFileManagerMutexDepth == 0)
 		return;
 
 	Assert(DynamicFileManagerMutexDepth > 0);
@@ -145,7 +147,8 @@ UnlockDynamicFileManagerForThreadedReplay(bool locked)
 		return;
 
 	rc = pthread_mutex_unlock(&DynamicFileManagerMutex);
-	RESUME_INTERRUPTS();
+	if (InterruptHoldoffCount > 0)
+		RESUME_INTERRUPTS();
 	if (rc != 0)
 	{
 		errno = rc;

@@ -9,12 +9,11 @@ PG_SESSION_RESET_BUCKET(tcop, PgSessionResetTcopClosedState(session))
 PG_SESSION_RESET_BUCKET(prepared_statement, PgSessionResetPreparedStatementClosedState(session))
 PG_SESSION_RESET_BUCKET(large_object, PgSessionResetLargeObjectClosedState(session))
 PG_SESSION_RESET_BUCKET(temp_file, PgSessionResetTempFileClosedState(session))
-PG_SESSION_RESET_BUCKET(plan_cache, PgSessionResetPlanCacheClosedState(session))
+PG_SESSION_RESET_BUCKET(function_manager, PgSessionResetFunctionManagerClosedState(session))
 PG_SESSION_RESET_BUCKET(on_commit, PG_RUNTIME_LIST_FREE_DEEP(session->on_commit.on_commits))
 PG_SESSION_RESET_BUCKET(xact_callbacks, PgSessionResetXactCallbackClosedState(session))
 PG_SESSION_RESET_BUCKET(backup, PgSessionResetBackupClosedState(session))
 PG_SESSION_RESET_BUCKET(async, PgSessionResetAsyncClosedState(session))
-PG_SESSION_RESET_BUCKET(function_manager, PgSessionResetFunctionManagerClosedState(session))
 PG_SESSION_RESET_BUCKET(datetime, PgSessionResetDateTimeClosedState(session))
 PG_SESSION_RESET_BUCKET(guc, PgSessionResetGUCClosedState(session))
 PG_SESSION_RESET_BUCKET(pgstat, PgSessionResetPgStatClosedState(session))
@@ -32,6 +31,11 @@ PG_SESSION_RESET_BUCKET(logical_replication, PgSessionResetLogicalReplicationClo
 PG_SESSION_RESET_BUCKET(catalog_lookup, PgSessionResetCatalogLookupClosedState(session))
 PG_SESSION_RESET_BUCKET(invalidation_callbacks, PgSessionResetInvalidationCallbackClosedState(session))
 PG_SESSION_RESET_BUCKET(ri_globals, PgSessionResetRIGlobalsClosedState(session))
+/*
+ * Run the plan-cache sweep after session-owned SPI/cached-plan holders have
+ * released their plans.
+ */
+PG_SESSION_RESET_BUCKET(plan_cache, PgSessionResetPlanCacheClosedState(session))
 PG_SESSION_RESET_BUCKET(relmap, PgSessionResetRelMapClosedState(session))
 PG_SESSION_RESET_BUCKET(user_identity, PgSessionResetUserIdentityClosedState(session))
 PG_SESSION_RESET_BUCKET(database, PgSessionResetDatabaseClosedState(session))

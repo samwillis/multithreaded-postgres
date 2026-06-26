@@ -20,7 +20,6 @@
 #ifndef PgCurrentNodeRestoreLocationFieldsRef
 extern bool *PgCurrentNodeRestoreLocationFieldsRef(void);
 #endif
-#define restore_location_fields (*PgCurrentNodeRestoreLocationFieldsRef())
 #endif
 
 /*

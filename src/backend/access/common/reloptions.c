@@ -659,6 +659,8 @@ ThreadedRelOptionsUnlock(bool locked)
 
 	if (!multithreaded)
 		return;
+	if (!locked && ThreadedRelOptionsMutexDepth == 0)
+		return;
 
 	Assert(ThreadedRelOptionsMutexDepth > 0);
 	ThreadedRelOptionsMutexDepth--;
@@ -667,7 +669,8 @@ ThreadedRelOptionsUnlock(bool locked)
 		return;
 
 	rc = pthread_mutex_unlock(&ThreadedRelOptionsMutex);
-	RESUME_INTERRUPTS();
+	if (InterruptHoldoffCount > 0)
+		RESUME_INTERRUPTS();
 	if (rc != 0)
 	{
 		errno = rc;

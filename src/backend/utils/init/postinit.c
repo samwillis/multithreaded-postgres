@@ -721,12 +721,11 @@ BaseInit(void)
 	InitTemporaryFileAccess();
 
 	/*
-	 * Initialize local buffers for WAL record construction in process mode.
-	 * Threaded logical sessions initialize this scratch lazily on first WAL
-	 * insert so read-only idle sessions do not retain it.
+	 * Initialize local buffers for WAL record construction.  XLogBeginInsert()
+	 * may be reached inside a critical section, where memory allocation is not
+	 * allowed, so this cannot be left to the lazy first-use path.
 	 */
-	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime))
-		InitXLogInsert();
+	InitXLogInsert();
 
 	/* Initialize lock manager's local structs */
 	InitLockManagerAccess();

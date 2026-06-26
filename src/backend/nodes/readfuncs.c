@@ -31,6 +31,10 @@
 #include "nodes/readfuncs.h"
 
 
+#ifdef DEBUG_NODE_TESTS_ENABLED
+#define pg_node_restore_location_fields (*PgCurrentNodeRestoreLocationFieldsRef())
+#endif
+
 /*
  * Macros to simplify reading of different kinds of fields.  Use these
  * wherever possible to reduce the chance for silly typos.  Note that these
@@ -126,7 +130,7 @@
 #define READ_LOCATION_FIELD(fldname) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
 	token = pg_strtok(&length);		/* get field value */ \
-	local_node->fldname = restore_location_fields ? atoi(token) : -1
+	local_node->fldname = pg_node_restore_location_fields ? atoi(token) : -1
 #else
 #define READ_LOCATION_FIELD(fldname) \
 	token = pg_strtok(&length);		/* skip :fldname */ \

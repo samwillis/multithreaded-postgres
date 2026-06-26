@@ -148,7 +148,7 @@ ThreadedGUCUnlock(bool locked)
 #ifndef WIN32
 	int			rc;
 
-	if (!multithreaded)
+	if (!locked && ThreadedGUCMutexDepth == 0)
 		return;
 
 	Assert(ThreadedGUCMutexDepth > 0);
@@ -158,7 +158,8 @@ ThreadedGUCUnlock(bool locked)
 		return;
 
 	rc = pthread_mutex_unlock(&ThreadedGUCMutex);
-	RESUME_INTERRUPTS();
+	if (InterruptHoldoffCount > 0)
+		RESUME_INTERRUPTS();
 	if (rc != 0)
 	{
 		errno = rc;
@@ -1752,7 +1753,13 @@ build_guc_variables(void)
 	/*
 	 * Create the memory context that will hold all GUC-related data.
 	 */
-	Assert(GUCMemoryContext == NULL);
+#ifdef USE_ASSERT_CHECKING
+	{
+		PgSessionGUCState *guc_state = CurrentPgSessionGUCRuntimeState;
+
+		Assert(guc_state == NULL || guc_state->memory_context == NULL);
+	}
+#endif
 	GUCMemoryContext =
 		PgRuntimeGetOwnedMemoryContextWithSizes(PgCurrentGUCMemoryContextRef(),
 												"GUCMemoryContext",

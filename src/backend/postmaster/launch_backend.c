@@ -302,6 +302,7 @@ static bool backend_pooled_protocol_start_pool(void);
 static bool backend_pooled_protocol_start_one_carrier(void);
 static void backend_pooled_protocol_maybe_start_carrier_for_work(void);
 static void backend_pooled_protocol_carrier_entry(void *arg);
+static void backend_thread_shutdown_wait_event_support(int code, Datum arg);
 static void backend_pooled_protocol_enqueue(BackendPooledLogicalStart *logical_start);
 static BackendPooledLogicalStart *backend_pooled_protocol_dequeue(void);
 static int	backend_pooled_protocol_queue_count(void);
@@ -1232,6 +1233,7 @@ backend_thread_entry(void *arg)
 	InitializeThreadedSessionGUCOptions();
 	InitializeLatchWaitSet();
 	InstallPgThreadBackendRuntimeState(&thread_start->runtime_state);
+	on_proc_exit(backend_thread_shutdown_wait_event_support, 0);
 	read_nondefault_variables();
 	InitializeThreadedSessionRequiredGUCOptions();
 	if (thread_start->child_type == B_BACKEND)
@@ -1427,6 +1429,15 @@ ThreadedBackendStartupComplete(void)
 
 	PostmasterChildPublishLogicalStartupComplete(publication->pmchild,
 												 publication->postmaster_latch);
+}
+
+static void
+backend_thread_shutdown_wait_event_support(int code, Datum arg)
+{
+	(void) code;
+	(void) arg;
+
+	ShutdownWaitEventSupport();
 }
 
 static void

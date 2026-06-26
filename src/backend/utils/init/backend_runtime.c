@@ -705,6 +705,14 @@ PgCarrierInitializeRuntimeObject(PgCarrier *carrier)
 void
 PgRuntimeResetAfterFork(void)
 {
+	/*
+	 * The forked child still owns inherited postmaster descriptors that
+	 * ClosePostmasterPorts() and InitializeWaitEventSupport() will close before
+	 * BaseInit() installs the process runtime.  Preserve just the fd.c accounting
+	 * for those descriptors while resetting the rest of the runtime bridge.
+	 */
+	int			inherited_num_external_fds = *PgCurrentNumExternalFDsRef();
+
 	PgBackendResetDsmStateAfterFork();
 
 	PgRuntimeFlushCurrentHotCells();
@@ -728,6 +736,7 @@ PgRuntimeResetAfterFork(void)
 	PgExecutionInitializeRuntimeObject(&process_execution, NULL, NULL, NULL);
 
 	PgBackendResetEarlyFallbackAfterFork((int) getpid());
+	*PgCurrentNumExternalFDsRef() = inherited_num_external_fds;
 }
 
 void

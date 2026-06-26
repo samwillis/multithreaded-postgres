@@ -64,6 +64,41 @@ PgBackendResetStringInfo(StringInfoData *buf)
 	MemSet(buf, 0, sizeof(*buf));
 }
 
+static bool
+PgBackendDsmSegmentListDrained(void)
+{
+	return CurrentPgBackend != NULL &&
+		dlist_is_empty(&CurrentPgBackend->dsm_segment_list);
+}
+
+static void
+PgBackendDetachDsaArea(dsa_area *area)
+{
+	if (area == NULL)
+		return;
+
+	/*
+	 * shmem_exit() drains DSM mappings before final runtime bucket reset.  At
+	 * that point DSA on-detach callbacks have already run and dsm_segment
+	 * descriptors have been freed, so only the backend-local dsa_area wrapper
+	 * remains safe to release here.
+	 */
+	if (PgBackendDsmSegmentListDrained())
+		pfree(area);
+	else
+		dsa_detach(area);
+}
+
+static void
+PgBackendDetachDsmSegment(dsm_segment *seg)
+{
+	if (seg == NULL)
+		return;
+
+	if (!PgBackendDsmSegmentListDrained())
+		dsm_detach(seg);
+}
+
 static void
 PgBackendResetExprInterpClosedState(PgBackendExprInterpState *expr_interp)
 {
@@ -269,6 +304,18 @@ PgBackendResetBufferClosedState(PgBackendBufferState *buffers)
 }
 
 static void
+PgBackendResetIPCWaitSetClosedState(PgBackendIPCState *ipc)
+{
+	Assert(ipc != NULL);
+
+	if (ipc->latch_wait_set != NULL)
+	{
+		FreeWaitEventSet(ipc->latch_wait_set);
+		ipc->latch_wait_set = NULL;
+	}
+}
+
+static void
 PgBackendResetIPCClosedState(PgBackendIPCState *ipc)
 {
 	Assert(ipc != NULL);
@@ -276,7 +323,7 @@ PgBackendResetIPCClosedState(PgBackendIPCState *ipc)
 	if (ipc->dsm_registry_table != NULL)
 		dshash_detach((dshash_table *) ipc->dsm_registry_table);
 	if (ipc->dsm_registry_dsa != NULL)
-		dsa_detach((dsa_area *) ipc->dsm_registry_dsa);
+		PgBackendDetachDsaArea((dsa_area *) ipc->dsm_registry_dsa);
 	if (ipc->latch_wait_set != NULL)
 		FreeWaitEventSet(ipc->latch_wait_set);
 
@@ -319,7 +366,7 @@ PgBackendResetRepackClosedState(PgBackendRepackState *repack)
 	Assert(repack->decoding_worker == NULL);
 
 	if (repack->worker_dsm_segment != NULL)
-		dsm_detach(repack->worker_dsm_segment);
+		PgBackendDetachDsmSegment(repack->worker_dsm_segment);
 
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(repack->message_context);
 
@@ -577,7 +624,7 @@ PgBackendResetLogicalReplicationClosedState(PgBackendLogicalReplicationState *lo
 	}
 	if (logical_replication->launcher_last_start_times_dsa != NULL)
 	{
-		dsa_detach(logical_replication->launcher_last_start_times_dsa);
+		PgBackendDetachDsaArea(logical_replication->launcher_last_start_times_dsa);
 		logical_replication->launcher_last_start_times_dsa = NULL;
 	}
 	logical_replication->parallel_apply_worker_pool = NIL;
@@ -694,7 +741,7 @@ PgBackendResetUtilityClosedState(PgBackendUtilityState *utility)
 	if (utility->async_global_channel_table != NULL)
 		dshash_detach(utility->async_global_channel_table);
 	if (utility->async_global_channel_dsa != NULL)
-		dsa_detach(utility->async_global_channel_dsa);
+		PgBackendDetachDsaArea(utility->async_global_channel_dsa);
 	utility->async_global_channel_table = NULL;
 	utility->async_global_channel_dsa = NULL;
 
@@ -743,6 +790,15 @@ PgBackendResetClosedState(PgBackend *backend)
 		return;
 
 	PgBackendUnregisterThreadedBackend(backend);
+
+	/*
+	 * The IPC bucket owns the backend latch wait set.  Freeing that wait set
+	 * releases external FDs tracked by the storage bucket, so close only that
+	 * wait set before the generated reset loop reaches storage.  Leave the rest
+	 * of IPC state to the bucket's normal position so recovery and replication
+	 * teardown keep their historical ordering.
+	 */
+	PgBackendResetIPCWaitSetClosedState(&backend->ipc);
 
 #define PG_BACKEND_BUCKET(field, init, adopt, reset) \
 	do { \
@@ -1255,15 +1311,46 @@ PgSessionResetTempFileClosedState(PgSession *session)
 static void
 PgSessionResetPlanCacheClosedState(PgSession *session)
 {
+	dlist_mutable_iter iter;
+	bool		plan_cache_initialized;
+
 	Assert(session != NULL);
-	if (!session->plan_cache.initialized)
+	plan_cache_initialized = session->plan_cache.initialized;
+
+	if (plan_cache_initialized)
 	{
-		PgSessionInitializePlanCacheState(&session->plan_cache);
-		return;
+		dlist_foreach_modify(iter, &session->plan_cache.saved_plan_list)
+		{
+			CachedPlanSource *psrc;
+
+			psrc = dlist_container(CachedPlanSource, node, iter.cur);
+			DropCachedPlan(psrc);
+		}
+
+		dlist_foreach_modify(iter, &session->plan_cache.cached_expression_list)
+		{
+			CachedExpression *cexpr;
+
+			cexpr = dlist_container(CachedExpression, node, iter.cur);
+			FreeCachedExpression(cexpr);
+		}
+
+		Assert(dlist_is_empty(&session->plan_cache.saved_plan_list));
+		Assert(dlist_is_empty(&session->plan_cache.cached_expression_list));
 	}
 
-	Assert(dlist_is_empty(&session->plan_cache.saved_plan_list));
-	Assert(dlist_is_empty(&session->plan_cache.cached_expression_list));
+	/*
+	 * CacheMemoryContext belongs to catalog_lookup, but saved plan sources live
+	 * under it.  Delete it only after the final plan-cache sweep has unlinked and
+	 * dropped those sources.
+	 */
+	if (session->catalog_lookup.cache_memory_context != NULL)
+	{
+		if (CurrentMemoryContext == session->catalog_lookup.cache_memory_context)
+			MemoryContextSwitchTo(TopMemoryContext);
+		PG_RUNTIME_DELETE_MEMORY_CONTEXT(session->catalog_lookup.cache_memory_context);
+		session->catalog_lookup.cache_memory_context = NULL;
+	}
 
 	PgSessionInitializePlanCacheState(&session->plan_cache);
 }

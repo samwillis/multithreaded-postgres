@@ -598,11 +598,13 @@ static void
 PgBackendAdoptEarlyMemoryManagerState(PgBackend *backend)
 {
 	Assert(backend != NULL);
-	Assert(early_backend_memory_manager.context_freelists[0].num_free == 0);
-	Assert(early_backend_memory_manager.context_freelists[0].first_free == NULL);
-	Assert(early_backend_memory_manager.context_freelists[1].num_free == 0);
-	Assert(early_backend_memory_manager.context_freelists[1].first_free == NULL);
 
+	/*
+	 * Early bootstrap can populate the per-backend AllocSet freelists before a
+	 * PgBackend has been installed.  Copying the struct below transfers that
+	 * early state to the real backend bucket; reinitializing the fallback
+	 * completes the move.
+	 */
 	backend->memory_manager = early_backend_memory_manager;
 	PgBackendInitializeMemoryManagerState(&early_backend_memory_manager);
 }
