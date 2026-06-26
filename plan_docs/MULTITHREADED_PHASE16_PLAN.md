@@ -621,6 +621,18 @@ Coverage should include:
 These tests should feed `check-world-threaded` or a required subtarget. Avoid
 leaving them as local scripts only.
 
+Current failure-path stress is part of the required
+`check-threaded-world-core-tap` bundle. `t/001_threaded_runtime.pl` covers
+SQL `ERROR`, transaction abort, query cancel, backend terminate, backend
+`FATAL`, abandoned clients, reconnect loops, extension load/drop, background
+worker rejection/restart, and mixed teardown stress. Phase 16 adds
+`t/010_phase16_extension_failure_paths.pl` to focus specifically on module
+failure paths: missing module `LOAD`, repeated `_PG_init()` failure using a
+test-only thread-compatible init-failure module, successful module load after
+that failure, custom GUC stack recovery after extension `ERROR`, query cancel
+while extension code is waiting, and fresh extension custom-GUC state after
+extension `FATAL` and reconnect.
+
 ## Step 12: Add Debug Views And Lock Documentation
 
 Add observability and documentation needed to make Phase 16 failures actionable.
@@ -719,6 +731,16 @@ Current branch evidence as of June 27, 2026:
   `check-threaded-bin-pg-combinebackup` leaf now passes before the full
   threaded-world pass and no longer leaves recalcitrant WAL summarizer
   postmasters behind.
+- Focused Phase 16 failure-path stress now runs in
+  `check-threaded-world-core-tap`, which is part of
+  `check-threaded-test-backend-runtime` and `check-world-threaded`. The
+  evidence log
+  `/tmp/phase16-check-threaded-test-backend-runtime-failure-paths.log` shows
+  `t/010_phase16_extension_failure_paths.pl` passing as part of
+  `Files=10, Tests=297`; it covers missing module `LOAD`, repeated
+  `_PG_init()` failure and recovery, extension `ERROR` with custom GUC rollback,
+  cancel while extension code waits, extension `FATAL`, reconnect, and server
+  usability after each failure path.
 - process-mode `check-world` passes on the current Linux build. This configure
   has `enable_tap_tests = no`, `enable_injection_points = no`, `with_icu = no`,
   `with_python = no`, and `with_tcl = no`, so optional leaves not enabled by

@@ -39,6 +39,12 @@ test_backend_runtime_threaded = shared_module('test_backend_runtime_threaded',
 )
 test_install_libs += test_backend_runtime_threaded
 
+test_backend_runtime_threaded_initfail = shared_module('test_backend_runtime_threaded_initfail',
+  files('test_backend_runtime_threaded_initfail.c'),
+  kwargs: pg_test_mod_args,
+)
+test_install_libs += test_backend_runtime_threaded_initfail
+
 test_install_data += files(
   'test_backend_runtime.control',
   'test_backend_runtime--1.0.sql',
@@ -66,6 +72,7 @@ tests += {
       't/007_phase15_pooled_protocol_mode.pl',
       't/008_phase15_pooled_protocol_postmaster_death.pl',
       't/009_phase15_pooled_deep_waits_pinned.pl',
+      't/010_phase16_extension_failure_paths.pl',
     ],
   },
 }

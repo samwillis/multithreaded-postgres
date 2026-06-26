@@ -76,7 +76,8 @@ THREADED_WORLD_CORE_TAP_TESTS = \
 	t/006_phase14_protocol_postmaster_death.pl \
 	t/007_phase15_pooled_protocol_mode.pl \
 	t/008_phase15_pooled_protocol_postmaster_death.pl \
-	t/009_phase15_pooled_deep_waits_pinned.pl
+	t/009_phase15_pooled_deep_waits_pinned.pl \
+	t/010_phase16_extension_failure_paths.pl
 THREADED_WORLD_SUBSCRIPTION_TESTS = \
 	t/001_rep_changes.pl \
 	t/002_types.pl \
