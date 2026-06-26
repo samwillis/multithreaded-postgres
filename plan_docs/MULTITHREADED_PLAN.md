@@ -927,6 +927,11 @@ Detailed working plan: `MULTITHREADED_PHASE16_PLAN.md`.
 Phase 16 lock-order and debug-surface evidence:
 `MULTITHREADED_PHASE16_LOCKS_AND_DEBUG.md`.
 
+Status: complete as of the June 27, 2026 Gate G closeout audit. The detailed
+plan records the current local `check-phase16-gate-g-local` pass, optional
+dependency evidence, sanitizer/performance evidence, and the remaining
+non-release-blocking platform/configure rows.
+
 Primary coverage contract:
 
 ```text
