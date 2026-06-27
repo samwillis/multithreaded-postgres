@@ -748,24 +748,20 @@ Current branch evidence as of June 27, 2026:
   `_PG_init()` failure and recovery, extension `ERROR` with custom GUC rollback,
   cancel while extension code waits, extension `FATAL`, reconnect, and server
   usability after each failure path.
-- process-mode `check-world` passes on the current Linux build. This configure
-  has `enable_tap_tests = no`, `enable_injection_points = no`, `with_icu = no`,
-  `with_python = no`, and `with_tcl = no`, so optional leaves not enabled by
-  this build remain outside the current enabled-leaf count. The optional leaves
-  are now still visible in
-  `plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv` as checked
-  `configure_disabled` rows rather than hidden omissions.
-- The current default tree still has optional dependency leaves represented as
-  checked `configure_disabled` manifest rows when the configure option is off.
-  Dependency-enabled threaded evidence now exists for the main optional
-  external-library matrix in `/tmp/phase16-optional-deps-src`, configured
-  against locally extracted packages in `/tmp/phase16-debroot` with
-  `--enable-tap-tests`, `--with-ssl=openssl`, `--with-gssapi`, `--with-ldap`,
-  `--with-selinux`, `--with-uuid=e2fs`, `--with-libcurl`, `--with-libxml`, and
-  `--with-libxslt`. The threaded `TEMP_CONFIG` for these runs is
-  `/tmp/phase16-optional-deps-src/src/test/regress/threaded_smoke.conf`, which
-  sets `multithreaded=on`, `io_method=sync`, and `summarize_wal=off`.
-- Optional-deps threaded checks passing in that scratch build:
+- process-mode `check-world` passes on the current rich WSL Linux build as part
+  of `check-phase16-gate-g-local`. This configure has `--enable-tap-tests`,
+  `--enable-injection-points`, `--with-ssl=openssl`, `--with-gssapi`,
+  `--with-ldap`, `--with-uuid=e2fs`, `--with-libcurl`, `--with-libxml`,
+  `--with-libxslt`, `--with-icu`, `--with-python`, and `--with-tcl`, so the
+  formerly optional rows are now enabled leaves covered by
+  `check-world-threaded`. The remaining manifest rows are limited to the
+  SELinux policy environment, the Windows-only pgevent helper, and the
+  support-module-only `src/test/perl` leaf.
+- Dependency-enabled threaded evidence for the main optional external-library
+  matrix was first gathered in `/tmp/phase16-optional-deps-src`, configured
+  against locally extracted packages in `/tmp/phase16-debroot`. The current
+  worktree now carries that configure surface directly.
+- Optional-deps threaded checks passing in that rich WSL surface:
   `MALLOC_CHECK_=3 gmake -C contrib/pgcrypto check`
   (`/tmp/phase16-optional-pgcrypto.log`);
   `MALLOC_CHECK_=3 gmake -C contrib/uuid-ossp check`
