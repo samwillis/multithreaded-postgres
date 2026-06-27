@@ -62,6 +62,7 @@ struct DynamicFileList
 
 static PG_GLOBAL_RUNTIME DynamicFileList *file_list = NULL;
 static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
+static PG_GLOBAL_RUNTIME int replay_at_threaded_backend_start_count = 0;
 
 #ifndef WIN32
 static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -438,6 +439,8 @@ internal_load_library_locked(const char *libname)
 
 		file_scanner->replay_at_threaded_backend_start =
 			process_shared_preload_libraries_in_progress;
+		if (file_scanner->replay_at_threaded_backend_start)
+			replay_at_threaded_backend_start_count++;
 
 		call_module_init_function(file_scanner);
 
@@ -560,10 +563,15 @@ initialize_loaded_modules_for_threaded_session(void)
 	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
 		CurrentPgSession == NULL)
 		return;
+	if (replay_at_threaded_backend_start_count == 0)
+		return;
 
 	locked = LockDynamicFileManagerForThreadedReplay();
 	PG_TRY();
 	{
+		if (replay_at_threaded_backend_start_count == 0)
+			goto done;
+
 		file_scanner = file_list;
 		while (file_scanner != NULL)
 		{
@@ -578,6 +586,8 @@ initialize_loaded_modules_for_threaded_session(void)
 
 			file_scanner = next;
 		}
+done:
+		;
 	}
 	PG_FINALLY();
 	{

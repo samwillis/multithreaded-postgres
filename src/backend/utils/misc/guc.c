@@ -7551,6 +7551,18 @@ write_nondefault_variables(GucContext context)
 														  nondef_link, iter.cur);
 		struct config_generic *gconf = GUC_COLD_STATE_RECORD(cold);
 
+#ifndef EXEC_BACKEND
+		/*
+		 * Thread-backed children share the postmaster address space and must not
+		 * replay postmaster/internal GUCs into session storage.  Avoid writing
+		 * rows that threaded readers would only parse and discard.
+		 */
+		if (multithreaded &&
+			(gconf->context == PGC_POSTMASTER ||
+			 gconf->context == PGC_INTERNAL))
+			continue;
+#endif
+
 		write_one_nondefault_variable(fp, gconf);
 	}
 
@@ -7635,6 +7647,21 @@ read_nondefault_variables(void)
 							CONFIG_EXEC_PARAMS)));
 		return;
 	}
+
+#ifndef EXEC_BACKEND
+	if (multithreaded && IsUnderPostmaster &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime))
+	{
+		struct stat stat_buf;
+
+		if (fstat(fileno(fp), &stat_buf) == 0 && stat_buf.st_size == 0)
+		{
+			FreeFile(fp);
+			initialize_loaded_modules_for_threaded_session();
+			return;
+		}
+	}
+#endif
 
 	/*
 	 * Dynamic library _PG_init() can define custom GUCs and reserve their
