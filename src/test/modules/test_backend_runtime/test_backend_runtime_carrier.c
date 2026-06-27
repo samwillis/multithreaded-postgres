@@ -12,6 +12,15 @@
  */
 #include "test_backend_runtime.h"
 
+static void
+test_clear_latch_state(Latch *latch)
+{
+	Assert(!latch->maybe_sleeping);
+
+	latch->is_set = false;
+	pg_memory_barrier();
+}
+
 PG_FUNCTION_INFO_V1(test_carrier_misc_state_is_carrier_local);
 Datum
 test_carrier_misc_state_is_carrier_local(PG_FUNCTION_ARGS)
@@ -494,7 +503,7 @@ test_carrier_protocol_park_prepare_commit(PG_FUNCTION_ARGS)
 		ok = ok && scheduler->active_carrier_count == base_active_carriers;
 		ok = ok && scheduler->carrier_lease_count == base_carrier_leases;
 
-		ResetLatch(&fake_latch);
+		test_clear_latch_state(&fake_latch);
 		PgBackendRaiseInterrupt(&state.logical.backend,
 								PG_BACKEND_INTERRUPT_QUERY_CANCEL);
 		ok = ok && fake_latch.is_set;
@@ -502,7 +511,7 @@ test_carrier_protocol_park_prepare_commit(PG_FUNCTION_ARGS)
 		pending_interrupts = PgBackendConsumeInterrupts(&state.logical.backend);
 		ok = ok && (pending_interrupts &
 					PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_QUERY_CANCEL));
-		ResetLatch(&fake_latch);
+		test_clear_latch_state(&fake_latch);
 
 		ok = ok && !PgBackendMarkProtocolReadParkWake(&state.logical.backend, 0,
 													  PG_PROTOCOL_PARK_WAKE_LOGICAL,

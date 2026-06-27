@@ -3275,7 +3275,7 @@ WaitForStandbyConfirmation(XLogRecPtr wait_for_lsn)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 		}
 
 		/* Exit if done waiting for every slot. */

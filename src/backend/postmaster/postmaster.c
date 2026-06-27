@@ -1740,11 +1740,13 @@ ServerLoop(void)
 		 * postmaster has finished creating the wait set and recorded a latch
 		 * pointer for direct wakeups.  Drain thread handoff state before
 		 * blocking so such early publications cannot sleep until the next
-		 * timeout.
+		 * timeout.  Drain exits first so a bgworker that starts and exits
+		 * before the postmaster observes it is cleaned up, not published as
+		 * newly running.
 		 */
-		process_pm_thread_startup_complete();
 		process_pm_pooled_logical_exit();
 		process_pm_thread_exit();
+		process_pm_thread_startup_complete();
 
 		nevents = WaitEventSetWait(pm_wait_set,
 								   DetermineSleepTime(),
@@ -1786,9 +1788,9 @@ ServerLoop(void)
 			process_pm_child_exit();
 		if (pending_pm_pmsignal)
 			process_pm_pmsignal();
-		process_pm_thread_startup_complete();
 		process_pm_pooled_logical_exit();
 		process_pm_thread_exit();
+		process_pm_thread_startup_complete();
 
 		for (int i = 0; i < nevents; i++)
 		{

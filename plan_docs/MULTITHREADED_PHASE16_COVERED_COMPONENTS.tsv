@@ -18,12 +18,15 @@ contrib/file_fdw	check-threaded-contrib-file-fdw-run	file_fdw foreign-table regr
 contrib/fuzzystrmatch	check-threaded-contrib-fuzzystrmatch-run	fuzzystrmatch regression, including UTF-8 SQL coverage, runs under threaded_workers.conf
 contrib/hstore	check-threaded-contrib-hstore-run	hstore regression runs under threaded_workers.conf
 contrib/hstore_plperl	check-threaded-contrib-hstore-plperl-run	hstore_plperl, hstore_plperlu, and create_transform regressions run under threaded_workers.conf after PL/Perl and the transform module declare thread-per-session metadata; hstore_plperl keeps hstore lookup pointers in runtime-owned extension state
+contrib/hstore_plpython	check-threaded-contrib-hstore-plpython-run	hstore_plpython transform regression runs under threaded_workers.conf in the rich WSL dependency-enabled build with PL/Python and hstore installed
 contrib/intagg	check-threaded-contrib-intagg-run	intagg SQL-only extension check runs in threaded-world temp install
 contrib/intarray	check-threaded-contrib-intarray-run	intarray regression runs under threaded_workers.conf
 contrib/isn	check-threaded-contrib-isn-run	isn regression, including isn.weak custom GUC coverage, runs under threaded_workers.conf
 contrib/jsonb_plperl	check-threaded-contrib-jsonb-plperl-run	jsonb_plperl and jsonb_plperlu transform regressions run under threaded_workers.conf after PL/Perl and the transform module declare thread-per-session metadata
+contrib/jsonb_plpython	check-threaded-contrib-jsonb-plpython-run	jsonb_plpython transform regression runs under threaded_workers.conf in the rich WSL dependency-enabled build with PL/Python
 contrib/lo	check-threaded-contrib-lo-run	lo large-object trigger regression runs under threaded_workers.conf
 contrib/ltree	check-threaded-contrib-ltree-run	ltree regression runs under threaded_workers.conf
+contrib/ltree_plpython	check-threaded-contrib-ltree-plpython-run	ltree_plpython transform regression runs under threaded_workers.conf in the rich WSL dependency-enabled build with PL/Python and ltree installed
 contrib/oid2name	check-threaded-contrib-oid2name-run	oid2name client utility TAP leaf runs through direct threaded-world prove coverage
 contrib/pageinspect	check-threaded-contrib-pageinspect-run	pageinspect regression runs under threaded_workers.conf
 contrib/passwordcheck	check-threaded-contrib-passwordcheck-run	passwordcheck regression runs under threaded_workers.conf with session-local hook and GUC state
@@ -33,6 +36,7 @@ contrib/pg_logicalinspect	check-threaded-contrib-pg-logicalinspect-run	pg_logica
 contrib/pg_overexplain	check-threaded-contrib-pg-overexplain-run	pg_overexplain EXPLAIN hook regression runs under threaded_workers.conf with runtime-owned hook chain state
 contrib/pg_plan_advice	check-threaded-contrib-pg-plan-advice-run	pg_plan_advice planner-advice regressions run under threaded_workers.conf after EXPLAIN and planner extension IDs became session-refreshed while hook chains and advisor registrations stayed runtime-owned; advisor hook list access is serialized and readers snapshot the list before invoking hooks
 contrib/pg_prewarm	check-threaded-contrib-pg-prewarm-run	pg_prewarm SQL regression runs under threaded_workers.conf, and autoprewarm TAP runs under threaded_smoke.conf with shared-preload postmaster custom GUC descriptor replay and autoprewarm worker restart coverage
+contrib/pgcrypto	check-threaded-contrib-pgcrypto-run	pgcrypto digest, HMAC, cipher, random, and public-key cryptography regressions run under threaded_workers.conf in the rich WSL dependency-enabled OpenSSL build
 contrib/pg_stat_statements	check-threaded-contrib-pg-stat-statements-run	pg_stat_statements SQL regression runs under threaded_workers.conf, and restart TAP runs under threaded_smoke.conf with thread-per-session metadata, process-visible shmem handles, per-session query-id enablement, and threaded replay of custom GUC descriptors for pg_stat_statements.save
 contrib/pg_stash_advice	check-threaded-contrib-pg-stash-advice-run	pg_stash_advice SQL and UTF-8 regressions run under threaded_workers.conf, and persistence TAP runs under threaded_smoke.conf after threaded replay stopped re-registering runtime-wide pg_plan_advice advisors and backend-local DSA/dshash attachments gained before-shmem-exit cleanup ahead of generic DSM shutdown
 contrib/pg_surgery	check-threaded-contrib-pg-surgery-run	pg_surgery heap surgery regression runs under threaded_workers.conf
@@ -43,6 +47,7 @@ contrib/pgrowlocks	check-threaded-contrib-pgrowlocks-run	pgrowlocks isolation te
 contrib/pgstattuple	check-threaded-contrib-pgstattuple-run	pgstattuple regression runs under threaded_workers.conf
 contrib/postgres_fdw	check-threaded-contrib-postgres-fdw-run	postgres_fdw remote-connection, query-cancel, and eval-plan-qual regression/isolation coverage runs under threaded_workers.conf with session-owned connection, shippability, option, and application-name state; TAP surface remains gated by enable_tap_tests
 contrib/seg	check-threaded-contrib-seg-run	seg regression, including parser, security, and partition coverage, runs under threaded_workers.conf
+contrib/sslinfo	check-threaded-src-test-ssl	sslinfo is installed and exercised by src/test/ssl/t/003_sslinfo.pl under threaded_smoke.conf in the rich WSL dependency-enabled OpenSSL build
 contrib/spi	check-threaded-contrib-spi-run	spi trigger/SPI regression runs under threaded_workers.conf with session-local refint plan cache state
 contrib/tablefunc	check-threaded-contrib-tablefunc-run	tablefunc set-returning and crosstab regression runs under threaded_workers.conf
 contrib/tcn	check-threaded-contrib-tcn-run	tcn trigger notification isolation test runs under threaded_workers.conf
@@ -50,7 +55,9 @@ contrib/test_decoding	check-threaded-contrib-test-decoding-run	test_decoding SQL
 contrib/tsm_system_rows	check-threaded-contrib-tsm-system-rows-run	tsm_system_rows TABLESAMPLE regression runs under threaded_workers.conf
 contrib/tsm_system_time	check-threaded-contrib-tsm-system-time-run	tsm_system_time TABLESAMPLE regression runs under threaded_workers.conf
 contrib/unaccent	check-threaded-contrib-unaccent-run	unaccent text search dictionary regression runs under threaded_workers.conf
+contrib/uuid-ossp	check-threaded-contrib-uuid-ossp-run	uuid-ossp UUID generation regression runs under threaded_workers.conf in the rich WSL dependency-enabled e2fs UUID build
 contrib/vacuumlo	check-threaded-contrib-vacuumlo-run	vacuumlo client utility TAP leaf runs through direct threaded-world prove coverage
+contrib/xml2	check-threaded-contrib-xml2-run	xml2 XPath and XSLT regression runs under threaded_workers.conf in the rich WSL dependency-enabled libxml/libxslt build
 src/bin/initdb	check-threaded-bin-initdb	initdb TAP leaf runs through direct threaded-world prove coverage
 src/bin/pg_amcheck	check-threaded-bin-pg-amcheck	pg_amcheck TAP corruption-detection coverage runs against TEMP_CONFIG-injected multithreaded TAP clusters
 src/bin/pg_archivecleanup	check-threaded-bin-pg-archivecleanup	pg_archivecleanup TAP leaf runs through direct threaded-world prove coverage
@@ -73,6 +80,7 @@ src/bin/pgbench	check-threaded-bin-pgbench	pgbench no-server TAP runs through di
 src/bin/psql	check-threaded-bin-psql	psql TAP coverage runs under threaded TAP; locale-sensitive 001_basic uses a fresh LC_CTYPE=C initdb while tab-completion, cancel, and pager coverage keep the default C.UTF-8 threaded template
 src/bin/scripts	check-threaded-bin-scripts	client script TAP coverage runs under threaded TAP; locale-sensitive createdb coverage uses a fresh LC_CTYPE=C initdb instead of the shared C.UTF-8 template so threaded postmaster/database locale constraints are preserved
 src/interfaces/libpq	check-threaded-interfaces-libpq	libpq URI, API, host-list load-balancing, and service-file TAP coverage runs with TEMP_CONFIG-injected multithreaded TAP clusters; optional load_balance DNS and encryption matrices remain gated by PG_TEST_EXTRA
+src/interfaces/libpq-oauth	check-threaded-interfaces-libpq-oauth	libpq-oauth unit TAP runs oauth_tests with libcurl enabled and cassert enabled so the OAuth parser and async curl paths are exercised rather than skipped
 src/interfaces/ecpg/compatlib	check-threaded-interfaces-ecpg-compatlib	ECPG compatibility library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/ecpglib	check-threaded-interfaces-ecpg-ecpglib	ECPG client library check leaf has no threaded-server dependency and runs through check-threaded-interfaces
 src/interfaces/ecpg/include	check-threaded-interfaces-ecpg-include	ECPG header check leaf has no threaded-server dependency and runs through check-threaded-interfaces
@@ -80,8 +88,13 @@ src/interfaces/ecpg/pgtypeslib	check-threaded-interfaces-ecpg-pgtypeslib	ECPG pg
 src/interfaces/ecpg/preproc	check-threaded-interfaces-ecpg-preproc	ECPG preprocessor TAP leaf runs through direct threaded-world prove coverage
 src/pl/plpgsql/src	check-threaded-plpgsql	PL/pgSQL regression runs under threaded_workers.conf
 src/pl/plperl	check-threaded-plperl	PL/Perl trusted, untrusted, SPI, trigger, shared hash, utility, Unicode, transaction, environment, and plperl/plperlu interaction regressions run under threaded_workers.conf with thread-per-session metadata and an alternate plperl_init expectation for threaded custom-GUC replay visibility across sessions
+src/pl/plpython	check-threaded-plpython	PL/Python trusted regression suite runs under threaded_workers.conf in the rich WSL dependency-enabled Python build
+src/pl/tcl	check-threaded-pltcl	PL/Tcl regression suite runs under threaded_workers.conf in the rich WSL dependency-enabled Tcl build
 src/test/authentication	check-threaded-src-test-authentication	authentication TAP coverage runs under threaded TAP; password, peer, file-inclusion, SSPI, and pre-auth files use the default C.UTF-8 template, while SASLprep and login-trigger files use fresh LC_CTYPE=C initdbs so threaded postmaster/database locale constraints are preserved; SSPI and injection-point paths remain gated by platform/configuration
+src/test/icu	check-threaded-src-test-icu	ICU database and collation TAP coverage runs under threaded_smoke.conf in the rich WSL dependency-enabled ICU build using the fresh LC_CTYPE=C helper for locale-sensitive probes
 src/test/isolation	check-threaded-src-test-isolation	full isolation suite runs under threaded_workers.conf
+src/test/kerberos	check-threaded-src-test-kerberos	Kerberos/GSSAPI authentication and delegation TAP coverage runs under threaded_smoke.conf in the rich WSL dependency-enabled build using extracted MIT krb5 tools and KDB plugins
+src/test/ldap	check-threaded-src-test-ldap	LDAP authentication TAP coverage runs under threaded_smoke.conf in the rich WSL dependency-enabled build using extracted slapd and OpenLDAP schema files
 src/test/postmaster	check-threaded-src-test-postmaster	postmaster TAP start/stop, connection-limit, and SSL/GSS negotiation coverage runs under threaded TAP after admitting dead-end backend thread carriers and draining logical shutdown interrupts during pre-auth client reads; direct Phase 16 probe passed t/001_basic.pl, t/002_connection_limits.pl, t/003_start_stop.pl, and t/004_negotiate.pl
 src/test/recovery	check-threaded-src-test-recovery	full recovery TAP coverage runs under threaded TAP after startup process shutdown, config reload, and proc-die requests consumed by generic threaded waits are translated back into startup-process state; direct Phase 16 probe passed all 52 configured recovery files with 631 tests, with injection-point-only files skipping cleanly when enable_injection_points=no
 src/test/modules/brin	check-threaded-test-modules-brin	BRIN module isolation coverage runs under threaded_workers.conf with current configured TAP surface
@@ -89,7 +102,10 @@ src/test/modules/commit_ts	check-threaded-test-modules-commit-ts	commit timestam
 src/test/modules/delay_execution	check-threaded-test-modules-delay-execution	delay_execution partition DDL isolation coverage runs under threaded_workers.conf with thread-per-session metadata, session-private delay GUC state, and runtime-owned planner hook chain state
 src/test/modules/dummy_index_am	check-threaded-test-modules-dummy-index-am	dummy index access method regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/dummy_seclabel	check-threaded-test-modules-dummy-seclabel	dummy security-label provider regression runs under threaded_workers.conf with thread-per-session metadata and process-global label-provider registration scoped to the temp test server
+src/test/modules/gin	check-threaded-test-modules-gin	GIN injection-point regression runs under threaded_workers.conf in the rich WSL build with enable_injection_points=yes
 src/test/modules/index	check-threaded-test-modules-index	index module isolation coverage runs under threaded_workers.conf
+src/test/modules/injection_points	check-threaded-test-modules-injection-points	injection_points SQL and isolation coverage runs under threaded_workers.conf in the rich WSL build with enable_injection_points=yes
+src/test/modules/ldap_password_func	check-threaded-test-modules-ldap-password-func	ldap_password_func mutated bind-password TAP runs under threaded_smoke.conf in the rich WSL dependency-enabled LDAP build using extracted slapd and schema files
 src/test/modules/libpq_pipeline	check-threaded-test-modules-libpq-pipeline	libpq_pipeline TAP module runs pipeline protocol client/server coverage against a TEMP_CONFIG-injected multithreaded TAP server
 src/test/modules/oauth_validator	check-threaded-test-modules-oauth-validator	default threaded TAP leaf covers check-world behavior; current default skips OAuth tests because PG_TEST_EXTRA lacks oauth, so PG_TEST_EXTRA=oauth validator coverage remains a future admission guard
 src/test/modules/test_backend_runtime	check-threaded-test-backend-runtime	backend runtime SQL and TAP fixtures cover core threaded runtime
@@ -132,11 +148,14 @@ src/test/modules/test_rls_hooks	check-threaded-test-modules-test-rls-hooks	RLS h
 src/test/modules/test_saslprep	check-threaded-test-modules-test-saslprep	SASLprep regression module declares thread-per-session metadata and runs under threaded_workers.conf
 src/test/modules/test_shmem	check-threaded-test-modules-test-shmem	test_shmem late shared-memory allocation TAP runs under threaded_smoke.conf with thread-per-session metadata and per-thread attach/init state while preserving process-mode shared-preload expectations
 src/test/modules/test_shm_mq	check-threaded-test-modules-test-shm-mq	shared-memory message queue regression module declares thread-per-session metadata and runs worker coverage under threaded_workers.conf
+src/test/modules/ssl_passphrase_callback	check-threaded-test-modules-ssl-passphrase-callback	ssl_passphrase_callback TAP runs under threaded_smoke.conf in the rich WSL dependency-enabled OpenSSL build after generating its local encrypted-key fixture
 src/test/modules/test_slru	check-threaded-test-modules-test-slru	test_slru SQL regression and default TAP wraparound coverage run under threaded configs with thread-per-session metadata and shared-memory callback registration guarded against threaded replay; injection-point-only multixact crash coverage remains gated by enable_injection_points
 src/test/modules/test_tidstore	check-threaded-test-modules-test-tidstore	TidStore regression module runs under threaded_workers.conf with formerly file-scope test state moved to session-private extension state
+src/test/modules/typcache	check-threaded-test-modules-typcache	typcache injection-point regression runs under threaded_workers.conf in the rich WSL build with enable_injection_points=yes
 src/test/modules/worker_spi	check-threaded-test-modules-worker-spi	worker_spi TAP runs static and dynamic background-worker coverage under threaded_smoke.conf; t/001 passes shared_preload_libraries custom GUC replay plus dynamic worker launch, tuple consumption, and wait-event checks, while t/002 skips unless enable_injection_points is configured
 src/test/modules/xid_wraparound	check-threaded-test-modules-xid-wraparound	default threaded TAP leaf covers check-world behavior; current default skips wraparound tests because PG_TEST_EXTRA lacks xid_wraparound, so the expensive PG_TEST_EXTRA=xid_wraparound extension path remains a future admission guard
 src/test/modules/unsafe_tests	check-threaded-test-modules-unsafe-tests	unsafe_tests regression suite runs under threaded_workers.conf, including non-contrib GUC privilege checks and ALTER SYSTEM custom-placeholder reload/reconnect coverage after threaded runtime server-GUC path ownership and placeholder replay fixes
 src/test/regress	check-threaded-src-test-regress	core threaded regression runs under threaded_workers.conf
+src/test/ssl	check-threaded-src-test-ssl	SSL TAP coverage, including certificate handling, SCRAM channel binding, sslinfo, and SNI, runs under threaded_smoke.conf in the rich WSL dependency-enabled OpenSSL build with PG_TEST_EXTRA=ssl
 src/test/subscription	check-threaded-src-test-subscription	full subscription TAP coverage runs under threaded TAP; locale-sensitive t/005_encoding.pl uses a fresh LC_CTYPE=C initdb while the remaining files use the shared threaded template, with t/012_collation.pl skipping only when ICU is not configured; direct Phase 16 probes passed t/001_rep_changes.pl through t/031_column_list.pl and then t/032_subscribe_use_index.pl through t/100_bugs.pl after logical-replication worker cleanup fixes
 src/tools/pg_bsd_indent	check-threaded-tools-pg-bsd-indent	pg_bsd_indent tool TAP leaf runs through direct threaded-world prove coverage

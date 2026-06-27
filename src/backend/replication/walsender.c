@@ -1483,6 +1483,9 @@ static void
 WalSndFreeLogicalDecodingContext(void)
 {
 	LogicalDecodingContext *ctx = logical_decoding_ctx;
+	MemoryContext old_context;
+	MemoryContext walk_context;
+	bool		current_in_decoding_context = false;
 
 	if (ctx == NULL)
 		return;
@@ -1491,7 +1494,23 @@ WalSndFreeLogicalDecodingContext(void)
 	if (xlogreader == ctx->reader)
 		xlogreader = NULL;
 
+	old_context = CurrentMemoryContext;
+	for (walk_context = old_context;
+		 walk_context != NULL;
+		 walk_context = MemoryContextGetParent(walk_context))
+	{
+		if (walk_context == ctx->context)
+		{
+			current_in_decoding_context = true;
+			MemoryContextSwitchTo(TopMemoryContext);
+			break;
+		}
+	}
+
 	FreeDecodingContext(ctx);
+
+	if (!current_in_decoding_context)
+		MemoryContextSwitchTo(old_context);
 }
 
 static void
@@ -2330,7 +2349,8 @@ exec_replication_command(const char *cmd_string)
 				/* dupe, but necessary per libpqrcv_endstreaming */
 				EndReplicationCommand(cmdtag);
 
-				Assert(xlogreader != NULL);
+				Assert(cmd->kind != REPLICATION_KIND_PHYSICAL ||
+					   xlogreader != NULL);
 				break;
 			}
 

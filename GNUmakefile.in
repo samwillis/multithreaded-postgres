@@ -89,7 +89,6 @@ THREADED_WORLD_SUBSCRIPTION_TESTS = \
 	t/009_matviews.pl \
 	t/010_truncate.pl \
 	t/011_generated.pl \
-	t/012_collation.pl \
 	t/013_partition.pl \
 	t/014_binary.pl \
 	t/015_stream.pl \
@@ -126,6 +125,9 @@ THREADED_WORLD_CORE_PROVE = $(THREADED_WORLD_PROVE)
 THREADED_WORLD_COVERAGE_TOOL = $(abs_top_srcdir)/src/tools/threaded_world/check_threaded_world_coverage.pl
 THREADED_WORLD_COVERED_COMPONENTS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_COVERED_COMPONENTS.tsv
 THREADED_WORLD_EXCLUSIONS = $(abs_top_srcdir)/plan_docs/MULTITHREADED_PHASE16_EXCLUSIONS.tsv
+PHASE16_LOCAL_DEBROOT ?= /tmp/phase16-debroot
+PHASE16_KRB5_BIN_DIR = $(abs_top_builddir)/tmp_install/phase16-krb5-bin
+PHASE16_LOCAL_LD_LIBRARY_PATH = $(PHASE16_LOCAL_DEBROOT)/usr/lib/x86_64-linux-gnu:$(PHASE16_LOCAL_DEBROOT)/usr/lib/x86_64-linux-gnu/mit-krb5
 THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/amcheck \
 	contrib/auth_delay \
@@ -146,12 +148,15 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/fuzzystrmatch \
 	contrib/hstore \
 	contrib/hstore_plperl \
+	contrib/hstore_plpython \
 	contrib/intagg \
 	contrib/intarray \
 	contrib/isn \
 	contrib/jsonb_plperl \
+	contrib/jsonb_plpython \
 	contrib/lo \
 	contrib/ltree \
+	contrib/ltree_plpython \
 	contrib/oid2name \
 	contrib/pageinspect \
 	contrib/passwordcheck \
@@ -161,6 +166,7 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/pg_overexplain \
 	contrib/pg_plan_advice \
 	contrib/pg_prewarm \
+	contrib/pgcrypto \
 	contrib/pg_stat_statements \
 	contrib/pg_stash_advice \
 	contrib/pg_surgery \
@@ -171,6 +177,7 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/pgstattuple \
 	contrib/postgres_fdw \
 	contrib/seg \
+	contrib/sslinfo \
 	contrib/spi \
 	contrib/tablefunc \
 	contrib/tcn \
@@ -178,6 +185,8 @@ THREADED_WORLD_CONTRIB_COMPONENTS = \
 	contrib/tsm_system_rows \
 	contrib/tsm_system_time \
 	contrib/unaccent \
+	contrib/uuid-ossp \
+	contrib/xml2 \
 	contrib/vacuumlo
 
 define threaded_world_prove
@@ -272,8 +281,12 @@ check-threaded-src-test:
 	$(MAKE) check-threaded-src-test-regress
 	$(MAKE) check-threaded-src-test-isolation
 	$(MAKE) check-threaded-src-test-authentication
+	$(MAKE) check-threaded-src-test-icu
+	$(MAKE) check-threaded-src-test-kerberos
+	$(MAKE) check-threaded-src-test-ldap
 	$(MAKE) check-threaded-src-test-postmaster
 	$(MAKE) check-threaded-src-test-recovery
+	$(MAKE) check-threaded-src-test-ssl
 	$(MAKE) check-threaded-src-test-subscription
 	$(MAKE) check-threaded-test-modules
 
@@ -296,6 +309,43 @@ check-threaded-src-test-authentication:
 	$(call threaded_world_prove,src/test/authentication,t/001_password.pl t/003_peer.pl t/004_file_inclusion.pl t/005_sspi.pl t/007_pre_auth.pl)
 	$(call threaded_world_prove_fresh_locale_c,src/test/authentication,t/002_saslprep.pl t/006_login_trigger.pl)
 
+check-threaded-src-test-icu: CHECKPREP_TOP=src/test/icu
+check-threaded-src-test-icu: | temp-install
+check-threaded-src-test-icu: submake-generated-headers
+check-threaded-src-test-icu:
+	$(call threaded_world_prove_fresh_locale_c,src/test/icu,t/*.pl)
+
+phase16-krb5-shims: | temp-install
+phase16-krb5-shims:
+	rm -rf '$(PHASE16_KRB5_BIN_DIR)'
+	$(MKDIR_P) '$(PHASE16_KRB5_BIN_DIR)'
+	ln -sf '$(PHASE16_LOCAL_DEBROOT)'/usr/bin/krb5-config.mit '$(PHASE16_KRB5_BIN_DIR)'/krb5-config
+	ln -sf '$(PHASE16_LOCAL_DEBROOT)'/usr/bin/kdestroy.mit '$(PHASE16_KRB5_BIN_DIR)'/kdestroy
+	ln -sf '$(PHASE16_LOCAL_DEBROOT)'/usr/bin/kinit.mit '$(PHASE16_KRB5_BIN_DIR)'/kinit
+	ln -sf '$(PHASE16_LOCAL_DEBROOT)'/usr/bin/klist.mit '$(PHASE16_KRB5_BIN_DIR)'/klist
+
+check-threaded-src-test-kerberos: CHECKPREP_TOP=src/test/kerberos
+check-threaded-src-test-kerberos: | temp-install phase16-krb5-shims
+check-threaded-src-test-kerberos: submake-generated-headers
+check-threaded-src-test-kerberos: export PG_TEST_KRB5_BIN_DIR = $(PHASE16_KRB5_BIN_DIR)
+check-threaded-src-test-kerberos: export PG_TEST_KRB5_SBIN_DIR = $(PHASE16_LOCAL_DEBROOT)/usr/sbin
+check-threaded-src-test-kerberos: export PG_TEST_KRB5_KDB_MODULE_DIR = $(PHASE16_LOCAL_DEBROOT)/usr/lib/x86_64-linux-gnu/krb5/plugins/kdb
+check-threaded-src-test-kerberos: export LD_LIBRARY_PATH := $(PHASE16_LOCAL_LD_LIBRARY_PATH)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+check-threaded-src-test-kerberos:
+	$(MAKE) -j1 -C contrib/postgres_fdw checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) -j1 -C contrib/dblink checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(call threaded_world_prove,src/test/kerberos,t/*.pl)
+
+check-threaded-src-test-ldap: CHECKPREP_TOP=src/test/ldap
+check-threaded-src-test-ldap: | temp-install
+check-threaded-src-test-ldap: submake-generated-headers
+check-threaded-src-test-ldap: export PG_TEST_OPENLDAP_SLAPD = $(PHASE16_LOCAL_DEBROOT)/usr/sbin/slapd
+check-threaded-src-test-ldap: export PG_TEST_OPENLDAP_SCHEMA_DIR = $(PHASE16_LOCAL_DEBROOT)/etc/ldap/schema
+check-threaded-src-test-ldap: export LD_LIBRARY_PATH := $(PHASE16_LOCAL_LD_LIBRARY_PATH)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+check-threaded-src-test-ldap: export PATH := $(PHASE16_LOCAL_DEBROOT)/usr/bin:$(PATH)
+check-threaded-src-test-ldap:
+	$(call threaded_world_prove,src/test/ldap,t/*.pl)
+
 check-threaded-src-test-postmaster: CHECKPREP_TOP=src/test/postmaster
 check-threaded-src-test-postmaster: | temp-install
 check-threaded-src-test-postmaster: submake-generated-headers
@@ -308,12 +358,19 @@ check-threaded-src-test-recovery: submake-generated-headers
 check-threaded-src-test-recovery:
 	$(call threaded_world_prove,src/test/recovery,t/*.pl)
 
+check-threaded-src-test-ssl: CHECKPREP_TOP=src/test/ssl
+check-threaded-src-test-ssl: | temp-install
+check-threaded-src-test-ssl: submake-generated-headers
+check-threaded-src-test-ssl:
+	$(MAKE) -j1 -C contrib/sslinfo checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(call threaded_world_prove,src/test/ssl,t/*.pl)
+
 check-threaded-src-test-subscription: CHECKPREP_TOP=src/test/subscription
 check-threaded-src-test-subscription: | temp-install
 check-threaded-src-test-subscription: submake-generated-headers
 check-threaded-src-test-subscription:
 	$(call threaded_world_prove,src/test/subscription,$(THREADED_WORLD_SUBSCRIPTION_TESTS))
-	$(call threaded_world_prove_fresh_locale_c,src/test/subscription,t/005_encoding.pl)
+	$(call threaded_world_prove_fresh_locale_c,src/test/subscription,t/005_encoding.pl t/012_collation.pl)
 
 check-threaded-test-modules: | temp-install
 check-threaded-test-modules:
@@ -323,7 +380,10 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-modules-delay-execution
 	$(MAKE) check-threaded-test-modules-dummy-index-am
 	$(MAKE) check-threaded-test-modules-dummy-seclabel
+	$(MAKE) check-threaded-test-modules-gin
 	$(MAKE) check-threaded-test-modules-index
+	$(MAKE) check-threaded-test-modules-injection-points
+	$(MAKE) check-threaded-test-modules-ldap-password-func
 	$(MAKE) check-threaded-test-modules-libpq-pipeline
 	$(MAKE) check-threaded-test-modules-oauth-validator
 	$(MAKE) check-threaded-test-modules-plsample
@@ -364,7 +424,9 @@ check-threaded-test-modules:
 	$(MAKE) check-threaded-test-modules-test-shmem
 	$(MAKE) check-threaded-test-modules-test-shm-mq
 	$(MAKE) check-threaded-test-modules-test-slru
+	$(MAKE) check-threaded-test-modules-ssl-passphrase-callback
 	$(MAKE) check-threaded-test-modules-test-tidstore
+	$(MAKE) check-threaded-test-modules-typcache
 	$(MAKE) check-threaded-test-modules-worker-spi
 	$(MAKE) check-threaded-test-modules-test-aio
 	$(MAKE) check-threaded-test-modules-test-autovacuum
@@ -390,13 +452,15 @@ check-threaded-test-modules-brin: | temp-install
 check-threaded-test-modules-brin: submake-generated-headers
 check-threaded-test-modules-brin:
 	$(MAKE) -C src/test/modules/brin checkprep
-	$(MAKE) -C src/test/modules/brin check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/brin check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,src/test/modules/brin,t/*.pl)
 
 check-threaded-test-modules-commit-ts: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-commit-ts: | temp-install
 check-threaded-test-modules-commit-ts: submake-generated-headers
 check-threaded-test-modules-commit-ts:
-	$(MAKE) -C src/test/modules/commit_ts check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/commit_ts check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,src/test/modules/commit_ts,t/*.pl)
 
 check-threaded-test-modules-delay-execution: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-delay-execution: | temp-install
@@ -419,12 +483,37 @@ check-threaded-test-modules-dummy-seclabel:
 	$(MAKE) -C src/test/modules/dummy_seclabel DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/dummy_seclabel check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-test-modules-gin: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-gin: | temp-install
+check-threaded-test-modules-gin: submake-generated-headers
+check-threaded-test-modules-gin:
+	$(MAKE) -C src/test/modules/gin checkprep
+	$(MAKE) -C src/test/modules/gin check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-test-modules-index: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-index: | temp-install
 check-threaded-test-modules-index: submake-generated-headers
 check-threaded-test-modules-index:
 	$(MAKE) -C src/test/modules/index checkprep
 	$(MAKE) -C src/test/modules/index check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-injection-points: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-injection-points: | temp-install
+check-threaded-test-modules-injection-points: submake-generated-headers
+check-threaded-test-modules-injection-points:
+	$(MAKE) -C src/test/modules/injection_points checkprep
+	$(MAKE) -C src/test/modules/injection_points check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-ldap-password-func: CHECKPREP_TOP=src/test/modules/ldap_password_func
+check-threaded-test-modules-ldap-password-func: | temp-install
+check-threaded-test-modules-ldap-password-func: submake-generated-headers
+check-threaded-test-modules-ldap-password-func: export PG_TEST_OPENLDAP_SLAPD = $(PHASE16_LOCAL_DEBROOT)/usr/sbin/slapd
+check-threaded-test-modules-ldap-password-func: export PG_TEST_OPENLDAP_SCHEMA_DIR = $(PHASE16_LOCAL_DEBROOT)/etc/ldap/schema
+check-threaded-test-modules-ldap-password-func: export LD_LIBRARY_PATH := $(PHASE16_LOCAL_LD_LIBRARY_PATH)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+check-threaded-test-modules-ldap-password-func: export PATH := $(PHASE16_LOCAL_DEBROOT)/usr/bin:$(PATH)
+check-threaded-test-modules-ldap-password-func:
+	$(MAKE) -j1 -C src/test/modules/ldap_password_func checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(call threaded_world_prove,src/test/modules/ldap_password_func,t/*.pl)
 
 check-threaded-test-modules-libpq-pipeline: | temp-install
 check-threaded-test-modules-libpq-pipeline: submake-generated-headers
@@ -549,7 +638,8 @@ check-threaded-test-modules-test-extensions: | temp-install
 check-threaded-test-modules-test-extensions: submake-generated-headers
 check-threaded-test-modules-test-extensions:
 	$(MAKE) -C src/test/modules/test_extensions DESTDIR=$(abs_top_builddir)/tmp_install install
-	$(MAKE) -C src/test/modules/test_extensions check REGRESS='test_extensions test_extdepend test_ext_backend_model_threaded' TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/test_extensions check REGRESS='test_extensions test_extdepend test_ext_backend_model_threaded' TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,src/test/modules/test_extensions,t/*.pl)
 
 check-threaded-test-modules-test-ginpostinglist: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-ginpostinglist: | temp-install
@@ -617,7 +707,8 @@ check-threaded-test-modules-test-pg-dump: | temp-install
 check-threaded-test-modules-test-pg-dump: submake-generated-headers
 check-threaded-test-modules-test-pg-dump:
 	$(MAKE) -C src/test/modules/test_pg_dump DESTDIR=$(abs_top_builddir)/tmp_install install
-	$(MAKE) -C src/test/modules/test_pg_dump check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/test_pg_dump check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,src/test/modules/test_pg_dump,t/*.pl)
 
 check-threaded-test-modules-test-plan-advice: CHECKPREP_TOP=src/test/modules/test_plan_advice
 check-threaded-test-modules-test-plan-advice: | temp-install
@@ -673,7 +764,8 @@ check-threaded-test-modules-test-saslprep: | temp-install
 check-threaded-test-modules-test-saslprep: submake-generated-headers
 check-threaded-test-modules-test-saslprep:
 	$(MAKE) -C src/test/modules/test_saslprep DESTDIR=$(abs_top_builddir)/tmp_install install
-	$(MAKE) -C src/test/modules/test_saslprep check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/test_saslprep check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,src/test/modules/test_saslprep,t/*.pl)
 
 check-threaded-test-modules-test-shmem: CHECKPREP_TOP=src/test/modules/test_shmem
 check-threaded-test-modules-test-shmem: | temp-install
@@ -693,8 +785,16 @@ check-threaded-test-modules-test-slru: CHECKPREP_TOP=src/test/modules/test_slru
 check-threaded-test-modules-test-slru: | temp-install
 check-threaded-test-modules-test-slru: submake-generated-headers
 check-threaded-test-modules-test-slru:
-	$(MAKE) -C src/test/modules/test_slru check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C src/test/modules/test_slru DESTDIR=$(abs_top_builddir)/tmp_install install
+	$(MAKE) -C src/test/modules/test_slru check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
 	$(call threaded_world_prove,src/test/modules/test_slru,t/*.pl)
+
+check-threaded-test-modules-ssl-passphrase-callback: CHECKPREP_TOP=src/test/modules/ssl_passphrase_callback
+check-threaded-test-modules-ssl-passphrase-callback: | temp-install
+check-threaded-test-modules-ssl-passphrase-callback: submake-generated-headers
+check-threaded-test-modules-ssl-passphrase-callback:
+	$(MAKE) -j1 -C src/test/modules/ssl_passphrase_callback checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(call threaded_world_prove,src/test/modules/ssl_passphrase_callback,t/*.pl)
 
 check-threaded-test-modules-test-tidstore: CHECKPREP_TOP=src/test/regress
 check-threaded-test-modules-test-tidstore: | temp-install
@@ -702,6 +802,13 @@ check-threaded-test-modules-test-tidstore: submake-generated-headers
 check-threaded-test-modules-test-tidstore:
 	$(MAKE) -C src/test/modules/test_tidstore DESTDIR=$(abs_top_builddir)/tmp_install install
 	$(MAKE) -C src/test/modules/test_tidstore check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-test-modules-typcache: CHECKPREP_TOP=src/test/regress
+check-threaded-test-modules-typcache: | temp-install
+check-threaded-test-modules-typcache: submake-generated-headers
+check-threaded-test-modules-typcache:
+	$(MAKE) -C src/test/modules/typcache checkprep
+	$(MAKE) -C src/test/modules/typcache check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-test-modules-worker-spi: | temp-install
 check-threaded-test-modules-worker-spi: submake-generated-headers
@@ -739,6 +846,8 @@ check-threaded-test-modules-unsafe-tests:
 check-threaded-pl:
 	$(MAKE) check-threaded-plpgsql
 	$(MAKE) check-threaded-plperl
+	$(MAKE) check-threaded-plpython
+	$(MAKE) check-threaded-pltcl
 
 check-threaded-plpgsql: CHECKPREP_TOP=src/test/regress
 check-threaded-plpgsql: | temp-install
@@ -751,6 +860,18 @@ check-threaded-plperl: | temp-install
 check-threaded-plperl: submake-generated-headers
 check-threaded-plperl:
 	$(MAKE) -C src/pl/plperl check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-plpython: CHECKPREP_TOP=src/test/regress
+check-threaded-plpython: | temp-install
+check-threaded-plpython: submake-generated-headers
+check-threaded-plpython:
+	$(MAKE) -C src/pl/plpython check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-pltcl: CHECKPREP_TOP=src/test/regress
+check-threaded-pltcl: | temp-install
+check-threaded-pltcl: submake-generated-headers
+check-threaded-pltcl:
+	$(MAKE) -C src/pl/tcl check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-world-core-tap: CHECKPREP_TOP=src/test/regress
 check-threaded-world-core-tap: | temp-install
@@ -805,12 +926,15 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-fuzzystrmatch-run
 	$(MAKE) check-threaded-contrib-hstore-run
 	$(MAKE) check-threaded-contrib-hstore-plperl-run
+	$(MAKE) check-threaded-contrib-hstore-plpython-run
 	$(MAKE) check-threaded-contrib-intagg-run
 	$(MAKE) check-threaded-contrib-intarray-run
 	$(MAKE) check-threaded-contrib-isn-run
 	$(MAKE) check-threaded-contrib-jsonb-plperl-run
+	$(MAKE) check-threaded-contrib-jsonb-plpython-run
 	$(MAKE) check-threaded-contrib-lo-run
 	$(MAKE) check-threaded-contrib-ltree-run
+	$(MAKE) check-threaded-contrib-ltree-plpython-run
 	$(MAKE) check-threaded-contrib-oid2name-run
 	$(MAKE) check-threaded-contrib-pageinspect-run
 	$(MAKE) check-threaded-contrib-passwordcheck-run
@@ -820,6 +944,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-pg-overexplain-run
 	$(MAKE) check-threaded-contrib-pg-plan-advice-run
 	$(MAKE) check-threaded-contrib-pg-prewarm-run
+	$(MAKE) check-threaded-contrib-pgcrypto-run
 	$(MAKE) check-threaded-contrib-pg-stat-statements-run
 	$(MAKE) check-threaded-contrib-pg-stash-advice-run
 	$(MAKE) check-threaded-contrib-pg-surgery-run
@@ -830,6 +955,7 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-pgstattuple-run
 	$(MAKE) check-threaded-contrib-postgres-fdw-run
 	$(MAKE) check-threaded-contrib-seg-run
+	$(MAKE) check-threaded-contrib-sslinfo-run
 	$(MAKE) check-threaded-contrib-spi-run
 	$(MAKE) check-threaded-contrib-tablefunc-run
 	$(MAKE) check-threaded-contrib-tcn-run
@@ -837,6 +963,8 @@ check-threaded-contrib:
 	$(MAKE) check-threaded-contrib-tsm-system-rows-run
 	$(MAKE) check-threaded-contrib-tsm-system-time-run
 	$(MAKE) check-threaded-contrib-unaccent-run
+	$(MAKE) check-threaded-contrib-uuid-ossp-run
+	$(MAKE) check-threaded-contrib-xml2-run
 	$(MAKE) check-threaded-contrib-vacuumlo-run
 
 check-threaded-contrib-amcheck: | temp-install
@@ -846,7 +974,8 @@ check-threaded-contrib-amcheck:
 	$(MAKE) check-threaded-contrib-amcheck-run
 
 check-threaded-contrib-amcheck-run:
-	$(MAKE) -C contrib/amcheck check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/amcheck check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(MAKE) -C contrib/amcheck check TEMP_CONFIG=$(THREADED_WORLD_TAP_CONFIG) REGRESS=
 
 check-threaded-contrib-auth-delay: | temp-install
 check-threaded-contrib-auth-delay: submake-generated-headers
@@ -865,7 +994,8 @@ check-threaded-contrib-auto-explain:
 	$(MAKE) check-threaded-contrib-auto-explain-run
 
 check-threaded-contrib-auto-explain-run:
-	$(MAKE) -C contrib/auto_explain check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/auto_explain check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,contrib/auto_explain,t/*.pl)
 
 check-threaded-contrib-basebackup-to-shell: | temp-install
 check-threaded-contrib-basebackup-to-shell: submake-generated-headers
@@ -893,7 +1023,8 @@ check-threaded-contrib-bloom:
 	$(MAKE) check-threaded-contrib-bloom-run
 
 check-threaded-contrib-bloom-run:
-	$(MAKE) -C contrib/bloom check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/bloom check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,contrib/bloom,t/*.pl)
 
 check-threaded-contrib-bool-plperl: | temp-install
 check-threaded-contrib-bool-plperl: submake-generated-headers
@@ -947,7 +1078,8 @@ check-threaded-contrib-dblink:
 	$(MAKE) check-threaded-contrib-dblink-run
 
 check-threaded-contrib-dblink-run:
-	$(MAKE) -C contrib/dblink check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/dblink check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,contrib/dblink,t/*.pl)
 
 check-threaded-contrib-dict-int: | temp-install
 check-threaded-contrib-dict-int: submake-generated-headers
@@ -1012,6 +1144,15 @@ check-threaded-contrib-hstore-plperl:
 check-threaded-contrib-hstore-plperl-run:
 	$(MAKE) -C contrib/hstore_plperl check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-hstore-plpython: | temp-install
+check-threaded-contrib-hstore-plpython: submake-generated-headers
+check-threaded-contrib-hstore-plpython:
+	$(MAKE) -j1 -C contrib/hstore_plpython checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-hstore-plpython-run
+
+check-threaded-contrib-hstore-plpython-run:
+	$(MAKE) -C contrib/hstore_plpython check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-intagg: | temp-install
 check-threaded-contrib-intagg: submake-generated-headers
 check-threaded-contrib-intagg:
@@ -1048,6 +1189,15 @@ check-threaded-contrib-jsonb-plperl:
 check-threaded-contrib-jsonb-plperl-run:
 	$(MAKE) -C contrib/jsonb_plperl check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-jsonb-plpython: | temp-install
+check-threaded-contrib-jsonb-plpython: submake-generated-headers
+check-threaded-contrib-jsonb-plpython:
+	$(MAKE) -j1 -C contrib/jsonb_plpython checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-jsonb-plpython-run
+
+check-threaded-contrib-jsonb-plpython-run:
+	$(MAKE) -C contrib/jsonb_plpython check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-lo: | temp-install
 check-threaded-contrib-lo: submake-generated-headers
 check-threaded-contrib-lo:
@@ -1065,6 +1215,15 @@ check-threaded-contrib-ltree:
 
 check-threaded-contrib-ltree-run:
 	$(MAKE) -C contrib/ltree check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-ltree-plpython: | temp-install
+check-threaded-contrib-ltree-plpython: submake-generated-headers
+check-threaded-contrib-ltree-plpython:
+	$(MAKE) -j1 -C contrib/ltree_plpython checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-ltree-plpython-run
+
+check-threaded-contrib-ltree-plpython-run:
+	$(MAKE) -C contrib/ltree_plpython check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-oid2name: | temp-install
 check-threaded-contrib-oid2name: submake-generated-headers
@@ -1148,8 +1307,17 @@ check-threaded-contrib-pg-prewarm:
 	$(MAKE) check-threaded-contrib-pg-prewarm-run
 
 check-threaded-contrib-pg-prewarm-run:
-	$(MAKE) -C contrib/pg_prewarm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/pg_prewarm check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
 	$(call threaded_world_prove,contrib/pg_prewarm,t/*.pl)
+
+check-threaded-contrib-pgcrypto: | temp-install
+check-threaded-contrib-pgcrypto: submake-generated-headers
+check-threaded-contrib-pgcrypto:
+	$(MAKE) -j1 -C contrib/pgcrypto checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-pgcrypto-run
+
+check-threaded-contrib-pgcrypto-run:
+	$(MAKE) -C contrib/pgcrypto check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-pg-stat-statements: | temp-install
 check-threaded-contrib-pg-stat-statements: submake-generated-headers
@@ -1158,7 +1326,7 @@ check-threaded-contrib-pg-stat-statements:
 	$(MAKE) check-threaded-contrib-pg-stat-statements-run
 
 check-threaded-contrib-pg-stat-statements-run:
-	$(MAKE) -C contrib/pg_stat_statements check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/pg_stat_statements check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
 	$(call threaded_world_prove,contrib/pg_stat_statements,t/*.pl)
 
 check-threaded-contrib-pg-stash-advice: | temp-install
@@ -1168,7 +1336,7 @@ check-threaded-contrib-pg-stash-advice:
 	$(MAKE) check-threaded-contrib-pg-stash-advice-run
 
 check-threaded-contrib-pg-stash-advice-run:
-	$(MAKE) -C contrib/pg_stash_advice check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/pg_stash_advice check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
 	$(call threaded_world_prove,contrib/pg_stash_advice,t/*.pl)
 
 check-threaded-contrib-pg-surgery: | temp-install
@@ -1196,7 +1364,8 @@ check-threaded-contrib-pg-visibility:
 	$(MAKE) check-threaded-contrib-pg-visibility-run
 
 check-threaded-contrib-pg-visibility-run:
-	$(MAKE) -C contrib/pg_visibility check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/pg_visibility check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,contrib/pg_visibility,t/*.pl)
 
 check-threaded-contrib-pg-walinspect: | temp-install
 check-threaded-contrib-pg-walinspect: submake-generated-headers
@@ -1232,7 +1401,8 @@ check-threaded-contrib-postgres-fdw:
 	$(MAKE) check-threaded-contrib-postgres-fdw-run
 
 check-threaded-contrib-postgres-fdw-run:
-	$(MAKE) -C contrib/postgres_fdw check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/postgres_fdw check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
+	$(call threaded_world_prove,contrib/postgres_fdw,t/*.pl)
 
 check-threaded-contrib-seg: | temp-install
 check-threaded-contrib-seg: submake-generated-headers
@@ -1242,6 +1412,15 @@ check-threaded-contrib-seg:
 
 check-threaded-contrib-seg-run:
 	$(MAKE) -C contrib/seg check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-sslinfo: | temp-install
+check-threaded-contrib-sslinfo: submake-generated-headers
+check-threaded-contrib-sslinfo:
+	$(MAKE) -j1 -C contrib/sslinfo checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-sslinfo-run
+
+check-threaded-contrib-sslinfo-run:
+	$(MAKE) -C contrib/sslinfo check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
 check-threaded-contrib-spi: | temp-install
 check-threaded-contrib-spi: submake-generated-headers
@@ -1278,7 +1457,7 @@ check-threaded-contrib-test-decoding:
 
 check-threaded-contrib-test-decoding-run:
 	$(MAKE) -C contrib/test_decoding DESTDIR=$(abs_top_builddir)/tmp_install install
-	$(MAKE) -C contrib/test_decoding check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+	$(MAKE) -C contrib/test_decoding check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG) TAP_TESTS=
 	$(call threaded_world_prove,contrib/test_decoding,t/*.pl)
 
 check-threaded-contrib-tsm-system-rows: | temp-install
@@ -1308,6 +1487,24 @@ check-threaded-contrib-unaccent:
 check-threaded-contrib-unaccent-run:
 	$(MAKE) -C contrib/unaccent check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
 
+check-threaded-contrib-uuid-ossp: | temp-install
+check-threaded-contrib-uuid-ossp: submake-generated-headers
+check-threaded-contrib-uuid-ossp:
+	$(MAKE) -j1 -C contrib/uuid-ossp checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-uuid-ossp-run
+
+check-threaded-contrib-uuid-ossp-run:
+	$(MAKE) -C contrib/uuid-ossp check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
+check-threaded-contrib-xml2: | temp-install
+check-threaded-contrib-xml2: submake-generated-headers
+check-threaded-contrib-xml2:
+	$(MAKE) -j1 -C contrib/xml2 checkprep >>'$(abs_top_builddir)'/tmp_install/log/install.log 2>&1
+	$(MAKE) check-threaded-contrib-xml2-run
+
+check-threaded-contrib-xml2-run:
+	$(MAKE) -C contrib/xml2 check TEMP_CONFIG=$(THREADED_WORLD_CORE_CONFIG)
+
 check-threaded-contrib-vacuumlo: | temp-install
 check-threaded-contrib-vacuumlo: submake-generated-headers
 check-threaded-contrib-vacuumlo:
@@ -1323,6 +1520,7 @@ check-threaded-contrib-vacuumlo-run:
 check-threaded-interfaces: | temp-install
 check-threaded-interfaces:
 	$(MAKE) check-threaded-interfaces-libpq
+	$(MAKE) check-threaded-interfaces-libpq-oauth
 	$(MAKE) check-threaded-interfaces-ecpg-compatlib
 	$(MAKE) check-threaded-interfaces-ecpg-ecpglib
 	$(MAKE) check-threaded-interfaces-ecpg-include
@@ -1337,6 +1535,12 @@ check-threaded-interfaces-libpq:
 
 check-threaded-interfaces-libpq-run:
 	$(call threaded_world_prove,src/interfaces/libpq,t/*.pl)
+
+check-threaded-interfaces-libpq-oauth: | temp-install
+check-threaded-interfaces-libpq-oauth: submake-generated-headers
+check-threaded-interfaces-libpq-oauth:
+	$(MAKE) -C src/interfaces/libpq-oauth all-tests
+	$(call threaded_world_prove,src/interfaces/libpq-oauth,t/*.pl)
 
 check-threaded-interfaces-ecpg-compatlib:
 	$(MAKE) -C src/interfaces/ecpg/compatlib check
@@ -1526,8 +1730,16 @@ check-world-threaded:
 	$(MAKE) check-threaded-bin
 	$(MAKE) check-threaded-tools
 
-check-phase16-gate-g-local: | temp-install
+check-phase16-gate-g-local: | temp-install phase16-krb5-shims
+check-phase16-gate-g-local: export PG_TEST_KRB5_BIN_DIR = $(PHASE16_KRB5_BIN_DIR)
+check-phase16-gate-g-local: export PG_TEST_KRB5_SBIN_DIR = $(PHASE16_LOCAL_DEBROOT)/usr/sbin
+check-phase16-gate-g-local: export PG_TEST_KRB5_KDB_MODULE_DIR = $(PHASE16_LOCAL_DEBROOT)/usr/lib/x86_64-linux-gnu/krb5/plugins/kdb
+check-phase16-gate-g-local: export PG_TEST_OPENLDAP_SLAPD = $(PHASE16_LOCAL_DEBROOT)/usr/sbin/slapd
+check-phase16-gate-g-local: export PG_TEST_OPENLDAP_SCHEMA_DIR = $(PHASE16_LOCAL_DEBROOT)/etc/ldap/schema
+check-phase16-gate-g-local: export LD_LIBRARY_PATH := $(PHASE16_LOCAL_LD_LIBRARY_PATH)$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
+check-phase16-gate-g-local: export PATH := $(PHASE16_LOCAL_DEBROOT)/usr/bin:$(PATH)
 check-phase16-gate-g-local:
+	$(MAKE) phase16-krb5-shims
 	$(MAKE) check-world
 	$(MAKE) check-world-threaded
 	$(MAKE) check-runtime-lifecycles
@@ -1650,14 +1862,19 @@ check-runtime-lifecycles:
 
 .PHONY: dist distcheck docs install-docs world check-world check-world-threaded check-phase16-gate-g-local install-world installcheck-world headerscheck cpluspluscheck check-global-lifetimes check-runtime-lifecycles check-threaded-bin check-threaded-bin-initdb check-threaded-bin-pg-amcheck check-threaded-bin-pg-archivecleanup check-threaded-bin-pg-checksums check-threaded-bin-pg-combinebackup check-threaded-bin-pg-config check-threaded-bin-pg-controldata check-threaded-bin-pg-resetwal check-threaded-bin-pg-test-fsync check-threaded-bin-pg-test-timing check-threaded-bin-pg-waldump check-threaded-bin-pg-walsummary check-threaded-bin-pgbench check-threaded-bin-scripts check-threaded-contrib check-threaded-contrib-bloom check-threaded-contrib-bloom-run check-threaded-contrib-bool-plperl check-threaded-contrib-bool-plperl-run check-threaded-contrib-btree-gin check-threaded-contrib-btree-gin-run check-threaded-contrib-btree-gist check-threaded-contrib-btree-gist-run check-threaded-contrib-citext check-threaded-contrib-citext-run check-threaded-contrib-cube check-threaded-contrib-cube-run check-threaded-contrib-dict-int check-threaded-contrib-dict-int-run check-threaded-contrib-dict-xsyn check-threaded-contrib-dict-xsyn-run check-threaded-contrib-earthdistance check-threaded-contrib-earthdistance-run check-threaded-contrib-file-fdw check-threaded-contrib-file-fdw-run check-threaded-contrib-fuzzystrmatch check-threaded-contrib-fuzzystrmatch-run check-threaded-contrib-hstore check-threaded-contrib-hstore-run check-threaded-contrib-hstore-plperl check-threaded-contrib-hstore-plperl-run check-threaded-contrib-intagg check-threaded-contrib-intagg-run check-threaded-contrib-intarray check-threaded-contrib-intarray-run check-threaded-contrib-isn check-threaded-contrib-isn-run check-threaded-contrib-jsonb-plperl check-threaded-contrib-jsonb-plperl-run check-threaded-contrib-lo check-threaded-contrib-lo-run check-threaded-contrib-ltree check-threaded-contrib-ltree-run check-threaded-contrib-oid2name check-threaded-contrib-oid2name-run check-threaded-contrib-pageinspect check-threaded-contrib-pageinspect-run check-threaded-contrib-pg-buffercache check-threaded-contrib-pg-buffercache-run check-threaded-contrib-pg-freespacemap check-threaded-contrib-pg-freespacemap-run check-threaded-contrib-pg-surgery check-threaded-contrib-pg-surgery-run check-threaded-contrib-pg-trgm check-threaded-contrib-pg-trgm-run check-threaded-contrib-pg-visibility check-threaded-contrib-pg-visibility-run check-threaded-contrib-pg-walinspect check-threaded-contrib-pg-walinspect-run check-threaded-contrib-pgrowlocks check-threaded-contrib-pgrowlocks-run check-threaded-contrib-pgstattuple check-threaded-contrib-pgstattuple-run check-threaded-contrib-seg check-threaded-contrib-seg-run check-threaded-contrib-spi check-threaded-contrib-spi-run check-threaded-contrib-tablefunc check-threaded-contrib-tablefunc-run check-threaded-contrib-tcn check-threaded-contrib-tcn-run check-threaded-contrib-tsm-system-rows check-threaded-contrib-tsm-system-rows-run check-threaded-contrib-tsm-system-time check-threaded-contrib-tsm-system-time-run check-threaded-contrib-unaccent check-threaded-contrib-unaccent-run check-threaded-contrib-vacuumlo check-threaded-contrib-vacuumlo-run check-threaded-interfaces check-threaded-interfaces-libpq check-threaded-interfaces-libpq-run check-threaded-pl check-threaded-plpgsql check-threaded-plperl check-threaded-src-test check-threaded-src-test-authentication check-threaded-src-test-isolation check-threaded-src-test-regress check-threaded-test-backend-runtime check-threaded-test-modules check-threaded-tools check-threaded-tools-pg-bsd-indent check-threaded-world-core check-threaded-world-core-tap check-threaded-world-coverage
 .PHONY: check-threaded-bin-pg-basebackup check-threaded-bin-pg-ctl check-threaded-bin-pg-dump check-threaded-bin-pg-rewind check-threaded-bin-pg-upgrade check-threaded-bin-pg-verifybackup check-threaded-bin-psql
-.PHONY: check-threaded-src-test-postmaster check-threaded-src-test-recovery check-threaded-src-test-subscription
+.PHONY: phase16-krb5-shims
+.PHONY: check-threaded-src-test-icu check-threaded-src-test-kerberos check-threaded-src-test-ldap check-threaded-src-test-postmaster check-threaded-src-test-recovery check-threaded-src-test-ssl check-threaded-src-test-subscription
 .PHONY: check-threaded-contrib-amcheck check-threaded-contrib-amcheck-run
 .PHONY: check-threaded-contrib-auth-delay check-threaded-contrib-auth-delay-run
 .PHONY: check-threaded-contrib-auto-explain check-threaded-contrib-auto-explain-run
 .PHONY: check-threaded-contrib-basebackup-to-shell check-threaded-contrib-basebackup-to-shell-run
 .PHONY: check-threaded-contrib-basic-archive check-threaded-contrib-basic-archive-run
 .PHONY: check-threaded-contrib-dblink check-threaded-contrib-dblink-run
+.PHONY: check-threaded-contrib-hstore-plpython check-threaded-contrib-hstore-plpython-run
+.PHONY: check-threaded-contrib-jsonb-plpython check-threaded-contrib-jsonb-plpython-run
+.PHONY: check-threaded-contrib-ltree-plpython check-threaded-contrib-ltree-plpython-run
 .PHONY: check-threaded-contrib-passwordcheck check-threaded-contrib-passwordcheck-run
+.PHONY: check-threaded-contrib-pgcrypto check-threaded-contrib-pgcrypto-run
 .PHONY: check-threaded-contrib-pg-logicalinspect check-threaded-contrib-pg-logicalinspect-run
 .PHONY: check-threaded-contrib-pg-overexplain check-threaded-contrib-pg-overexplain-run
 .PHONY: check-threaded-contrib-pg-plan-advice check-threaded-contrib-pg-plan-advice-run
@@ -1665,8 +1882,12 @@ check-runtime-lifecycles:
 .PHONY: check-threaded-contrib-pg-stat-statements check-threaded-contrib-pg-stat-statements-run
 .PHONY: check-threaded-contrib-pg-stash-advice check-threaded-contrib-pg-stash-advice-run
 .PHONY: check-threaded-contrib-postgres-fdw check-threaded-contrib-postgres-fdw-run
-.PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc
+.PHONY: check-threaded-contrib-sslinfo check-threaded-contrib-sslinfo-run
+.PHONY: check-threaded-contrib-uuid-ossp check-threaded-contrib-uuid-ossp-run
+.PHONY: check-threaded-contrib-xml2 check-threaded-contrib-xml2-run
+.PHONY: check-threaded-interfaces-ecpg-compatlib check-threaded-interfaces-ecpg-ecpglib check-threaded-interfaces-ecpg-include check-threaded-interfaces-ecpg-pgtypeslib check-threaded-interfaces-ecpg-preproc check-threaded-interfaces-libpq-oauth
+.PHONY: check-threaded-plpython check-threaded-pltcl
 .PHONY: check-threaded-test-modules-test-checksums check-threaded-test-modules-test-cloexec check-threaded-test-modules-test-int128 check-threaded-test-modules-test-json-parser check-threaded-test-modules-test-aio check-threaded-test-modules-test-autovacuum check-threaded-test-modules-worker-spi check-threaded-test-modules-xid-wraparound
 .PHONY: check-threaded-test-modules-test-misc
-.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-libpq-pipeline check-threaded-test-modules-oauth-validator check-threaded-test-modules-delay-execution check-threaded-test-modules-dummy-index-am check-threaded-test-modules-dummy-seclabel check-threaded-test-modules-index check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-rmgrs check-threaded-test-modules-test-custom-stats check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-ddl-deparse check-threaded-test-modules-test-dsm-registry check-threaded-test-modules-test-dsa check-threaded-test-modules-test-escape check-threaded-test-modules-test-extensions check-threaded-test-modules-test-lwlock-tranches check-threaded-test-modules-test-oat-hooks check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-plan-advice check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-rls-hooks check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shmem check-threaded-test-modules-test-shm-mq check-threaded-test-modules-test-slru check-threaded-test-modules-test-tidstore check-threaded-test-modules-unsafe-tests
+.PHONY: check-threaded-test-modules-brin check-threaded-test-modules-commit-ts check-threaded-test-modules-libpq-pipeline check-threaded-test-modules-oauth-validator check-threaded-test-modules-delay-execution check-threaded-test-modules-dummy-index-am check-threaded-test-modules-dummy-seclabel check-threaded-test-modules-gin check-threaded-test-modules-index check-threaded-test-modules-injection-points check-threaded-test-modules-ldap-password-func check-threaded-test-modules-plsample check-threaded-test-modules-spgist-name-ops check-threaded-test-modules-ssl-passphrase-callback check-threaded-test-modules-test-copy-callbacks check-threaded-test-modules-test-cplusplusext check-threaded-test-modules-test-custom-rmgrs check-threaded-test-modules-test-custom-stats check-threaded-test-modules-test-custom-types check-threaded-test-modules-test-ddl-deparse check-threaded-test-modules-test-dsm-registry check-threaded-test-modules-test-dsa check-threaded-test-modules-test-escape check-threaded-test-modules-test-extensions check-threaded-test-modules-test-lwlock-tranches check-threaded-test-modules-test-oat-hooks check-threaded-test-modules-test-parser check-threaded-test-modules-test-pg-dump check-threaded-test-modules-test-plan-advice check-threaded-test-modules-test-predtest check-threaded-test-modules-test-resowner check-threaded-test-modules-test-rls-hooks check-threaded-test-modules-test-saslprep check-threaded-test-modules-test-shmem check-threaded-test-modules-test-shm-mq check-threaded-test-modules-test-slru check-threaded-test-modules-test-tidstore check-threaded-test-modules-typcache check-threaded-test-modules-unsafe-tests
 .PHONY: check-threaded-test-modules-test-binaryheap check-threaded-test-modules-test-bitmapset check-threaded-test-modules-test-bloomfilter check-threaded-test-modules-test-ginpostinglist check-threaded-test-modules-test-integerset check-threaded-test-modules-test-lfind check-threaded-test-modules-test-radixtree check-threaded-test-modules-test-rbtree check-threaded-test-modules-test-regex

@@ -35,6 +35,8 @@ restart_after_crash = on
 ]);
 $node_primary->start;
 
+my $threaded = $node_primary->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
+
 # Check if the extension injection_points is available, as it may be
 # possible that this script is run with installcheck, where the module
 # would not be installed by default.
@@ -142,8 +144,20 @@ chomp($pid);
 $killme_stdout = '';
 $killme_stderr = '';
 
-my $ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
-is($ret, 0, 'killed process with KILL');
+my $ret;
+if ($threaded)
+{
+	$node_standby->kill9();
+	$ret = 0;
+}
+else
+{
+	$ret = PostgreSQL::Test::Utils::system_log('pg_ctl', 'kill', 'KILL', $pid);
+}
+is($ret, 0,
+	$threaded
+	? 'crashed threaded postmaster for KILL scenario'
+	: 'killed process with KILL');
 
 # Wait until the server restarts, finish consuming output.
 $killme_stdin .= q[
@@ -159,7 +173,14 @@ ok( pump_until(
 $killme->finish;
 
 # Wait till server finishes restarting.
-$node_standby->poll_query_until('postgres', undef, '');
+if ($threaded)
+{
+	ok($node_standby->start(), 'restarted threaded postmaster after crash');
+}
+else
+{
+	$node_standby->poll_query_until('postgres', undef, '');
+}
 
 # After recovery, the server should be able to start.
 my $stdout;

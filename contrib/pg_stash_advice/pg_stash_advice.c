@@ -200,12 +200,14 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	pgsa_entry_key key;
 	pgsa_entry *entry;
 	char	   *advice_string;
+	char	   *stash_name;
 	uint64		stash_id;
 
 	/*
 	 * Exit quickly if the stash name is empty or there's no query ID.
 	 */
-	if (pg_stash_advice_stash_name[0] == '\0' || parse->queryId == 0)
+	stash_name = pg_stash_advice_stash_name;
+	if (stash_name == NULL || stash_name[0] == '\0' || parse->queryId == 0)
 		return NULL;
 
 	/* Attach to dynamic shared memory if not already done. */
@@ -222,7 +224,7 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	 * pgsa_check_stash_name_guc() has already validated the advice stash
 	 * name, so we don't need to call pgsa_check_stash_name() here.
 	 */
-	stash_id = pgsa_lookup_stash_id(pg_stash_advice_stash_name);
+	stash_id = pgsa_lookup_stash_id(stash_name);
 	if (stash_id == 0)
 		return NULL;
 
@@ -250,7 +252,7 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	/* If we found an advice string, emit a debug message. */
 	if (advice_string != NULL)
 		elog(DEBUG2, "supplying automatic advice for stash \"%s\", query ID %" PRId64 ": %s",
-			 pg_stash_advice_stash_name, key.queryId, advice_string);
+			 stash_name, key.queryId, advice_string);
 
 	return advice_string;
 }

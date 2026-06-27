@@ -111,7 +111,7 @@ wrapper_handler(int postgres_signal_arg)
 	 * before accepting signals.
 	 */
 	Assert(MyProcPid);
-	Assert(MyProcPid != PostmasterPid || !IsUnderPostmaster);
+	Assert(MyProcPid != PostmasterPid || !IsUnderPostmaster || multithreaded);
 
 	if (unlikely(MyProcPid != (int) getpid()))
 	{

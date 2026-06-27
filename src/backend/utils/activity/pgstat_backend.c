@@ -115,7 +115,7 @@ pgstat_fetch_stat_backend_by_pid(int pid, BackendType *bktype)
 
 	/* this could be an auxiliary process */
 	if (!proc)
-		proc = AuxiliaryPidGetProc(pid);
+		proc = AuxiliarySignalPidGetProc(pid);
 
 	if (!proc)
 		return NULL;

@@ -531,7 +531,7 @@ pgaio_io_process_completion(PgAioHandle *ioh, int result)
 
 	pgaio_io_update_state(ioh, PGAIO_HS_COMPLETED_IO);
 
-	INJECTION_POINT("aio-process-completion-before-shared", ioh);
+	INJECTION_POINT_CACHED("aio-process-completion-before-shared", ioh);
 
 	pgaio_io_call_complete_shared(ioh);
 

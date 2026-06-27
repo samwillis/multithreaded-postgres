@@ -659,11 +659,12 @@ PgBackendResetMaintenanceWorkerClosedState(PgBackendMaintenanceWorkerState *main
 	if (maintenance_worker == NULL)
 		return;
 
-	if (maintenance_worker->arch_module_errdetail_string != NULL)
-	{
-		pfree(maintenance_worker->arch_module_errdetail_string);
-		maintenance_worker->arch_module_errdetail_string = NULL;
-	}
+	/*
+	 * arch_module_check_errdetail() returns storage owned by ErrorContext.
+	 * Runtime reset may run after that context has been flushed, so this state
+	 * only tracks the transient pointer and must not free it.
+	 */
+	maintenance_worker->arch_module_errdetail_string = NULL;
 	if (maintenance_worker->archive_module_state != NULL)
 	{
 		pfree(maintenance_worker->archive_module_state);
@@ -897,6 +898,7 @@ PgSessionResetBackupClosedState(PgSession *session)
 	session->backup.backup_state = NULL;
 	session->backup.tablespace_map = NULL;
 	session->backup.session_backup_state = SESSION_BACKUP_NONE;
+	session->backup.abort_backup_handler_registered = false;
 }
 
 static void

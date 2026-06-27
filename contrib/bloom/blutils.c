@@ -18,6 +18,9 @@
 #include "access/reloptions.h"
 #include "bloom.h"
 #include "commands/vacuum.h"
+#ifndef WIN32
+#include "port/pg_pthread.h"
+#endif
 #include "storage/bufmgr.h"
 #include "storage/indexfsm.h"
 #include "utils/backend_runtime.h"
@@ -36,12 +39,20 @@ PG_FUNCTION_INFO_V1(blhandler);
 
 typedef struct BloomBlutilsRuntimeState
 {
+	bool		initialized;
+
 	/* Kind of relation options for bloom index */
 	relopt_kind relopt_kind;
 
 	/* parse table for fillRelOptions */
 	relopt_parse_elt relopt_tab[INDEX_MAX_KEYS + 1];
 } BloomBlutilsRuntimeState;
+
+#ifndef WIN32
+static PG_GLOBAL_RUNTIME pthread_mutex_t BloomBlutilsInitMutex =
+	PTHREAD_MUTEX_INITIALIZER;
+#endif
+static PG_GLOBAL_RUNTIME MemoryContext BloomRelOptionsMemoryContext = NULL;
 
 static BloomBlutilsRuntimeState *
 bloom_blutils_runtime_state(void)
@@ -60,6 +71,72 @@ bloom_blutils_runtime_state(void)
 
 static int32 myRand(int32 *seed);
 static void mySrand(int32 *seed, uint32 value);
+static bool bloom_blutils_init_lock(void);
+static void bloom_blutils_init_unlock(bool locked);
+static MemoryContext bloom_reloptions_memory_context(void);
+
+static bool
+bloom_blutils_init_lock(void)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!multithreaded)
+		return false;
+
+	HOLD_INTERRUPTS();
+	rc = pthread_mutex_lock(&BloomBlutilsInitMutex);
+	if (rc != 0)
+	{
+		RESUME_INTERRUPTS();
+		errno = rc;
+		ereport(FATAL,
+				(errmsg("could not enter bloom initialization critical section: %m")));
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+static void
+bloom_blutils_init_unlock(bool locked)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!locked)
+		return;
+
+	rc = pthread_mutex_unlock(&BloomBlutilsInitMutex);
+	RESUME_INTERRUPTS();
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not leave bloom initialization critical section: %m");
+	}
+#else
+	(void) locked;
+#endif
+}
+
+static MemoryContext
+bloom_reloptions_memory_context(void)
+{
+	if (multithreaded)
+	{
+		if (BloomRelOptionsMemoryContext == NULL)
+			BloomRelOptionsMemoryContext =
+				AllocSetContextCreate(NULL,
+									  "bloom relation options",
+									  ALLOCSET_SMALL_SIZES);
+		return BloomRelOptionsMemoryContext;
+	}
+
+	return PgRuntimeGetOwnedMemoryContext(PgCurrentBloomContextRef(),
+										  "bloom relation options");
+}
 
 /*
  * Module initialize function: initialize info about Bloom relation options.
@@ -69,36 +146,60 @@ static void mySrand(int32 *seed, uint32 value);
 void
 _PG_init(void)
 {
+	BloomBlutilsRuntimeState *state;
+	bool		locked;
 	int			i;
 	char		buf[16];
 
-	bl_relopt_kind = add_reloption_kind();
+	locked = bloom_blutils_init_lock();
+	state = bloom_blutils_runtime_state();
 
-	/* Option for length of signature */
-	add_int_reloption(bl_relopt_kind, "length",
-					  "Length of signature in bits",
-					  DEFAULT_BLOOM_LENGTH, 1, MAX_BLOOM_LENGTH,
-					  AccessExclusiveLock);
-	bl_relopt_tab[0].optname = "length";
-	bl_relopt_tab[0].opttype = RELOPT_TYPE_INT;
-	bl_relopt_tab[0].offset = offsetof(BloomOptions, bloomLength);
-
-	/* Number of bits for each possible index column: col1, col2, ... */
-	for (i = 0; i < INDEX_MAX_KEYS; i++)
+	PG_TRY();
 	{
-		snprintf(buf, sizeof(buf), "col%d", i + 1);
-		add_int_reloption(bl_relopt_kind, buf,
-						  "Number of bits generated for each index column",
-						  DEFAULT_BLOOM_BITS, 1, MAX_BLOOM_BITS,
-						  AccessExclusiveLock);
-		bl_relopt_tab[i + 1].optname =
-			MemoryContextStrdup(PgRuntimeGetOwnedMemoryContext(
-									PgCurrentBloomContextRef(),
-									"bloom relation options"),
-								buf);
-		bl_relopt_tab[i + 1].opttype = RELOPT_TYPE_INT;
-		bl_relopt_tab[i + 1].offset = offsetof(BloomOptions, bitSize[0]) + sizeof(int) * i;
+		if (!(state->initialized &&
+			  reloption_kind_has_option(state->relopt_kind, "col1")))
+		{
+			state->initialized = false;
+			memset(state->relopt_tab, 0, sizeof(state->relopt_tab));
+
+			bl_relopt_kind = add_reloption_kind();
+
+			/* Option for length of signature */
+			add_int_reloption(bl_relopt_kind, "length",
+							  "Length of signature in bits",
+							  DEFAULT_BLOOM_LENGTH, 1, MAX_BLOOM_LENGTH,
+							  AccessExclusiveLock);
+			bl_relopt_tab[0].optname = "length";
+			bl_relopt_tab[0].opttype = RELOPT_TYPE_INT;
+			bl_relopt_tab[0].offset = offsetof(BloomOptions, bloomLength);
+
+			/* Number of bits for each possible index column: col1, col2, ... */
+			for (i = 0; i < INDEX_MAX_KEYS; i++)
+			{
+				snprintf(buf, sizeof(buf), "col%d", i + 1);
+				add_int_reloption(bl_relopt_kind, buf,
+								  "Number of bits generated for each index column",
+								  DEFAULT_BLOOM_BITS, 1, MAX_BLOOM_BITS,
+								  AccessExclusiveLock);
+				bl_relopt_tab[i + 1].optname =
+					MemoryContextStrdup(bloom_reloptions_memory_context(), buf);
+				bl_relopt_tab[i + 1].opttype = RELOPT_TYPE_INT;
+				bl_relopt_tab[i + 1].offset =
+					offsetof(BloomOptions, bitSize[0]) + sizeof(int) * i;
+			}
+
+			state->initialized = true;
+		}
 	}
+	PG_CATCH();
+	{
+		state->initialized = false;
+		bloom_blutils_init_unlock(locked);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	bloom_blutils_init_unlock(locked);
 }
 
 /*

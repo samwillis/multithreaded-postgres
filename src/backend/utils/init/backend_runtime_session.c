@@ -1673,6 +1673,7 @@ PgSessionInitializeBackupState(PgSessionBackupState *backup)
 	backup->tablespace_map = NULL;
 	backup->backup_context = NULL;
 	backup->session_backup_state = SESSION_BACKUP_NONE;
+	backup->abort_backup_handler_registered = false;
 }
 
 PG_RUNTIME_DEFINE_ADOPT_EARLY_WITH_INIT(PgSessionAdoptEarlyBackupState,

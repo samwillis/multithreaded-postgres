@@ -874,6 +874,8 @@ IoWorkerMain(const void *startup_data, size_t startup_data_len)
 						   "worker %d processing IO",
 						   MyIoWorkerId);
 
+			INJECTION_POINT_LOAD("aio-worker-after-reopen");
+
 			/*
 			 * Prevent interrupts between pgaio_io_reopen() and
 			 * pgaio_io_perform_synchronously() that otherwise could lead to
@@ -895,7 +897,7 @@ IoWorkerMain(const void *startup_data, size_t startup_data_len)
 			 * To be able to exercise the reopen-fails path, allow injection
 			 * points to trigger a failure at this point.
 			 */
-			INJECTION_POINT("aio-worker-after-reopen", ioh);
+			INJECTION_POINT_CACHED("aio-worker-after-reopen", ioh);
 
 			error_errno = 0;
 			error_ioh = NULL;

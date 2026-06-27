@@ -574,14 +574,21 @@ ForgetUnstartedBackgroundWorkers(void)
 	dlist_foreach_modify(iter, &BackgroundWorkerList)
 	{
 		RegisteredBgWorker *rw;
-		BackgroundWorkerSlot *slot;
 
 		rw = dlist_container(RegisteredBgWorker, rw_lnode, iter.cur);
 		Assert(rw->rw_shmem_slot < max_worker_processes);
-		slot = &BackgroundWorkerData->slot[rw->rw_shmem_slot];
 
-		/* If it's not yet started, and there's someone waiting ... */
-		if (slot->pid == InvalidPid &&
+		/*
+		 * If it's not yet started, and there's someone waiting ...
+		 *
+		 * Thread-backed bgworkers set rw_pid when the carrier is launched, but
+		 * publish slot->pid only after their explicit startup-complete
+		 * boundary.  During shutdown, treat rw_pid as the postmaster-owned
+		 * source of truth so an already-launched worker is signaled through
+		 * ActiveChildList instead of being forgotten out from under its
+		 * PMChild.
+		 */
+		if (rw->rw_pid == 0 &&
 			rw->rw_worker.bgw_notify_pid != 0)
 		{
 			/* ... then zap it, and notify the waiter */
@@ -1496,7 +1503,8 @@ TerminateBackgroundWorkersForDatabase(Oid databaseId)
 		if (slot->in_use &&
 			(slot->worker.bgw_flags & BGWORKER_INTERRUPTIBLE))
 		{
-			PGPROC	   *proc = BackendPidGetProc(slot->pid);
+			/* slot->pid is a SQL-visible signal target in threaded mode. */
+			PGPROC	   *proc = BackendSignalPidGetProc(slot->pid);
 
 			if (proc && proc->databaseId == databaseId)
 			{

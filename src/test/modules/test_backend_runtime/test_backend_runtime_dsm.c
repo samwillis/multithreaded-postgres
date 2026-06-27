@@ -17,6 +17,8 @@ Datum
 test_backend_dsm_shutdown_is_backend_local(PG_FUNCTION_ARGS)
 {
 	PgBackend  *saved_backend;
+	PGPROC	   *saved_proc;
+	ProcNumber	saved_proc_number;
 	PgBackend	fake_backend_with_dsm;
 	PgBackend	fake_backend_to_exit;
 	dsm_segment *seg = NULL;
@@ -24,10 +26,24 @@ test_backend_dsm_shutdown_is_backend_local(PG_FUNCTION_ARGS)
 	bool		found = false;
 
 	saved_backend = CurrentPgBackend;
+	saved_proc = MyProc;
+	saved_proc_number = MyProcNumber;
 	MemSet(&fake_backend_with_dsm, 0, sizeof(fake_backend_with_dsm));
 	MemSet(&fake_backend_to_exit, 0, sizeof(fake_backend_to_exit));
 	dlist_init(&fake_backend_with_dsm.dsm_segment_list);
 	dlist_init(&fake_backend_to_exit.dsm_segment_list);
+	fake_backend_with_dsm.my_proc = saved_proc;
+	fake_backend_with_dsm.my_proc_number = saved_proc_number;
+	fake_backend_with_dsm.locks.held_lwlocks_array =
+		fake_backend_with_dsm.locks.held_lwlocks_inline;
+	fake_backend_with_dsm.locks.held_lwlocks_capacity =
+		PG_BACKEND_MAX_INLINE_LWLOCKS;
+	fake_backend_to_exit.my_proc = saved_proc;
+	fake_backend_to_exit.my_proc_number = saved_proc_number;
+	fake_backend_to_exit.locks.held_lwlocks_array =
+		fake_backend_to_exit.locks.held_lwlocks_inline;
+	fake_backend_to_exit.locks.held_lwlocks_capacity =
+		PG_BACKEND_MAX_INLINE_LWLOCKS;
 	/* DSM allocation reports wait events through backend-local wait state. */
 	fake_backend_with_dsm.wait_state.wait_event_info_ptr =
 		&fake_backend_with_dsm.wait_state.local_wait_event_info;

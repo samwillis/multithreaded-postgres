@@ -104,6 +104,13 @@
 static PG_GLOBAL_RUNTIME List *reserved_class_prefix = NIL;
 static PG_GLOBAL_RUNTIME MemoryContext GUCReservedPrefixMemoryContext = NULL;
 
+#define GUC_SESSION_RESERVED_PREFIX_STATE_KEY "guc.session_reserved_prefixes"
+
+typedef struct GUCSessionReservedPrefixState
+{
+	List	   *prefixes;
+} GUCSessionReservedPrefixState;
+
 #ifndef WIN32
 static PG_GLOBAL_RUNTIME pthread_mutex_t ThreadedGUCMutex = PTHREAD_MUTEX_INITIALIZER;
 #define ThreadedGUCMutexDepth (*PgCurrentThreadedGUCMutexDepthRef())
@@ -644,6 +651,84 @@ GUCReservedPrefixContext(void)
 	return GUCReservedPrefixMemoryContext;
 }
 
+static GUCSessionReservedPrefixState *
+GUCGetSessionReservedPrefixState(bool create)
+{
+	if (!multithreaded || CurrentPgSession == NULL)
+		return NULL;
+
+	if (create)
+		return (GUCSessionReservedPrefixState *)
+			PgSessionEnsureExtensionPrivateState(
+				GUC_SESSION_RESERVED_PREFIX_STATE_KEY,
+				sizeof(GUCSessionReservedPrefixState),
+				NULL);
+
+	return (GUCSessionReservedPrefixState *)
+		PgSessionGetExtensionPrivateState(
+			GUC_SESSION_RESERVED_PREFIX_STATE_KEY);
+}
+
+static bool
+guc_prefix_list_member(List *prefixes, const char *className)
+{
+	ListCell   *lc;
+
+	foreach(lc, prefixes)
+	{
+		const char *prefix = lfirst(lc);
+
+		if (strcmp(prefix, className) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+static bool
+session_reserved_prefix_matches_name(const char *name)
+{
+	GUCSessionReservedPrefixState *state;
+	const char *sep;
+	size_t		classLen;
+	ListCell   *lc;
+
+	state = GUCGetSessionReservedPrefixState(false);
+	if (state == NULL)
+		return false;
+
+	sep = strchr(name, GUC_QUALIFIER_SEPARATOR);
+	if (sep == NULL)
+		return false;
+
+	classLen = sep - name;
+	foreach(lc, state->prefixes)
+	{
+		const char *prefix = lfirst(lc);
+
+		if (strlen(prefix) == classLen &&
+			strncmp(name, prefix, classLen) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+static void
+remember_session_reserved_prefix(const char *className)
+{
+	GUCSessionReservedPrefixState *state;
+	MemoryContext oldcontext;
+
+	state = GUCGetSessionReservedPrefixState(true);
+	if (state == NULL || guc_prefix_list_member(state->prefixes, className))
+		return;
+
+	oldcontext = MemoryContextSwitchTo(GetMemoryChunkContext(state));
+	state->prefixes = lappend(state->prefixes, pstrdup(className));
+	MemoryContextSwitchTo(oldcontext);
+}
+
 
 /*
  * Unit conversion tables.
@@ -848,8 +933,15 @@ static void write_auto_conf_file(int fd, const char *filename, ConfigVariable *h
 static void replace_auto_config_value(ConfigVariable **head_p, ConfigVariable **tail_p,
 									  const char *name, const char *value);
 static bool valid_custom_variable_name(const char *name);
+static bool session_reserved_prefix_matches_name(const char *name);
+static void remember_session_reserved_prefix(const char *className);
 static bool assignable_custom_variable_name(const char *name, bool skip_errors,
-											int elevel);
+											int elevel,
+											bool allow_reserved_prefix);
+static struct config_generic *find_option_ext(const char *name,
+											  bool create_placeholders,
+											  bool skip_errors, int elevel,
+											  bool allow_reserved_prefix);
 static void do_serialize(char **destptr, Size *maxbytes,
 						 const char *fmt, ...) pg_attribute_printf(3, 4);
 static bool call_bool_check_hook(const struct config_generic *conf, bool *newval,
@@ -1306,7 +1398,8 @@ guc_realloc(int elevel, void *old, size_t size)
 	if (old != NULL)
 	{
 		/* This is to help catch old code that malloc's GUC data. */
-		Assert(GetMemoryChunkContext(old) == GUCMemoryContext);
+		Assert(multithreaded ||
+			   GetMemoryChunkContext(old) == GUCMemoryContext);
 		data = repalloc_extended(old, size,
 								 MCXT_ALLOC_NO_OOM);
 	}
@@ -1345,7 +1438,8 @@ guc_free(void *ptr)
 	if (ptr != NULL)
 	{
 		/* This is to help catch old code that malloc's GUC data. */
-		Assert(GetMemoryChunkContext(ptr) == GUCMemoryContext);
+		Assert(multithreaded ||
+			   GetMemoryChunkContext(ptr) == GUCMemoryContext);
 		pfree(ptr);
 	}
 }
@@ -1912,7 +2006,8 @@ valid_custom_variable_name(const char *name)
  * if that's less than ERROR).
  */
 static bool
-assignable_custom_variable_name(const char *name, bool skip_errors, int elevel)
+assignable_custom_variable_name(const char *name, bool skip_errors, int elevel,
+								bool allow_reserved_prefix)
 {
 	/* If there's no separator, it can't be a custom variable */
 	const char *sep = strchr(name, GUC_QUALIFIER_SEPARATOR);
@@ -1934,7 +2029,7 @@ assignable_custom_variable_name(const char *name, bool skip_errors, int elevel)
 			return false;
 		}
 		/* ... and it must not match any previously-reserved prefix */
-		foreach(lc, reserved_class_prefix)
+		foreach(lc, allow_reserved_prefix ? NIL : reserved_class_prefix)
 		{
 			const char *rcprefix = lfirst(lc);
 
@@ -2042,6 +2137,14 @@ struct config_generic *
 find_option(const char *name, bool create_placeholders, bool skip_errors,
 			int elevel)
 {
+	return find_option_ext(name, create_placeholders, skip_errors, elevel,
+						   false);
+}
+
+static struct config_generic *
+find_option_ext(const char *name, bool create_placeholders, bool skip_errors,
+				int elevel, bool allow_reserved_prefix)
+{
 	GUCHashEntry *hentry;
 	struct config_generic *record;
 
@@ -2069,8 +2172,9 @@ find_option(const char *name, bool create_placeholders, bool skip_errors,
 	for (int i = 0; map_old_guc_names[i] != NULL; i += 2)
 	{
 		if (guc_name_compare(name, map_old_guc_names[i]) == 0)
-			return find_option(map_old_guc_names[i + 1], false,
-							   skip_errors, elevel);
+			return find_option_ext(map_old_guc_names[i + 1], false,
+								   skip_errors, elevel,
+								   allow_reserved_prefix);
 	}
 
 	if (create_placeholders)
@@ -2078,7 +2182,8 @@ find_option(const char *name, bool create_placeholders, bool skip_errors,
 		/*
 		 * Check if the name is valid, and if so, add a placeholder.
 		 */
-		if (assignable_custom_variable_name(name, skip_errors, elevel))
+		if (assignable_custom_variable_name(name, skip_errors, elevel,
+											allow_reserved_prefix))
 			return add_placeholder_variable(name, elevel);
 		else
 			return NULL;		/* error message, if any, already emitted */
@@ -2527,7 +2632,7 @@ check_GUC_name_for_parameter_acl(const char *name)
 	if (find_option(name, false, true, DEBUG5) != NULL)
 		return;
 	/* Otherwise, it'd better be a valid custom GUC name. */
-	(void) assignable_custom_variable_name(name, false, ERROR);
+	(void) assignable_custom_variable_name(name, false, ERROR, false);
 }
 
 /*
@@ -4968,6 +5073,7 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 	struct config_generic *record;
 	union config_var_val newval_union;
 	void	   *newextra = NULL;
+	bool		allow_reserved_prefix_placeholder;
 	bool		prohibitValueChange = false;
 	bool		makeDefault;
 
@@ -4990,10 +5096,25 @@ set_config_with_handle_internal(const char *name, config_handle *handle,
 			elevel = ERROR;
 	}
 
+	/*
+	 * In threaded mode, a different logical session can reserve a custom GUC
+	 * prefix globally before this session has loaded the defining module.
+	 * Preserve process-mode placeholder behavior for pre-LOAD session SETs.
+	 */
+	allow_reserved_prefix_placeholder =
+		source == PGC_S_FILE ||
+		(multithreaded &&
+		 CurrentPgSession != NULL &&
+		 source == PGC_S_SESSION &&
+		 !session_reserved_prefix_matches_name(name)) ||
+		(source == PGC_S_CLIENT &&
+		 (context == PGC_BACKEND || context == PGC_SU_BACKEND));
+
 	/* if handle is specified, no need to look up option */
 	if (!handle)
 	{
-		record = find_option(name, true, false, elevel);
+		record = find_option_ext(name, true, false, elevel,
+								 allow_reserved_prefix_placeholder);
 		if (record == NULL)
 			return 0;
 	}
@@ -6340,7 +6461,7 @@ AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt)
 			 * remove such settings with reserved prefixes.
 			 */
 			if (value || !valid_custom_variable_name(name))
-				(void) assignable_custom_variable_name(name, false, ERROR);
+				(void) assignable_custom_variable_name(name, false, ERROR, false);
 		}
 
 		/*
@@ -6557,9 +6678,18 @@ define_custom_variable(struct config_generic *variable)
 	const char *name = variable->name;
 	GUCHashEntry *hentry;
 	struct config_generic *pHolder;
+	bool		threaded_session_init;
 
-	/* Check mapping between initial and default value */
-	Assert(check_GUC_init(variable));
+	/*
+	 * Check mapping between initial and default value.  Threaded session
+	 * replay can re-run an already-loaded module's _PG_init() after an
+	 * extension-owned static C variable has held a previous configured value.
+	 * The normal initialization below still resets the new GUC descriptor to
+	 * its boot value before applying any placeholder/configured value.
+	 */
+	threaded_session_init = dynamic_library_threaded_session_init_in_progress();
+	if (!threaded_session_init)
+		Assert(check_GUC_init(variable));
 
 	if (find_builtin_option(name) != NULL)
 		ereport(ERROR,
@@ -6955,9 +7085,14 @@ MarkGUCPrefixReserved(const char *className)
 		}
 
 		/* And remember the name so we can prevent future mistakes. */
-		oldcontext = MemoryContextSwitchTo(GUCReservedPrefixContext());
-		reserved_class_prefix = lappend(reserved_class_prefix, pstrdup(className));
-		MemoryContextSwitchTo(oldcontext);
+		remember_session_reserved_prefix(className);
+		if (!guc_prefix_list_member(reserved_class_prefix, className))
+		{
+			oldcontext = MemoryContextSwitchTo(GUCReservedPrefixContext());
+			reserved_class_prefix = lappend(reserved_class_prefix,
+											pstrdup(className));
+			MemoryContextSwitchTo(oldcontext);
+		}
 	}
 	PG_FINALLY();
 	{
@@ -7520,7 +7655,7 @@ read_nondefault_variables(void)
 			if ((varname = read_string_with_null(fp)) == NULL)
 				break;
 
-			record = find_option(varname, true, false, FATAL);
+			record = find_option_ext(varname, true, false, FATAL, true);
 			if (record == NULL)
 				elog(FATAL, "failed to locate variable \"%s\" in exec config params file", varname);
 

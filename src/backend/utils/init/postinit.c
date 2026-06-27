@@ -55,6 +55,7 @@
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
+#include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "storage/sync.h"
 #include "tcop/backend_startup.h"
@@ -62,6 +63,7 @@
 #include "utils/acl.h"
 #include "utils/backend_runtime.h"
 #include "utils/builtins.h"
+#include "fmgr.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/guc_hooks.h"
@@ -802,6 +804,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * Once I have done this, I am visible to other backends!
 	 */
 	InitProcessPhase2();
+	initialize_loaded_modules_for_threaded_session();
+	if (!bootstrap && threaded_backend)
+		ProcessDeferredAfterStartupShmemCallbacks();
 
 	/* Initialize status reporting */
 	pgstat_beinit();

@@ -127,10 +127,9 @@ pgpa_planner_runtime_state(void)
 	(pgpa_planner_runtime_state()->prev_planner_setup)
 #define prev_planner_shutdown \
 	(pgpa_planner_runtime_state()->prev_planner_shutdown)
-#define planner_extension_id \
-	(pg_plan_advice_session_state()->planner_extension_id)
 
 /* Function prototypes. */
+static int pgpa_planner_get_extension_id(void);
 static void pgpa_planner_setup(PlannerGlobal *glob, Query *parse,
 							   const char *query_string,
 							   int cursorOptions,
@@ -203,9 +202,20 @@ static void pgpa_compute_rt_offsets(pgpa_planner_state *pps,
 									PlannedStmt *pstmt);
 static void pgpa_validate_rt_identifiers(pgpa_planner_state *pps,
 										 PlannedStmt *pstmt);
-
 static char *pgpa_bms_to_cstring(Bitmapset *bms);
 static const char *pgpa_jointype_to_cstring(JoinType jointype);
+
+static int
+pgpa_planner_get_extension_id(void)
+{
+	PgPlanAdviceSessionState *state;
+
+	state = pg_plan_advice_session_state();
+	if (state->planner_extension_id < 0)
+		state->planner_extension_id = GetPlannerExtensionId("pg_plan_advice");
+
+	return state->planner_extension_id;
+}
 
 /*
  * Install planner-related hooks.
@@ -215,7 +225,7 @@ pgpa_planner_install_hooks(void)
 {
 	PgPlanAdvicePlannerRuntimeState *state = pgpa_planner_runtime_state();
 
-	planner_extension_id = GetPlannerExtensionId("pg_plan_advice");
+	(void) pgpa_planner_get_extension_id();
 
 	if (planner_setup_hook == pgpa_planner_setup)
 	{
@@ -330,7 +340,8 @@ pgpa_planner_setup(PlannerGlobal *glob, Query *parse, const char *query_string,
 		pps->generate_advice_feedback = generate_advice_feedback;
 		pps->generate_advice_string = generate_advice_string;
 		pps->trove = trove;
-		SetPlannerGlobalExtensionState(glob, planner_extension_id, pps);
+		SetPlannerGlobalExtensionState(glob, pgpa_planner_get_extension_id(),
+									   pps);
 	}
 
 	/* Pass call to previous hook. */
@@ -355,7 +366,8 @@ pgpa_planner_shutdown(PlannerGlobal *glob, Query *parse,
 	pgpa_identifier *rt_identifiers = NULL;
 
 	/* Fetch our private state, set up by pgpa_planner_setup(). */
-	pps = GetPlannerGlobalExtensionState(glob, planner_extension_id);
+	pps = GetPlannerGlobalExtensionState(glob,
+										  pgpa_planner_get_extension_id());
 	if (pps != NULL)
 	{
 		/* Set up some local variables. */
@@ -453,7 +465,8 @@ pgpa_build_simple_rel(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	pgpa_planner_info *proot = NULL;
 
 	/* Fetch our private state, set up by pgpa_planner_setup(). */
-	pps = GetPlannerGlobalExtensionState(root->glob, planner_extension_id);
+	pps = GetPlannerGlobalExtensionState(root->glob,
+										  pgpa_planner_get_extension_id());
 
 	/*
 	 * Look up the pgpa_planner_info for this subquery, and make sure we've
@@ -589,7 +602,8 @@ pgpa_join_path_setup(PlannerInfo *root, RelOptInfo *joinrel,
 		RelOptInfo *uniquerel;
 
 		uniquerel = jointype == JOIN_UNIQUE_OUTER ? outerrel : innerrel;
-		pps = GetPlannerGlobalExtensionState(root->glob, planner_extension_id);
+		pps = GetPlannerGlobalExtensionState(root->glob,
+											  pgpa_planner_get_extension_id());
 		if (pps != NULL &&
 			(pps->generate_advice_string || pps->generate_advice_feedback))
 		{
@@ -679,7 +693,8 @@ pgpa_get_join_state(PlannerInfo *root, RelOptInfo *joinrel,
 	bool		new_pjs = false;
 
 	/* Fetch our private state, set up by pgpa_planner_setup(). */
-	pps = GetPlannerGlobalExtensionState(root->glob, planner_extension_id);
+	pps = GetPlannerGlobalExtensionState(root->glob,
+										  pgpa_planner_get_extension_id());
 	if (pps == NULL || pps->trove == NULL)
 	{
 		/* No advice applies to this query, hence none to this joinrel. */
@@ -693,7 +708,8 @@ pgpa_get_join_state(PlannerInfo *root, RelOptInfo *joinrel,
 	 * we can simply use it, and (b) if they have changed, we need to rejigger
 	 * the array of identifiers but can still skip the trove lookup.
 	 */
-	pjs = GetRelOptInfoExtensionState(joinrel, planner_extension_id);
+	pjs = GetRelOptInfoExtensionState(joinrel,
+									  pgpa_planner_get_extension_id());
 	if (pjs != NULL)
 	{
 		if (pjs->join_indexes == NULL && pjs->rel_indexes == NULL)
@@ -768,7 +784,8 @@ pgpa_get_join_state(PlannerInfo *root, RelOptInfo *joinrel,
 		pjs->rel_indexes = tresult.indexes;
 
 		/* Now that the new pgpa_join_state is fully valid, save a pointer. */
-		SetRelOptInfoExtensionState(joinrel, planner_extension_id, pjs);
+		SetRelOptInfoExtensionState(joinrel, pgpa_planner_get_extension_id(),
+									pjs);
 
 		/*
 		 * If there was no relevant advice found, just return NULL. This

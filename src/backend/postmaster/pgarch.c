@@ -465,6 +465,7 @@ pgarch_ArchiverCopyLoop(void)
 						(errmsg("\"archive_mode\" enabled, yet archiving is not configured"),
 						 arch_module_check_errdetail_string ?
 						 errdetail_internal("%s", arch_module_check_errdetail_string) : 0));
+				arch_module_check_errdetail_string = NULL;
 				return;
 			}
 

@@ -20,6 +20,9 @@
 #include "datatype/timestamp.h"
 #include "miscadmin.h"
 #include "pgtz.h"
+#ifndef WIN32
+#include "port/pg_pthread.h"
+#endif
 #include "storage/fd.h"
 #include "utils/hsearch.h"
 
@@ -196,6 +199,58 @@ typedef struct
 
 static HTAB *timezone_cache = NULL;
 
+#ifndef WIN32
+static PG_GLOBAL_RUNTIME pthread_mutex_t TimeZoneCacheMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool
+TimeZoneCacheLock(void)
+{
+	int			rc;
+
+	if (!multithreaded)
+		return false;
+
+	HOLD_INTERRUPTS();
+	rc = pthread_mutex_lock(&TimeZoneCacheMutex);
+	if (rc != 0)
+	{
+		RESUME_INTERRUPTS();
+		errno = rc;
+		elog(FATAL, "could not enter timezone cache critical section: %m");
+	}
+
+	return true;
+}
+
+static void
+TimeZoneCacheUnlock(bool locked)
+{
+	int			rc;
+
+	if (!locked)
+		return;
+
+	rc = pthread_mutex_unlock(&TimeZoneCacheMutex);
+	RESUME_INTERRUPTS();
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not leave timezone cache critical section: %m");
+	}
+}
+#else
+static bool
+TimeZoneCacheLock(void)
+{
+	return false;
+}
+
+static void
+TimeZoneCacheUnlock(bool locked)
+{
+	(void) locked;
+}
+#endif
 
 static bool
 init_timezone_hashtable(void)
@@ -233,17 +288,21 @@ pg_tz *
 pg_tzset(const char *tzname)
 {
 	pg_tz_cache *tzp;
+	pg_tz	   *result = NULL;
 	struct state tzstate;
 	char		uppername[TZ_STRLEN_MAX + 1];
 	char		canonname[TZ_STRLEN_MAX + 1];
 	char	   *p;
+	bool		locked;
 
 	if (strlen(tzname) > TZ_STRLEN_MAX)
 		return NULL;			/* not going to fit */
 
+	locked = TimeZoneCacheLock();
+
 	if (!timezone_cache)
 		if (!init_timezone_hashtable())
-			return NULL;
+			goto done;
 
 	/*
 	 * Upcase the given name to perform a case-insensitive hashtable search.
@@ -263,7 +322,8 @@ pg_tzset(const char *tzname)
 	if (tzp)
 	{
 		/* Timezone found in cache, nothing more to do */
-		return &tzp->tz;
+		result = &tzp->tz;
+		goto done;
 	}
 
 	/*
@@ -284,7 +344,7 @@ pg_tzset(const char *tzname)
 		if (uppername[0] == ':' || !tzparse(uppername, &tzstate, false))
 		{
 			/* Unknown timezone. Fail our call instead of loading GMT! */
-			return NULL;
+			goto done;
 		}
 		/* For POSIX timezone specs, use uppercase name as canonical */
 		strcpy(canonname, uppername);
@@ -299,8 +359,11 @@ pg_tzset(const char *tzname)
 	/* hash_search already copied uppername into the hash key */
 	strcpy(tzp->tz.TZname, canonname);
 	memcpy(&tzp->tz.state, &tzstate, sizeof(tzstate));
+	result = &tzp->tz;
 
-	return &tzp->tz;
+done:
+	TimeZoneCacheUnlock(locked);
+	return result;
 }
 
 /*

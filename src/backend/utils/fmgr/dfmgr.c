@@ -56,6 +56,7 @@ struct DynamicFileList
 #endif
 	void	   *handle;			/* a handle for pg_dl* functions */
 	const Pg_magic_struct *magic;	/* Location of module's magic block */
+	bool		replay_at_threaded_backend_start;
 	char		filename[FLEXIBLE_ARRAY_MEMBER];	/* Full pathname of file */
 };
 
@@ -435,6 +436,9 @@ internal_load_library_locked(const char *libname)
 					 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
 		}
 
+		file_scanner->replay_at_threaded_backend_start =
+			process_shared_preload_libraries_in_progress;
+
 		call_module_init_function(file_scanner);
 
 		/* OK to link it into list */
@@ -450,7 +454,7 @@ internal_load_library_locked(const char *libname)
 								   file_scanner->magic,
 								   PgRuntimeGetExtensionBackendModel());
 		if (module_needs_session_init(file_scanner))
-			call_module_init_function(file_scanner);
+			call_module_threaded_session_init_function(file_scanner);
 	}
 
 	return file_scanner->handle;
@@ -539,10 +543,13 @@ remember_module_session_init(DynamicFileList *file_scanner)
 }
 
 /*
- * Replay _PG_init() for libraries that were loaded before this threaded
- * logical session existed.  Without this, custom GUC descriptors defined by
+ * Replay _PG_init() for libraries that should behave as though inherited by a
+ * new backend.  Without this, custom GUC descriptors defined by
  * postmaster/worker-loaded libraries are absent from the session-local GUC
- * hash, while their prefixes may already be reserved globally.
+ * hash, while their prefixes may already be reserved globally.  Libraries that
+ * entered the process through session/local preload or explicit LOAD are left
+ * for their normal load point so startup-packet option ordering matches a
+ * forked backend.
  */
 void
 initialize_loaded_modules_for_threaded_session(void)
@@ -565,7 +572,8 @@ initialize_loaded_modules_for_threaded_session(void)
 			check_module_backend_model(file_scanner->filename,
 									   file_scanner->magic,
 									   PgRuntimeGetExtensionBackendModel());
-			if (module_needs_session_init(file_scanner))
+			if (file_scanner->replay_at_threaded_backend_start &&
+				module_needs_session_init(file_scanner))
 				call_module_threaded_session_init_function(file_scanner);
 
 			file_scanner = next;

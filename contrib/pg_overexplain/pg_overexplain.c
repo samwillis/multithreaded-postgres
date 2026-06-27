@@ -65,6 +65,7 @@ static void overexplain_intlist(const char *qlabel, List *list,
 
 typedef struct PgOverexplainRuntimeState
 {
+	bool		hooks_installed;
 	int			es_extension_id;
 	explain_per_node_hook_type prev_explain_per_node_hook;
 	explain_per_plan_hook_type prev_explain_per_plan_hook;
@@ -91,6 +92,10 @@ overexplain_runtime_state(void)
 void
 _PG_init(void)
 {
+	PgOverexplainRuntimeState *state;
+
+	state = overexplain_runtime_state();
+
 	/* Get an ID that we can use to cache data in an ExplainState. */
 	es_extension_id = GetExplainExtensionId("pg_overexplain");
 
@@ -102,10 +107,14 @@ _PG_init(void)
 								   GUCCheckBooleanExplainOption);
 
 	/* Use the per-node and per-plan hooks to make our options do something. */
-	prev_explain_per_node_hook = explain_per_node_hook;
-	explain_per_node_hook = overexplain_per_node_hook;
-	prev_explain_per_plan_hook = explain_per_plan_hook;
-	explain_per_plan_hook = overexplain_per_plan_hook;
+	if (!state->hooks_installed)
+	{
+		prev_explain_per_node_hook = explain_per_node_hook;
+		explain_per_node_hook = overexplain_per_node_hook;
+		prev_explain_per_plan_hook = explain_per_plan_hook;
+		explain_per_plan_hook = overexplain_per_plan_hook;
+		state->hooks_installed = true;
+	}
 }
 
 /*

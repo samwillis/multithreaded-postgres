@@ -22,6 +22,7 @@
 #include "storage/aio.h"
 #include "storage/aio_internal.h"
 #include "storage/fd.h"
+#include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
 
@@ -117,6 +118,8 @@ pgaio_io_perform_synchronously(PgAioHandle *ioh)
 {
 	ssize_t		result = 0;
 	struct iovec *iov = &pgaio_ctl->iovecs[ioh->iovec_off];
+
+	INJECTION_POINT_LOAD("aio-process-completion-before-shared");
 
 	START_CRIT_SECTION();
 

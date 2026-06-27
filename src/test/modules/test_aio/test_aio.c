@@ -1036,7 +1036,7 @@ inj_io_short_read_matches(PgAioHandle *ioh)
 		return false;
 
 	io_proc = GetPGProcByNumber(pgaio_io_get_owner(ioh));
-	io_pid = io_proc->pid;
+	io_pid = PGProcSignalPid(io_proc);
 	inj_pid = inj_io_error_state->short_read_pid;
 
 	if (inj_pid != InvalidPid && inj_pid != io_pid)
@@ -1073,7 +1073,7 @@ inj_io_completion_wait_matches(PgAioHandle *ioh)
 		return false;
 
 	io_proc = GetPGProcByNumber(pgaio_io_get_owner(ioh));
-	io_pid = io_proc->pid;
+	io_pid = PGProcSignalPid(io_proc);
 	inj_pid = inj_io_error_state->completion_wait_pid;
 
 	if (inj_pid != InvalidPid && inj_pid != io_pid)

@@ -1669,8 +1669,8 @@ GetXLogBuffer(XLogRecPtr ptr, TimeLineID tli)
 {
 	int			idx;
 	XLogRecPtr	endptr;
-	static uint64 cachedPage = 0;
-	static char *cachedPos = NULL;
+	static PG_THREAD_LOCAL PG_GLOBAL_CARRIER uint64 cachedPage = 0;
+	static PG_THREAD_LOCAL PG_GLOBAL_CARRIER char *cachedPos = NULL;
 	XLogRecPtr	expectedEndPtr;
 
 	/*
@@ -10081,12 +10081,12 @@ do_pg_abort_backup(int code, Datum arg)
 void
 register_persistent_abort_backup_handler(void)
 {
-	static bool already_done = false;
+	PgSessionBackupState *backup = PgCurrentSessionBackupState();
 
-	if (already_done)
+	if (backup->abort_backup_handler_registered)
 		return;
 	before_shmem_exit(do_pg_abort_backup, BoolGetDatum(false));
-	already_done = true;
+	backup->abort_backup_handler_registered = true;
 }
 
 /*

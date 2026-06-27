@@ -704,15 +704,15 @@ closed.
 
 Current branch evidence as of June 27, 2026:
 
-- `check-threaded-world-coverage` passes with `141 covered`, `22 excluded`,
-  and `142 enabled leaves`. The extra exclusion rows are checked
-  `configure_disabled` rows for optional dependency leaves that are real
-  `check-world` components but absent from this local configure, plus the
-  existing `src/test/perl` support-module `not_applicable` row.
+- `check-threaded-world-coverage` passes with `160 covered`, `3 excluded`,
+  and `161 enabled leaves`. The only remaining exclusion rows are the
+  disabled SELinux-dependent `contrib/sepgsql`, the Windows-only
+  `src/bin/pgevent`, and the support-module-only `src/test/perl`.
 - `MALLOC_CHECK_=3 gmake check-phase16-gate-g-local` passes on the current
   Linux default configure after adding a top-level `temp-install` prerequisite
   to the local Gate G bundle. The evidence log is
-  `/tmp/phase16-gate-g-local-fresh-temp-install.log`, with status `0`; it
+  `/tmp/phase16-final-gate-g-local-after-autovacuum-focused-pass.log`, with
+  status `0`; it
   rebuilt `tmp_install`, ran process-mode `check-world`,
   `check-world-threaded`, `check-runtime-lifecycles`, and
   `check-global-lifetimes`.
@@ -728,7 +728,7 @@ Current branch evidence as of June 27, 2026:
   authentication, postmaster, recovery, subscription, `src/test/modules`,
   `src/pl`, contrib, interfaces, `src/bin`, and `src/tools/pg_bsd_indent`.
   Important non-contrib TAP leaves in that pass include recovery
-  `Files=52, Tests=631`, subscription, `src/bin/pg_basebackup`, `src/bin/pg_combinebackup`
+  `Files=52, Tests=737`, subscription, `src/bin/pg_basebackup`, `src/bin/pg_combinebackup`
   (`Files=11, Tests=81`), `src/bin/pg_upgrade` (`Files=8, Tests=136`),
   `src/bin/pg_verifybackup`, `src/bin/pg_walsummary`, `src/bin/pgbench`,
   `src/bin/psql`, and `src/bin/scripts`.
@@ -872,14 +872,15 @@ audit. The local default-configure closure command is
 `MALLOC_CHECK_=3 gmake check-phase16-gate-g-local`, which rebuilds
 `tmp_install`, runs process-mode `check-world`, runs `check-world-threaded`,
 and then runs the lifecycle and global-lifetime gates. The current evidence log
-is `/tmp/phase16-gate-g-local-fresh-temp-install.log`, with status `0`.
+is `/tmp/phase16-final-gate-g-local-after-autovacuum-focused-pass.log`, with
+status `0`.
 
 Exit-criteria mapping:
 
-- coverage contract: `check-threaded-world-coverage` passes with `141 covered`,
-  `22 excluded`, and `142 enabled leaves`;
-- manifest status: all 22 exclusion rows have `release_blocker=no`; 21 are
-  `configure_disabled` rows and one is the support-only `src/test/perl`
+- coverage contract: `check-threaded-world-coverage` passes with `160 covered`,
+  `3 excluded`, and `161 enabled leaves`;
+- manifest status: all 3 exclusion rows have `release_blocker=no`; two are
+  platform/configure-disabled rows and one is the support-only `src/test/perl`
   `not_applicable` row;
 - non-contrib coverage: the local Gate G bundle covers enabled `src/test`,
   `src/pl`, `src/interfaces`, `src/bin`, and `src/tools/pg_bsd_indent` leaves,
@@ -918,8 +919,8 @@ Accepted external rows:
   host with file-context policy and `sepgsql_regression_test_mode`;
 - `src/bin/pgevent`: Windows-only event-log helper coverage requires a Windows
   build where `PORTNAME=win32`;
-- configure-disabled optional leaves remain checked manifest rows in this
-  default build, with replacement guards pointing at dependency-enabled
+- remaining platform/configure-disabled leaves stay checked manifest rows in
+  this default build, with replacement guards pointing at dependency-enabled
   evidence where the host can provide it.
 
 ## Workstream Ordering

@@ -2055,6 +2055,7 @@ typedef struct PgSessionBackupState
 	StringInfo	tablespace_map;
 	MemoryContext backup_context;
 	uint8		session_backup_state;
+	bool		abort_backup_handler_registered;
 } PgSessionBackupState;
 
 #define PG_SESSION_MAX_CACHED_REGEX 32
