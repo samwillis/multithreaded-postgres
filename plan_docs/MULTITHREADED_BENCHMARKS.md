@@ -2,9 +2,61 @@ Multithreaded PostgreSQL Benchmarks
 ===================================
 
 This document records benchmark evidence for the multithreaded PostgreSQL
-branch. The latest full benchmark suite remains the Phase 15 run below; the
-Phase 16 section records the focused Gate G baseline gathered after broad
-threaded-world hardening.
+branch. The latest full benchmark suite is the Phase 16 rerun below; the
+earlier Phase 15 run remains the comparison baseline.
+
+Phase 16 full-suite rerun
+-------------------------
+
+This run repeats the full 12-profile Phase 15 benchmark suite after Phase 16
+threaded-world closure work. It uses a fresh non-cassert benchmark install from
+the Phase 16 branch so the numbers are not taken from the richer correctness
+build.
+
+| Field | Value |
+| --- | --- |
+| Date | June 27, 2026 |
+| Branch | `phase16-plan` |
+| Commit | `7ad19683e9` |
+| Branch install | `/home/sam/codex-work/mtpg-bench-results/phase16_full_rerun_20260627_205800_branch_install` |
+| Vanilla install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Client install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Result directory | `/home/sam/codex-work/mtpg-bench-results/phase16_full_rerun_20260627_205800` |
+| Suite index | `/home/sam/codex-work/mtpg-bench-results/phase16_full_rerun_20260627_205800/index.md` |
+| Runner | `src/tools/benchmark/mtpg_phase15_benchmark_suite.pl --profiles=all` |
+| Comparison baseline | `/home/sam/codex-work/mtpg-bench-results/full_phase15_fixed_20260622_192912` |
+| Comparison reports | `tps_compare_vs_full_phase15_fixed.tsv`, `ratio_compare_vs_full_phase15_fixed.tsv`, `memory_compare_vs_full_phase15_fixed.tsv` in the result directory |
+| Result status | 12 profiles completed, 101 TPS rows, all `failed_transactions = 0`, suite exit status `0` |
+
+Pre-benchmark validation:
+
+| Target | Result |
+| --- | --- |
+| `gmake check-threaded-world-coverage` | PASS: 160 covered, 3 excluded, 161 enabled leaves |
+| `MALLOC_CHECK_=3 gmake check-phase16-gate-g-local` | Environment-blocked in `src/test/kerberos` because `/tmp/phase16-debroot` was missing; the run had already completed core regression, subscription, and ICU successfully before the Kerberos dependency bailout. |
+
+Performance classification versus the Phase 15 full-suite baseline:
+
+- No broad throughput regression showed up in the mostly-idle, 100 ms, 1000 ms,
+  stateful, burst, or 1000-client pool profiles. Completed rows stayed at
+  `failed_transactions = 0`.
+- Hot tiny-query absolute branch TPS did not regress. The `pinned_hot`
+  `builtin_select_prepared` ratios are lower against the current vanilla run
+  (`branch_process` 0.836x and `branch_threaded` 0.739x), but the absolute
+  branch TPS is slightly higher than the Phase 15 baseline; the ratio drop is
+  mostly because the current vanilla row is much faster.
+- Connection churn is the clear regression. `connection_churn`
+  `branch_threaded` fell from 1894.9 TPS to 1504.0 TPS, and the
+  ratio-to-vanilla fell from 0.518x to 0.398x. `branch_pool_64` fell from
+  2077.2 TPS to 1830.1 TPS, and `branch_pool_128` fell from 2092.9 TPS to
+  1802.7 TPS. The real-ish churn profile shows the same direction:
+  `branch_threaded` fell from 1430.4 TPS to 1178.9 TPS.
+- The 1000-client memory profile still shows the intended memory win, but the
+  pooled per-client footprint is higher than the Phase 15 baseline. For
+  `connection_memory_idle`, `branch_pool_128` PSS/client rose from 560.9 KB to
+  616.9 KB, while still remaining about 0.53x vanilla. Protocol park memory's
+  median top context rose from about 311 KB to about 354 KB. Treat this as a
+  Phase 16 follow-up item rather than a benchmark-run failure.
 
 Phase 16 focused Gate G baseline
 --------------------------------
@@ -90,7 +142,7 @@ Run metadata
 | Branch install | `/home/sam/codex-work/mtpg-current/tmp_install` |
 | Vanilla install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
 | Client install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
-| Result status | 12 profiles completed, 113 TPS rows, all `failed_transactions = 0` |
+| Result status | 12 profiles completed, 101 TPS rows, all `failed_transactions = 0` |
 
 Post-benchmark validation was rerun after this benchmark pass:
 
