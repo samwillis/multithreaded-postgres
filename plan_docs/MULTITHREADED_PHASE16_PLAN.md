@@ -824,18 +824,14 @@ Current branch evidence as of June 27, 2026:
   `MALLOC_CHECK_=3 gmake -C src/pl/tcl check` with all 8 PL/Tcl regression
   tests. The optional language rows remain `configure_disabled` in this
   default build but are no longer release-blocking.
-- Injection-point optional coverage now has dependency-enabled threaded
-  evidence from `/tmp/phase16-injection-src`, configured with `--without-icu
-  --enable-tap-tests --enable-injection-points`. After hardening
+- Injection-point optional coverage now runs in the rich WSL
+  dependency-enabled default worktree, configured with
+  `--enable-injection-points`. After hardening
   `src/test/modules/injection_points` for thread-per-session module loading,
   SQL-visible backend identity, and per-session DSM attachment state,
-  `MALLOC_CHECK_=3 gmake -C src/test/modules/injection_points check
-  TEMP_CONFIG=/tmp/phase16-injection-src/src/test/regress/threaded_smoke.conf`
-  passes its regression and isolation suites; the dependent injection-point
-  leaves also pass with `MALLOC_CHECK_=3 gmake -C src/test/modules/gin check`
-  and `MALLOC_CHECK_=3 gmake -C src/test/modules/typcache check` under the same
-  threaded `TEMP_CONFIG`. These rows remain `configure_disabled` only because
-  the default build has `enable_injection_points=no`.
+  `check-phase16-gate-g-local` passes the direct injection-point module plus
+  dependent leaves including GIN, typcache, test_autovacuum, test_misc,
+  test_slru, and worker_spi.
 - TAP-enabled process-mode `check-world` also passes in `/tmp/phase16-tap-src`,
   configured with `--without-icu --with-perl --enable-tap-tests
   PG_TEST_EXTRA=`. The evidence log is
