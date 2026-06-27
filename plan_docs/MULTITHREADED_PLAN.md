@@ -980,6 +980,26 @@ Exit gate:
   custom/extension GUC stress, crash/FATAL behavior tests, and performance
   baselines.
 
+## Phase 16B: Warm Session Pool And Lifecycle Offload
+
+Detailed working plan: `MULTITHREADED_PHASE16B_WARM_SESSION_POOL_PLAN.md`.
+
+Goal: determine whether connection churn and pooled protocol latency can be
+improved by moving private lifecycle cleanup off the foreground disconnect path
+and by keeping clean warm session capacity ready.
+
+Phase 16B starts with lifecycle instrumentation and proof-of-value benchmarks.
+It should move into implementation only if measured startup, teardown, private
+memory cleanup, scheduler, or current-work rebinding costs are large enough to
+justify the complexity. The implementation path is staged from low-risk async
+private cleanup and warm session shells toward a configurable warm backend pool
+keyed by database, authenticated role, security class, and baseline startup
+options.
+
+The correctness rule is fail-closed: configuration can choose memory versus
+connection latency, but it must not allow dirty session reuse. Any retired
+session that fails validation is destroyed instead of returned to a pool.
+
 ## Phase 17: Advanced Scheduler Boundaries
 
 Goal: revisit more complex scheduler-yielding boundaries only after the
