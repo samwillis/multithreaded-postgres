@@ -28,12 +28,12 @@ build.
 | Comparison reports | `tps_compare_vs_full_phase15_fixed.tsv`, `ratio_compare_vs_full_phase15_fixed.tsv`, `memory_compare_vs_full_phase15_fixed.tsv` in the result directory |
 | Result status | 12 profiles completed, 101 TPS rows, all `failed_transactions = 0`, suite exit status `0` |
 
-Pre-benchmark validation:
+Validation evidence around this benchmark run:
 
 | Target | Result |
 | --- | --- |
 | `gmake check-threaded-world-coverage` | PASS: 160 covered, 3 excluded, 161 enabled leaves |
-| `MALLOC_CHECK_=3 gmake check-phase16-gate-g-local` | Environment-blocked in `src/test/kerberos` because `/tmp/phase16-debroot` was missing; the run had already completed core regression, subscription, and ICU successfully before the Kerberos dependency bailout. |
+| `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake check-phase16-gate-g-local` | PASS after installing missing WSL runtime dependencies for Kerberos/OpenLDAP, Tcl, and XSLT. |
 
 Performance classification versus the Phase 15 full-suite baseline:
 
