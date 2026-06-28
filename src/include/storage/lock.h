@@ -30,6 +30,7 @@
 
 /* struct PGPROC is declared in proc.h, but must forward-reference it */
 typedef struct PGPROC PGPROC;
+struct PgBackendLockState;
 
 /* GUC variables */
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int max_locks_per_xact;
@@ -395,6 +396,7 @@ typedef enum
  * function prototypes
  */
 extern void InitLockManagerAccess(void);
+extern bool LockManagerStateIsReusable(struct PgBackendLockState *locks);
 extern LockMethod GetLocksMethodTable(const LOCK *lock);
 extern LockMethod GetLockTagsMethodTable(const LOCKTAG *locktag);
 extern uint32 LockTagHashCode(const LOCKTAG *locktag);

@@ -34,10 +34,12 @@
 #include "replication/logical.h"
 #include "replication/slotsync.h"
 #include "replication/walreceiver.h"
+#include "storage/bufmgr.h"
 #include "storage/buffile.h"
 #include "storage/dsm.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/lock.h"
 #include "storage/shm_mq.h"
 #include "storage/waiteventset.h"
 #include "tsearch/ts_cache.h"
@@ -53,6 +55,14 @@
 #include "utils/resowner.h"
 #include "utils/typcache.h"
 
+static PgReusableSessionValidationReason PgValidateReusableSessionConnection(PgConnection *connection);
+static PgReusableSessionValidationReason PgValidateReusableSessionBackend(PgBackend *backend);
+static PgReusableSessionValidationReason PgValidateReusableSessionSession(PgSession *session);
+static PgReusableSessionValidationReason PgValidateReusableSessionExecution(PgExecution *execution);
+static bool PgConnectionCancelKeyIsZero(PgConnectionIdentityState *identity);
+static bool PgBackendGlobalVisStateMatchesResetBaseline(struct GlobalVisState *state);
+static bool PgBackendProcArrayStateIsReusable(PgBackend *backend);
+
 static void
 PgBackendResetStringInfo(StringInfoData *buf)
 {
@@ -62,6 +72,420 @@ PgBackendResetStringInfo(StringInfoData *buf)
 	if (buf->data != NULL)
 		pfree(buf->data);
 	MemSet(buf, 0, sizeof(*buf));
+}
+
+PgReusableSessionValidationReason
+PgValidateReusableSessionState(PgBackend *backend,
+							   PgSession *session,
+							   PgConnection *connection,
+							   PgExecution *execution,
+							   bool check_transaction_state)
+{
+	PgReusableSessionValidationReason reason;
+
+	if (backend == NULL || session == NULL || connection == NULL ||
+		execution == NULL)
+		return PG_REUSABLE_SESSION_INVALID_NULL_OBJECT;
+
+	if (check_transaction_state &&
+		(IsTransactionOrTransactionBlock() ||
+		 IsAbortedTransactionBlockState() ||
+		 IsSubTransaction()))
+		return PG_REUSABLE_SESSION_INVALID_TRANSACTION_ACTIVE;
+
+	reason = PgValidateReusableSessionBackend(backend);
+	if (reason != PG_REUSABLE_SESSION_VALID)
+		return reason;
+
+	reason = PgValidateReusableSessionSession(session);
+	if (reason != PG_REUSABLE_SESSION_VALID)
+		return reason;
+
+	reason = PgValidateReusableSessionConnection(connection);
+	if (reason != PG_REUSABLE_SESSION_VALID)
+		return reason;
+
+	reason = PgValidateReusableSessionExecution(execution);
+	if (reason != PG_REUSABLE_SESSION_VALID)
+		return reason;
+
+	return PG_REUSABLE_SESSION_VALID;
+}
+
+const char *
+PgReusableSessionValidationReasonName(PgReusableSessionValidationReason reason)
+{
+	switch (reason)
+	{
+		case PG_REUSABLE_SESSION_VALID:
+			return "ok";
+		case PG_REUSABLE_SESSION_INVALID_NULL_OBJECT:
+			return "null_object";
+		case PG_REUSABLE_SESSION_INVALID_TRANSACTION_ACTIVE:
+			return "transaction_active";
+		case PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED:
+			return "proc_attached";
+		case PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE:
+			return "pgstat_state";
+		case PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE:
+			return "procarray_state";
+		case PG_REUSABLE_SESSION_INVALID_IPC_STATE:
+			return "ipc_state";
+		case PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED:
+			return "socket_attached";
+		case PG_REUSABLE_SESSION_INVALID_PREPARED_STATEMENTS:
+			return "prepared_statements";
+		case PG_REUSABLE_SESSION_INVALID_PORTALS:
+			return "portals";
+		case PG_REUSABLE_SESSION_INVALID_LISTEN:
+			return "listen";
+		case PG_REUSABLE_SESSION_INVALID_TEMP_NAMESPACE:
+			return "temp_namespace";
+		case PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE:
+			return "extension_state";
+		case PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS:
+			return "dsm_segments";
+		case PG_REUSABLE_SESSION_INVALID_RESOURCE_OWNER:
+			return "resource_owner";
+		case PG_REUSABLE_SESSION_INVALID_MEMORY_CONTEXTS:
+			return "memory_contexts";
+		case PG_REUSABLE_SESSION_INVALID_ACTIVE_TIMEOUTS:
+			return "active_timeouts";
+		case PG_REUSABLE_SESSION_INVALID_LOCKS:
+			return "locks";
+		case PG_REUSABLE_SESSION_INVALID_BUFFER_PINS:
+			return "buffer_pins";
+		case PG_REUSABLE_SESSION_INVALID_TEMP_FILES:
+			return "temp_files";
+		case PG_REUSABLE_SESSION_INVALID_GUC_STATE:
+			return "guc_state";
+		case PG_REUSABLE_SESSION_INVALID_PLAN_CACHE:
+			return "plan_cache";
+		case PG_REUSABLE_SESSION_INVALID_SNAPSHOTS:
+			return "snapshots";
+		case PG_REUSABLE_SESSION_INVALID_INVALIDATIONS:
+			return "invalidations";
+		case PG_REUSABLE_SESSION_INVALID_STORAGE_STATE:
+			return "storage_state";
+		case PG_REUSABLE_SESSION_INVALID_XLOG_INSERT_STATE:
+			return "xlog_insert_state";
+		case PG_REUSABLE_SESSION_INVALID_ASYNC_ACTIONS:
+			return "async_actions";
+		case PG_REUSABLE_SESSION_INVALID_REASON_COUNT:
+			break;
+	}
+
+	return "unknown";
+}
+
+static PgReusableSessionValidationReason
+PgValidateReusableSessionBackend(PgBackend *backend)
+{
+	Assert(backend != NULL);
+
+	if (backend->my_proc != NULL ||
+		backend->my_proc_number != INVALID_PROC_NUMBER ||
+		backend->parallel_leader_proc_number != INVALID_PROC_NUMBER ||
+		backend->aux_process_resource_owner != NULL)
+		return PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED;
+
+	if (!dlist_is_empty(&backend->dsm_segment_list))
+		return PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS;
+
+	if (backend->my_beentry != NULL ||
+		backend->my_bgworker_entry != NULL ||
+		backend->activity.backend_status_table != NULL ||
+		backend->activity.num_backends != 0 ||
+		backend->activity.backend_status_context != NULL ||
+		backend->pgstat_pending.local != NULL ||
+		backend->pgstat_pending.fixed_snapshot_context != NULL ||
+		backend->pgstat_pending.entry_ref_hash != NULL ||
+		backend->pgstat_pending.shared_ref_age != 0 ||
+		backend->pgstat_pending.shared_ref_context != NULL ||
+		backend->pgstat_pending.entry_ref_hash_context != NULL ||
+		backend->pgstat_pending.io_stats_pending ||
+		backend->pgstat_pending.slru_stats_pending ||
+		backend->pgstat_pending.lock_stats_pending ||
+		backend->pgstat_pending.backend_io_stats_pending ||
+		backend->pgstat_pending.cold != NULL ||
+		backend->pgstat_pending.pending_context != NULL ||
+		!dlist_is_empty(&backend->pgstat_pending.pending) ||
+		backend->pgstat_pending.report_fixed ||
+		backend->pgstat_pending.force_next_flush ||
+		backend->pgstat_pending.force_snapshot_clear ||
+		backend->pgstat_pending.is_initialized ||
+		backend->pgstat_pending.is_shutdown)
+		return PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE;
+
+	if (backend->ipc.proc_signal_slot != NULL ||
+		backend->ipc.shared_invalid_message_counter != 0 ||
+		backend->ipc.catchup_interrupt_pending ||
+		backend->ipc.shared_invalidation_messages != NULL ||
+		backend->ipc.shared_invalidation_next_msg != 0 ||
+		backend->ipc.shared_invalidation_num_msgs != 0 ||
+		backend->ipc.latch_wait_set != NULL ||
+		pg_atomic_read_u32(&backend->interrupts.pending_mask) != 0 ||
+		backend->interrupts.proc_die_sender_pid != 0 ||
+		backend->interrupts.proc_die_sender_uid != 0)
+		return PG_REUSABLE_SESSION_INVALID_IPC_STATE;
+
+	if (backend->ipc.dsm_init_done ||
+		backend->ipc.dsm_registry_dsa != NULL ||
+		backend->ipc.dsm_registry_table != NULL)
+		return PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS;
+
+	if (!PgBackendProcArrayStateIsReusable(backend))
+		return PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE;
+
+	if (backend->timeout.num_active_timeouts != 0)
+		return PG_REUSABLE_SESSION_INVALID_ACTIVE_TIMEOUTS;
+
+	if (!LockManagerStateIsReusable(&backend->locks))
+		return PG_REUSABLE_SESSION_INVALID_LOCKS;
+
+	if (!BufferManagerPrivateRefCountStateIsReusable(&backend->buffers))
+		return PG_REUSABLE_SESSION_INVALID_BUFFER_PINS;
+
+	if (!FileAccessStateIsReusable(&backend->storage) ||
+		backend->storage.sync_pending_ops != NULL ||
+		backend->storage.sync_pending_unlinks != NIL ||
+		backend->storage.sync_in_progress ||
+		!dlist_is_empty(&backend->storage.smgr_unpinned_relations))
+		return PG_REUSABLE_SESSION_INVALID_STORAGE_STATE;
+
+	return PG_REUSABLE_SESSION_VALID;
+}
+
+static bool
+PgBackendGlobalVisStateMatchesResetBaseline(struct GlobalVisState *state)
+{
+	Assert(state != NULL);
+
+	return FullTransactionIdEquals(state->definitely_needed,
+								   InvalidFullTransactionId) &&
+		FullTransactionIdEquals(state->maybe_needed,
+								InvalidFullTransactionId);
+}
+
+static bool
+PgBackendProcArrayStateIsReusable(PgBackend *backend)
+{
+	PgBackendTransactionState *transaction;
+
+	Assert(backend != NULL);
+
+	transaction = &backend->transaction;
+	if (backend->ipc.next_local_transaction_id != InvalidLocalTransactionId)
+		return false;
+
+	if (TransactionIdIsValid(transaction->procarray_cached_xid_not_in_progress) ||
+		TransactionIdIsValid(transaction->compute_xid_horizons_result_last_xmin) ||
+		!PgBackendGlobalVisStateMatchesResetBaseline(&transaction->global_vis_shared_rels) ||
+		!PgBackendGlobalVisStateMatchesResetBaseline(&transaction->global_vis_catalog_rels) ||
+		!PgBackendGlobalVisStateMatchesResetBaseline(&transaction->global_vis_data_rels) ||
+		!PgBackendGlobalVisStateMatchesResetBaseline(&transaction->global_vis_temp_rels))
+		return false;
+
+	return true;
+}
+
+static PgReusableSessionValidationReason
+PgValidateReusableSessionSession(PgSession *session)
+{
+	Assert(session != NULL);
+
+	if (session->prepared_statement.prepared_queries != NULL)
+		return PG_REUSABLE_SESSION_INVALID_PREPARED_STATEMENTS;
+
+	if (session->portal_manager.portal_hash_table != NULL ||
+		session->portal_manager.unnamed_portal_count != 0)
+		return PG_REUSABLE_SESSION_INVALID_PORTALS;
+
+	if (session->async.registered_listener ||
+		session->async.local_channel_table != NULL)
+		return PG_REUSABLE_SESSION_INVALID_LISTEN;
+
+	if (OidIsValid(session->namespace_state.my_temp_namespace) ||
+		OidIsValid(session->namespace_state.my_temp_toast_namespace) ||
+		session->namespace_state.my_temp_namespace_subid != InvalidSubTransactionId)
+		return PG_REUSABLE_SESSION_INVALID_TEMP_NAMESPACE;
+
+	if (session->extension_modules.private_states != NIL ||
+		session->extension_modules.reset_callbacks != NIL)
+		return PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE;
+
+	if (session->temp_file.initialized &&
+		(session->temp_file.temporary_files_size != 0 ||
+		 session->temp_file.temp_table_spaces != NULL ||
+		 session->temp_file.num_temp_table_spaces != -1 ||
+		 session->temp_file.next_temp_table_space != 0))
+		return PG_REUSABLE_SESSION_INVALID_TEMP_FILES;
+
+	if (session->guc.initialized &&
+		(session->guc.nest_level != 0 ||
+		 !slist_is_empty(&session->guc.stack_list) ||
+		 !slist_is_empty(&session->guc.report_list)))
+		return PG_REUSABLE_SESSION_INVALID_GUC_STATE;
+	if (session == CurrentPgSession)
+	{
+		if (!GUCStateMatchesResetBaseline())
+			return PG_REUSABLE_SESSION_INVALID_GUC_STATE;
+	}
+	else if (session->guc.initialized &&
+			 !dlist_is_empty(&session->guc.nondef_list))
+		return PG_REUSABLE_SESSION_INVALID_GUC_STATE;
+
+	if (session->plan_cache.initialized &&
+		(!dlist_is_empty(&session->plan_cache.saved_plan_list) ||
+		 !dlist_is_empty(&session->plan_cache.cached_expression_list)))
+		return PG_REUSABLE_SESSION_INVALID_PLAN_CACHE;
+
+	if (session->invalidation_callbacks.syscache_callback_count != 0 ||
+		session->invalidation_callbacks.relcache_callback_count != 0 ||
+		session->invalidation_callbacks.relsync_callback_count != 0)
+		return PG_REUSABLE_SESSION_INVALID_INVALIDATIONS;
+
+	return PG_REUSABLE_SESSION_VALID;
+}
+
+static PgReusableSessionValidationReason
+PgValidateReusableSessionConnection(PgConnection *connection)
+{
+	Assert(connection != NULL);
+
+	if (connection->identity.port != NULL ||
+		connection->identity.port_context != NULL ||
+		connection->identity.cancel_key_length != 0 ||
+		!PgConnectionCancelKeyIsZero(&connection->identity))
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	if (connection->socket_io.send_buffer != NULL ||
+		connection->socket_io.recv_buffer != NULL ||
+		connection->socket_io.socket_io_context != NULL ||
+		connection->socket_io.send_buffer_size != 0 ||
+		connection->socket_io.send_pointer != 0 ||
+		connection->socket_io.send_start != 0 ||
+		connection->socket_io.recv_pointer != 0 ||
+		connection->socket_io.recv_length != 0 ||
+		connection->socket_io.comm_busy ||
+		connection->socket_io.comm_reading_msg ||
+		connection->socket_io.win32_noblock != 0 ||
+		connection->socket_io.transport_generation != 0)
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	if (connection->protocol.comm_methods != NULL ||
+		connection->protocol.fe_be_wait_set != NULL ||
+		connection->protocol.frontend_protocol != 0)
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	if (connection->startup.client_auth_in_progress ||
+		connection->startup.client_socket != NULL ||
+		connection->startup.connection_warnings_emitted ||
+		connection->startup.connection_warning_context != NULL ||
+		connection->startup.connection_warning_messages != NIL ||
+		connection->startup.connection_warning_details != NIL)
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	if (connection->client_connection_info.authn_id != NULL ||
+		connection->client_connection_info.auth_method != uaReject ||
+		connection->client_connection_info_context != NULL ||
+		connection->client_connection_info_authn_id_owned)
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	if (connection->security.ssl_loaded_verify_locations ||
+		connection->security.gss_send_buffer != NULL ||
+		connection->security.gss_send_length != 0 ||
+		connection->security.gss_send_next != 0 ||
+		connection->security.gss_send_consumed != 0 ||
+		connection->security.gss_recv_buffer != NULL ||
+		connection->security.gss_recv_length != 0 ||
+		connection->security.gss_result_buffer != NULL ||
+		connection->security.gss_result_length != 0 ||
+		connection->security.gss_result_next != 0 ||
+		connection->security.gss_max_packet_size != 0 ||
+		connection->security.pam_password != NULL ||
+		connection->security.pam_port != NULL ||
+		connection->security.pam_no_password)
+		return PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED;
+
+	return PG_REUSABLE_SESSION_VALID;
+}
+
+static bool
+PgConnectionCancelKeyIsZero(PgConnectionIdentityState *identity)
+{
+	int			i;
+
+	Assert(identity != NULL);
+
+	for (i = 0; i < PG_CONNECTION_CANCEL_KEY_LENGTH; i++)
+	{
+		if (identity->cancel_key[i] != 0)
+			return false;
+	}
+
+	return true;
+}
+
+static PgReusableSessionValidationReason
+PgValidateReusableSessionExecution(PgExecution *execution)
+{
+	Assert(execution != NULL);
+
+	if (execution->resource_owners.current_owner != NULL ||
+		execution->resource_owners.cur_transaction_owner != NULL ||
+		execution->resource_owners.top_transaction_owner != NULL ||
+		execution->resource_owners.resource_owner_context != NULL)
+		return PG_REUSABLE_SESSION_INVALID_RESOURCE_OWNER;
+
+	if (execution->memory_contexts.top_context != NULL ||
+		execution->memory_contexts.current_context != NULL ||
+		execution->memory_contexts.message_context != NULL)
+		return PG_REUSABLE_SESSION_INVALID_MEMORY_CONTEXTS;
+
+	if (execution->extension.private_states != NIL)
+		return PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE;
+
+	if (execution->snapshot.current_snapshot != NULL ||
+		execution->snapshot.secondary_snapshot != NULL ||
+		execution->snapshot.catalog_snapshot != NULL ||
+		execution->snapshot.historic_snapshot != NULL ||
+		execution->snapshot.tuplecid_data != NULL ||
+		execution->snapshot.active_snapshot != NULL ||
+		!pairingheap_is_empty(&execution->snapshot.registered_snapshots) ||
+		execution->snapshot.first_snapshot_set ||
+		execution->snapshot.first_xact_snapshot != NULL ||
+		execution->snapshot.exported_snapshots != NIL ||
+		execution->combo_cid.hash != NULL ||
+		execution->combo_cid.cids != NULL ||
+		execution->combo_cid.used != 0 ||
+		execution->combo_cid.size != 0)
+		return PG_REUSABLE_SESSION_INVALID_SNAPSHOTS;
+
+	if (execution->invalidation.message_arrays[0].msgs != NULL ||
+		execution->invalidation.message_arrays[0].maxmsgs != 0 ||
+		execution->invalidation.message_arrays[1].msgs != NULL ||
+		execution->invalidation.message_arrays[1].maxmsgs != 0 ||
+		execution->invalidation.trans_info != NULL ||
+		execution->invalidation.inplace_info != NULL ||
+		execution->catalog.pending_rel_deletes != NULL ||
+		execution->catalog.pending_sync_hash != NULL)
+		return PG_REUSABLE_SESSION_INVALID_INVALIDATIONS;
+
+	if (execution->xloginsert.begininsert_called ||
+		execution->xloginsert.max_registered_block_id != 0 ||
+		execution->xloginsert.mainrdata_len != 0 ||
+		execution->xloginsert.num_rdatas != 0 ||
+		execution->xloginsert.curinsert_flags != 0)
+		return PG_REUSABLE_SESSION_INVALID_XLOG_INSERT_STATE;
+
+	if (execution->async.pending_actions != NULL ||
+		execution->async.pending_listen_actions != NULL ||
+		execution->async.pending_notifies != NULL ||
+		execution->async.try_advance_tail)
+		return PG_REUSABLE_SESSION_INVALID_ASYNC_ACTIONS;
+
+	return PG_REUSABLE_SESSION_VALID;
 }
 
 static bool

@@ -309,6 +309,7 @@ extern Buffer ExtendBufferedRelTo(BufferManagerRelation bmr,
 								  ReadBufferMode mode);
 
 extern void InitBufferManagerAccess(void);
+extern bool BufferManagerPrivateRefCountStateIsReusable(PgBackendBufferState *state);
 extern void RestoreBufferManagerIdleMemory(void);
 extern void ReleaseBufferManagerIdleMemory(void);
 extern void AtEOXact_Buffers(bool isCommit);

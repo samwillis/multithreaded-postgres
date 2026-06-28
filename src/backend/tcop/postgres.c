@@ -223,6 +223,43 @@ static void PgSessionReleasePooledProtocolIdleMemory(PgSession *session,
 static bool PgSessionShouldHibernatePooledProtocolIdle(PgSession *session);
 static void PgLogProtocolParkMemory(PgSession *session,
 									 PgProtocolParkSpec *park_spec);
+static bool PgBackendLifecycleTimingEnabled(void);
+static const char *PgBackendLifecycleTimingModel(void);
+static uint64 PgBackendLifecycleTimingElapsed(TimestampTz start,
+											  TimestampTz end);
+static const char *PgProtocolByteResultName(PgProtocolByteResult result);
+static void PgLogBackendLifecycleStartupTiming(TimestampTz ready_for_use);
+static void PgLogBackendLifecycleSchedulerTiming(const char *event,
+												 PgBackend *backend,
+												 TimestampTz start,
+												 TimestampTz wait_end,
+												 TimestampTz lease_end,
+												 TimestampTz attach_end,
+												 TimestampTz resume_end,
+												 uint32 wake_events);
+static void PgLogProtocolParkStickyIdleTiming(PgSession *session,
+											  PgProtocolByteResult result,
+											  const char *reason,
+											  TimestampTz start,
+											  TimestampTz end,
+											  long timeout_ms);
+static void PgLogProtocolParkCommitTiming(PgBackend *backend,
+										  TimestampTz start,
+										  TimestampTz release_end,
+										  TimestampTz memory_end,
+										  TimestampTz commit_end);
+static void PgLogProtocolParkCentralPollTiming(TimestampTz start,
+											   TimestampTz lease_end,
+											   TimestampTz immediate_end,
+											   TimestampTz scan_end,
+											   TimestampTz poll_end,
+											   TimestampTz mark_end,
+											   TimestampTz repark_end,
+											   int nbackends,
+											   int registered_sockets,
+											   int nready,
+											   long wait_timeout_ms,
+											   const char *outcome);
 static long PgProtocolParkTimeoutDelayMs(PgBackend *backend,
 										 PgProtocolParkSpec *park_spec,
 										 bool *stale_timeout);
@@ -576,15 +613,18 @@ static PgProtocolByteResult
 SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 {
 	PgConnection *connection;
-	PgProtocolByteResult result;
+	PgProtocolByteResult result = PG_PROTOCOL_BYTE_NONE;
 	PgConnectionSocketIOState *io;
 	WaitEventSet *wait_set;
 	WaitEvent	events[FeBeWaitSetNEvents];
-	long		timeout_ms;
+	long		timeout_ms = 0;
 	uint32		wait_events;
 	int			rc;
 	TimestampTz timeout_wake_at;
 	uint64		timeout_generation;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	const char *reason = "wait";
+	bool		log_timing;
 
 	Assert(session != NULL);
 	Assert(probe != NULL);
@@ -593,8 +633,16 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 	Assert(session->connection == CurrentPgConnection);
 	Assert(session->loop_state.doing_command_read);
 
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(CurrentPgRuntime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	if (pooled_protocol_sticky_idle_ms <= 0)
-		return PG_PROTOCOL_BYTE_NONE;
+	{
+		reason = "disabled";
+		goto done;
+	}
 
 	connection = session->connection;
 	io = &connection->socket_io;
@@ -608,7 +656,10 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 		probe->transport_generation != io->transport_generation ||
 		connection->identity.port == NULL ||
 		connection->identity.port->sock == PGINVALID_SOCKET)
-		return PG_PROTOCOL_BYTE_NONE;
+	{
+		reason = "not_waitable";
+		goto done;
+	}
 
 	timeout_ms = pooled_protocol_sticky_idle_ms;
 	if (PgBackendLogicalTimeoutNextWake(session->backend, &timeout_wake_at,
@@ -632,7 +683,9 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 	if (timeout_ms <= 0)
 	{
 		PgSessionServiceProtocolReadWake(session);
-		return PgConnectionProbeMessageType(connection, probe);
+		result = PgConnectionProbeMessageType(connection, probe);
+		reason = "logical_timeout";
+		goto done;
 	}
 
 	wait_events = probe->transport_wait_events | WL_SOCKET_CLOSED;
@@ -658,15 +711,23 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 
 			qtype = pq_startmsgread_getbyte();
 			if (qtype == EOF)
-				return PG_PROTOCOL_BYTE_EOF;
+			{
+				result = PG_PROTOCOL_BYTE_EOF;
+				reason = "poll_eof";
+				goto done;
+			}
 
 			probe->type = qtype;
 			probe->transport_wait_events = 0;
 			probe->transport_buffered_input = false;
 			probe->transport_generation = io->transport_generation;
-			return PG_PROTOCOL_BYTE_AVAILABLE;
+			result = PG_PROTOCOL_BYTE_AVAILABLE;
+			reason = "poll_available";
+			goto done;
 		}
-		return PgConnectionProbeMessageType(connection, probe);
+		result = PgConnectionProbeMessageType(connection, probe);
+		reason = "poll_timeout";
+		goto done;
 	}
 
 	wait_set = connection->protocol.fe_be_wait_set;
@@ -685,6 +746,12 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 
 	PgSessionServiceProtocolReadWake(session);
 	result = PgConnectionProbeMessageType(connection, probe);
+	reason = "wait_event_set";
+
+done:
+	if (log_timing)
+		PgLogProtocolParkStickyIdleTiming(session, result, reason, start,
+										  GetCurrentTimestamp(), timeout_ms);
 	return result;
 }
 
@@ -4959,30 +5026,36 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 		 * the different components of connection establishment and setup.
 		 */
 		if (conn_timing.ready_for_use == TIMESTAMP_MINUS_INFINITY &&
-			(log_connections & LOG_CONNECTION_SETUP_DURATIONS) &&
+			((log_connections & LOG_CONNECTION_SETUP_DURATIONS) ||
+			 log_threaded_lifecycle_timing) &&
 			IsExternalConnectionBackend(MyBackendType))
 		{
-			uint64		total_duration,
-						fork_duration,
-						auth_duration;
-
 			conn_timing.ready_for_use = GetCurrentTimestamp();
 
-			total_duration =
-				TimestampDifferenceMicroseconds(conn_timing.socket_create,
-												conn_timing.ready_for_use);
-			fork_duration =
-				TimestampDifferenceMicroseconds(conn_timing.fork_start,
-												conn_timing.fork_end);
-			auth_duration =
-				TimestampDifferenceMicroseconds(conn_timing.auth_start,
-												conn_timing.auth_end);
+			if (log_connections & LOG_CONNECTION_SETUP_DURATIONS)
+			{
+				uint64		total_duration,
+							fork_duration,
+							auth_duration;
 
-			ereport(LOG,
-					errmsg("connection ready: setup total=%.3f ms, fork=%.3f ms, authentication=%.3f ms",
-						   (double) total_duration / NS_PER_US,
-						   (double) fork_duration / NS_PER_US,
-						   (double) auth_duration / NS_PER_US));
+				total_duration =
+					TimestampDifferenceMicroseconds(conn_timing.socket_create,
+													conn_timing.ready_for_use);
+				fork_duration =
+					TimestampDifferenceMicroseconds(conn_timing.fork_start,
+													conn_timing.fork_end);
+				auth_duration =
+					TimestampDifferenceMicroseconds(conn_timing.auth_start,
+													conn_timing.auth_end);
+
+				ereport(LOG,
+						errmsg("connection ready: setup total=%.3f ms, fork=%.3f ms, authentication=%.3f ms",
+							   (double) total_duration / NS_PER_US,
+							   (double) fork_duration / NS_PER_US,
+							   (double) auth_duration / NS_PER_US));
+			}
+			if (log_threaded_lifecycle_timing)
+				PgLogBackendLifecycleStartupTiming(conn_timing.ready_for_use);
 		}
 
 		ReadyForQuery(whereToSendOutput);
@@ -5879,6 +5952,15 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 	int			nready = 0;
 	long		wait_timeout_ms = timeout_ms;
 	int			rc;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz lease_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz immediate_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz scan_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz poll_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz mark_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz repark_end = TIMESTAMP_MINUS_INFINITY;
+	const char *outcome = "none";
+	bool		log_timing;
 
 	if (runtime == NULL || scratch == NULL || poll_scratch == NULL ||
 		max_backends <= 0)
@@ -5888,6 +5970,11 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 	Assert(CurrentPgSession == NULL);
 	Assert(CurrentPgConnection == NULL);
 	Assert(CurrentPgExecution == NULL);
+
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(CurrentPgRuntime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
 
 	for (int i = 0; i < max_backends; i++)
 	{
@@ -5899,6 +5986,8 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 
 		scratch[nbackends++] = backend;
 	}
+	if (log_timing)
+		lease_end = GetCurrentTimestamp();
 	if (nbackends <= 0)
 		return 0;
 
@@ -5928,6 +6017,8 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 				nready++;
 		}
 	}
+	if (log_timing)
+		immediate_end = GetCurrentTimestamp();
 	if (nready > 0)
 	{
 		for (int i = 0; i < nbackends; i++)
@@ -5937,8 +6028,19 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 			if (backend->protocol_park.scheduler_queue_state ==
 				PG_PROTOCOL_SCHEDULER_QUEUE_POLLING &&
 				!PgRuntimeProtocolSchedulerReparkBackendIfPolling(runtime,
-																  backend))
+																   backend))
 				elog(PANIC, "could not return unready protocol backend to parked queue");
+		}
+		if (log_timing)
+		{
+			repark_end = GetCurrentTimestamp();
+			outcome = "immediate";
+			PgLogProtocolParkCentralPollTiming(start, lease_end,
+											   immediate_end, immediate_end,
+											   immediate_end, immediate_end,
+											   repark_end, nbackends,
+											   registered_sockets, nready,
+											   wait_timeout_ms, outcome);
 		}
 		return nready;
 	}
@@ -6016,6 +6118,8 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 									 WL_SOCKET_CLOSED);
 		registered_sockets++;
 	}
+	if (log_timing)
+		scan_end = GetCurrentTimestamp();
 
 	if (nready > 0)
 	{
@@ -6029,6 +6133,17 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 																  backend))
 				elog(PANIC, "could not return duplicate-wait protocol backend to parked queue");
 		}
+		if (log_timing)
+		{
+			repark_end = GetCurrentTimestamp();
+			outcome = "duplicate_socket";
+			PgLogProtocolParkCentralPollTiming(start, lease_end,
+											   immediate_end, scan_end,
+											   scan_end, scan_end,
+											   repark_end, nbackends,
+											   registered_sockets, nready,
+											   wait_timeout_ms, outcome);
+		}
 		return nready;
 	}
 
@@ -6041,8 +6156,19 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 			if (backend->protocol_park.scheduler_queue_state ==
 				PG_PROTOCOL_SCHEDULER_QUEUE_POLLING &&
 				!PgRuntimeProtocolSchedulerReparkBackendIfPolling(runtime,
-																  backend))
-				elog(PANIC, "could not return unwaited protocol backend to parked queue");
+															  backend))
+			elog(PANIC, "could not return unwaited protocol backend to parked queue");
+		}
+		if (log_timing)
+		{
+			repark_end = GetCurrentTimestamp();
+			outcome = "no_waiters";
+			PgLogProtocolParkCentralPollTiming(start, lease_end,
+											   immediate_end, scan_end,
+											   scan_end, scan_end,
+											   repark_end, nbackends,
+											   registered_sockets, nready,
+											   wait_timeout_ms, outcome);
 		}
 		return 0;
 	}
@@ -6069,6 +6195,8 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+	if (log_timing)
+		poll_end = GetCurrentTimestamp();
 
 #ifndef WIN32
 	if (rc > 0 && poll_scratch[0].revents != 0 && !PostmasterIsAlive())
@@ -6119,6 +6247,8 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 				nready++;
 		}
 	}
+	if (log_timing)
+		mark_end = GetCurrentTimestamp();
 
 	for (int i = 0; i < nbackends; i++)
 	{
@@ -6129,6 +6259,23 @@ PgRuntimeProtocolSchedulerWaitParkedReads(PgRuntime *runtime,
 			!PgRuntimeProtocolSchedulerReparkBackendIfPolling(runtime,
 															  backend))
 			elog(PANIC, "could not return unready protocol backend to parked queue");
+	}
+	if (log_timing)
+	{
+		repark_end = GetCurrentTimestamp();
+		if (nready > 0)
+			outcome = "ready";
+		else if (rc < 0)
+			outcome = "interrupted";
+		else if (rc == 0)
+			outcome = "timeout";
+		else
+			outcome = "no_ready_events";
+		PgLogProtocolParkCentralPollTiming(start, lease_end, immediate_end,
+										   scan_end, poll_end, mark_end,
+										   repark_end, nbackends,
+										   registered_sockets, nready,
+										   wait_timeout_ms, outcome);
 	}
 
 	return nready;
@@ -6796,6 +6943,12 @@ static void
 PgSessionCommitCurrentProtocolReadPark(PgSession *session)
 {
 	PgCarrier  *carrier = CurrentPgCarrier;
+	PgBackend  *backend;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz release_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz memory_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz commit_end = TIMESTAMP_MINUS_INFINITY;
+	bool		log_timing;
 
 	Assert(session != NULL);
 	Assert(carrier != NULL);
@@ -6806,10 +6959,26 @@ PgSessionCommitCurrentProtocolReadPark(PgSession *session)
 	Assert(session->backend->protocol_park.state ==
 		   PG_PROTOCOL_PARK_PREPARED);
 
+	backend = session->backend;
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(CurrentPgRuntime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	PgSessionReleasePooledProtocolIdleMemory(session,
 											 &session->backend->protocol_park.spec);
-	PgLogProtocolParkMemory(session, &session->backend->protocol_park.spec);
-	PgCarrierCommitProtocolReadPark(carrier, session->backend);
+	if (log_timing)
+		release_end = GetCurrentTimestamp();
+	PgLogProtocolParkMemory(session, &backend->protocol_park.spec);
+	if (log_timing)
+		memory_end = GetCurrentTimestamp();
+	PgCarrierCommitProtocolReadPark(carrier, backend);
+	if (log_timing)
+	{
+		commit_end = GetCurrentTimestamp();
+		PgLogProtocolParkCommitTiming(backend, start, release_end,
+									  memory_end, commit_end);
+	}
 }
 
 static uint32
@@ -6820,6 +6989,11 @@ PgSessionStagingWaitAndResumeProtocolRead(PgSession *session,
 										  PgProtocolParkSpec *park_spec)
 {
 	PgCarrier  *carrier = CurrentPgCarrier;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz wait_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz lease_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz attach_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz resume_end = TIMESTAMP_MINUS_INFINITY;
 	uint32		wake_events;
 
 	Assert(session != NULL);
@@ -6833,14 +7007,30 @@ PgSessionStagingWaitAndResumeProtocolRead(PgSession *session,
 	Assert(CurrentPgConnection == NULL);
 	Assert(CurrentPgExecution == NULL);
 
+	if (log_threaded_lifecycle_timing)
+		start = GetCurrentTimestamp();
 	wake_events = PgSessionStagingWaitProtocolRead(backend, park_spec);
+	if (log_threaded_lifecycle_timing)
+		wait_end = GetCurrentTimestamp();
 
 	if (!PgRuntimeProtocolSchedulerLeaseBackend(CurrentPgRuntime, backend))
 		elog(PANIC, "could not lease protocol read park for same carrier resume");
+	if (log_threaded_lifecycle_timing)
+		lease_end = GetCurrentTimestamp();
 
 	PgCarrierAttachBackend(carrier, backend, session, connection, execution);
+	if (log_threaded_lifecycle_timing)
+		attach_end = GetCurrentTimestamp();
 	pgstat_ensure_shmem_attached();
 	PgBackendResumeProtocolReadPark(backend);
+	if (log_threaded_lifecycle_timing)
+	{
+		resume_end = GetCurrentTimestamp();
+		PgLogBackendLifecycleSchedulerTiming("same_carrier_resume",
+											 backend, start, wait_end,
+											 lease_end, attach_end,
+											 resume_end, wake_events);
+	}
 
 	return wake_events;
 }
@@ -6994,12 +7184,16 @@ PgSession *
 PostgresBootstrapSession(const char *dbname, const char *username)
 {
 	bool		threaded_backend;
+	bool		log_lifecycle_timing;
 
 	Assert(dbname != NULL);
 	Assert(username != NULL);
 
 	Assert(GetProcessingMode() == InitProcessing);
 	threaded_backend = PgRuntimeIsThreadBacked(CurrentPgRuntime);
+	log_lifecycle_timing = PgBackendLifecycleTimingEnabled();
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_bootstrap_start = GetCurrentTimestamp();
 
 	/*
 	 * Set up signal handlers.  (InitPostmasterChild or InitStandaloneProcess
@@ -7067,8 +7261,15 @@ PostgresBootstrapSession(const char *dbname, const char *username)
 										 * platforms */
 	}
 
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_signal_setup_end = GetCurrentTimestamp();
+
 	/* Early initialization */
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_baseinit_start = GetCurrentTimestamp();
 	BaseInit();
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_baseinit_end = GetCurrentTimestamp();
 
 	/* We need to allow SIGINT, etc during the initial transaction */
 	if (!threaded_backend)
@@ -7103,10 +7304,14 @@ PostgresBootstrapSession(const char *dbname, const char *username)
 	 *
 	 * Honor session_preload_libraries if not dealing with a WAL sender.
 	 */
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_initpostgres_start = GetCurrentTimestamp();
 	InitPostgres(dbname, InvalidOid,	/* database to connect to */
 				 username, InvalidOid,	/* role to connect as */
 				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
 				 NULL);			/* no out_dbname */
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_initpostgres_end = GetCurrentTimestamp();
 
 	/*
 	 * If the PostmasterContext is still around, recycle the space; we don't
@@ -7189,8 +7394,234 @@ PostgresBootstrapSession(const char *dbname, const char *username)
 	Assert(CurrentPgSession != NULL);
 	PgSessionLoopStateInit(&CurrentPgSession->loop_state);
 	ThreadedBackendStartupComplete();
+	if (log_lifecycle_timing)
+		conn_timing.lifecycle_bootstrap_end = GetCurrentTimestamp();
 
 	return CurrentPgSession;
+}
+
+static bool
+PgBackendLifecycleTimingEnabled(void)
+{
+	return log_threaded_lifecycle_timing &&
+		IsExternalConnectionBackend(MyBackendType);
+}
+
+static const char *
+PgBackendLifecycleTimingModel(void)
+{
+	if (PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return "pooled";
+	if (PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		return "threaded";
+	return "process";
+}
+
+static uint64
+PgBackendLifecycleTimingElapsed(TimestampTz start, TimestampTz end)
+{
+	if (start == TIMESTAMP_MINUS_INFINITY ||
+		end == TIMESTAMP_MINUS_INFINITY ||
+		end < start)
+		return 0;
+
+	return TimestampDifferenceMicroseconds(start, end);
+}
+
+static const char *
+PgProtocolByteResultName(PgProtocolByteResult result)
+{
+	switch (result)
+	{
+		case PG_PROTOCOL_BYTE_NONE:
+			return "none";
+		case PG_PROTOCOL_BYTE_AVAILABLE:
+			return "available";
+		case PG_PROTOCOL_BYTE_EOF:
+			return "eof";
+	}
+
+	return "unknown";
+}
+
+static void
+PgLogBackendLifecycleStartupTiming(TimestampTz ready_for_use)
+{
+	PgBackend  *backend = CurrentPgBackend;
+
+	if (!PgBackendLifecycleTimingEnabled())
+		return;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_lifecycle_startup pid=%d backend_id=%u model=%s "
+							 "total_us=%llu fork_us=%llu auth_us=%llu bootstrap_us=%llu "
+							 "signal_setup_us=%llu pre_baseinit_us=%llu baseinit_us=%llu "
+							 "initpostgres_us=%llu post_init_us=%llu",
+							 PgCurrentBackendSignalPid(),
+							 backend != NULL ? (unsigned int) backend->id : 0,
+							 PgBackendLifecycleTimingModel(),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.socket_create,
+																				 ready_for_use),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.fork_start,
+																				 conn_timing.fork_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.auth_start,
+																				 conn_timing.auth_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_bootstrap_start,
+																				 conn_timing.lifecycle_bootstrap_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_bootstrap_start,
+																				 conn_timing.lifecycle_signal_setup_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_bootstrap_start,
+																				 conn_timing.lifecycle_baseinit_start),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_baseinit_start,
+																				 conn_timing.lifecycle_baseinit_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_initpostgres_start,
+																				 conn_timing.lifecycle_initpostgres_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(conn_timing.lifecycle_initpostgres_end,
+																				 ready_for_use))));
+}
+
+static void
+PgLogBackendLifecycleSchedulerTiming(const char *event,
+									 PgBackend *backend,
+									 TimestampTz start,
+									 TimestampTz wait_end,
+									 TimestampTz lease_end,
+									 TimestampTz attach_end,
+									 TimestampTz resume_end,
+									 uint32 wake_events)
+{
+	if (!log_threaded_lifecycle_timing)
+		return;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_lifecycle_scheduler pid=%d backend_id=%u model=%s event=%s "
+							 "total_us=%llu wait_us=%llu lease_us=%llu attach_us=%llu resume_us=%llu wake_events=%u",
+							 PgCurrentBackendSignalPid(),
+							 backend != NULL ? (unsigned int) backend->id : 0,
+							 PgBackendLifecycleTimingModel(),
+							 event,
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 resume_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 wait_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(wait_end,
+																				 lease_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(lease_end,
+																				 attach_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(attach_end,
+																				 resume_end),
+							 wake_events)));
+}
+
+static void
+PgLogProtocolParkStickyIdleTiming(PgSession *session,
+								  PgProtocolByteResult result,
+								  const char *reason,
+								  TimestampTz start,
+								  TimestampTz end,
+								  long timeout_ms)
+{
+	PgBackend  *backend;
+
+	if (!log_threaded_lifecycle_timing ||
+		!PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return;
+
+	backend = session != NULL ? session->backend : NULL;
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=%s event=sticky_idle "
+							 "result=%s reason=%s total_us=%llu timeout_ms=%ld",
+							 PgBackendGetSignalPid(backend),
+							 backend != NULL ? (unsigned int) backend->id : 0,
+							 PgBackendLifecycleTimingModel(),
+							 PgProtocolByteResultName(result),
+							 reason,
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 end),
+							 timeout_ms)));
+}
+
+static void
+PgLogProtocolParkCommitTiming(PgBackend *backend,
+							  TimestampTz start,
+							  TimestampTz release_end,
+							  TimestampTz memory_end,
+							  TimestampTz commit_end)
+{
+	if (!log_threaded_lifecycle_timing ||
+		!PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=%s event=park_commit "
+							 "total_us=%llu release_us=%llu memory_log_us=%llu commit_us=%llu",
+							 PgBackendGetSignalPid(backend),
+							 backend != NULL ? (unsigned int) backend->id : 0,
+							 PgBackendLifecycleTimingModel(),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 commit_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 release_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(release_end,
+																				 memory_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(memory_end,
+																				 commit_end))));
+}
+
+static void
+PgLogProtocolParkCentralPollTiming(TimestampTz start,
+								   TimestampTz lease_end,
+								   TimestampTz immediate_end,
+								   TimestampTz scan_end,
+								   TimestampTz poll_end,
+								   TimestampTz mark_end,
+								   TimestampTz repark_end,
+								   int nbackends,
+								   int registered_sockets,
+								   int nready,
+								   long wait_timeout_ms,
+								   const char *outcome)
+{
+	if (!log_threaded_lifecycle_timing ||
+		!PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_protocol_park pid=%d backend_id=0 model=%s event=central_poll "
+							 "outcome=%s total_us=%llu lease_us=%llu immediate_us=%llu scan_us=%llu "
+							 "poll_us=%llu mark_us=%llu repark_us=%llu nbackends=%d "
+							 "registered_sockets=%d nready=%d wait_timeout_ms=%ld",
+							 PgCurrentBackendSignalPid(),
+							 PgBackendLifecycleTimingModel(),
+							 outcome,
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 repark_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(start,
+																				 lease_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(lease_end,
+																				 immediate_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(immediate_end,
+																				 scan_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(scan_end,
+																				 poll_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(poll_end,
+																				 mark_end),
+							 (unsigned long long) PgBackendLifecycleTimingElapsed(mark_end,
+																				 repark_end),
+							 nbackends,
+							 registered_sockets,
+							 nready,
+							 wait_timeout_ms)));
 }
 
 /* ----------------------------------------------------------------

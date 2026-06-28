@@ -214,6 +214,39 @@ typedef struct vfd
 	mode_t		fileMode;		/* mode to pass to open(2) */
 } Vfd;
 
+bool
+FileAccessStateIsReusable(PgBackendStorageState *storage)
+{
+	Vfd		   *vfd_cache;
+	Index		i;
+
+	if (storage == NULL)
+		return false;
+
+	if (storage->nfile != 0 ||
+		storage->num_allocated_descs != 0 ||
+		storage->num_external_fds != 0)
+		return false;
+
+	vfd_cache = (Vfd *) storage->vfd_cache;
+	if (vfd_cache == NULL)
+		return true;
+	if (storage->size_vfd_cache == 0)
+		return false;
+
+	for (i = 1; i < storage->size_vfd_cache; i++)
+	{
+		Vfd		   *vfdP = &vfd_cache[i];
+
+		if (vfdP->fd != VFD_CLOSED ||
+			vfdP->fdstate != 0 ||
+			vfdP->fileName != NULL)
+			return false;
+	}
+
+	return true;
+}
+
 /*
  * Virtual File Descriptor array pointer and size.  This grows as
  * needed.  'File' values are indexes into this array.

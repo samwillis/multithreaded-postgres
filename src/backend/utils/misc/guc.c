@@ -1722,6 +1722,104 @@ reset_guc_record_at_backend_exit(struct config_generic *gconf)
 	GUC_SROLE(gconf) = BOOTSTRAP_SUPERUSERID;
 }
 
+static bool
+guc_string_values_match(const char *left, const char *right)
+{
+	if (left == NULL || right == NULL)
+		return left == right;
+
+	return strcmp(left, right) == 0;
+}
+
+static bool
+guc_record_is_session_baseline_relevant(const struct config_generic *gconf)
+{
+	switch (gconf->context)
+	{
+		case PGC_BACKEND:
+		case PGC_SU_BACKEND:
+		case PGC_SUSET:
+		case PGC_USERSET:
+			return true;
+		case PGC_INTERNAL:
+		case PGC_POSTMASTER:
+		case PGC_SIGHUP:
+			return false;
+	}
+
+	return false;
+}
+
+static bool
+guc_record_matches_reset_baseline(struct config_generic *gconf)
+{
+	if (!guc_record_is_session_baseline_relevant(gconf))
+		return true;
+
+	if (GUC_SOURCE(gconf) != GUC_RESET_SOURCE(gconf) ||
+		GUC_SCONTEXT(gconf) != GUC_RESET_SCONTEXT(gconf) ||
+		GUC_SROLE(gconf) != GUC_RESET_SROLE(gconf))
+		return false;
+
+	if (GUC_EXTRA(gconf) != GUC_RESET_EXTRA(gconf))
+		return false;
+
+	switch (gconf->vartype)
+	{
+		case PGC_BOOL:
+			if (*GUC_VARIABLE_BOOL(gconf) == GUC_RESET_BOOL(gconf))
+				return true;
+			break;
+		case PGC_INT:
+			if (*GUC_VARIABLE_INT(gconf) == GUC_RESET_INT(gconf))
+				return true;
+			break;
+		case PGC_REAL:
+			if (*GUC_VARIABLE_REAL(gconf) == GUC_RESET_REAL(gconf))
+				return true;
+			break;
+		case PGC_STRING:
+			if (guc_string_values_match(*GUC_VARIABLE_STRING(gconf),
+										GUC_RESET_STRING(gconf)))
+				return true;
+			break;
+		case PGC_ENUM:
+			if (*GUC_VARIABLE_ENUM(gconf) == GUC_RESET_ENUM(gconf))
+				return true;
+			break;
+	}
+
+	return false;
+}
+
+bool
+GUCStateMatchesResetBaseline(void)
+{
+	if (guc_variables == NULL)
+		return true;
+
+	for (int i = 0; i < num_guc_variables; i++)
+	{
+		if (!guc_record_matches_reset_baseline(&guc_variables[i]))
+			return false;
+	}
+
+	if (guc_hashtab != NULL)
+	{
+		HASH_SEQ_STATUS status;
+		GUCHashEntry *hentry;
+
+		hash_seq_init(&status, guc_hashtab);
+		while ((hentry = (GUCHashEntry *) hash_seq_search(&status)) != NULL)
+		{
+			if (!guc_record_matches_reset_baseline(hentry->gucvar))
+				return false;
+		}
+	}
+
+	return true;
+}
+
 void
 ResetGUCStateAtBackendExit(void)
 {

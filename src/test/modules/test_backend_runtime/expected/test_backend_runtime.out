@@ -1,4 +1,25 @@
 CREATE EXTENSION test_backend_runtime;
+RESET ALL;
+SELECT test_session_guc_reset_baseline_matches() AS guc_baseline_initial;
+ guc_baseline_initial 
+----------------------
+ t
+(1 row)
+
+SET work_mem = '64MB';
+SELECT NOT test_session_guc_reset_baseline_matches() AS guc_baseline_detects_set;
+ guc_baseline_detects_set 
+--------------------------
+ t
+(1 row)
+
+RESET work_mem;
+SELECT test_session_guc_reset_baseline_matches() AS guc_baseline_after_reset;
+ guc_baseline_after_reset 
+--------------------------
+ t
+(1 row)
+
 SELECT test_backend_exit_runtime_continuation();
  test_backend_exit_runtime_continuation 
 ----------------------------------------

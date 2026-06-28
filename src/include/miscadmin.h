@@ -322,11 +322,18 @@ extern PGDLLIMPORT PG_GLOBAL_RUNTIME int pooled_protocol_sticky_idle_ms;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int pooled_protocol_hibernate_after_ms;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int pooled_protocol_idle_memory_compaction;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool threaded_lazy_relcache_init_file;
+extern PGDLLIMPORT PG_GLOBAL_RUNTIME int threaded_session_pool;
+extern PGDLLIMPORT PG_GLOBAL_RUNTIME int threaded_session_pool_max;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool log_protocol_park_memory;
+extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool log_threaded_lifecycle_timing;
+extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool debug_threaded_session_pool_force_validation_failure;
 
 #define POOLED_PROTOCOL_IDLE_MEMORY_COMPACTION_OFF	0
 #define POOLED_PROTOCOL_IDLE_MEMORY_COMPACTION_TRIM	1
 #define POOLED_PROTOCOL_IDLE_MEMORY_COMPACTION_CACHE	2
+
+#define THREADED_SESSION_POOL_OFF	0
+#define THREADED_SESSION_POOL_SHELL	1
 
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int commit_timestamp_buffers;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int multixact_member_buffers;

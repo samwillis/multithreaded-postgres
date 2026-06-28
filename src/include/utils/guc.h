@@ -620,6 +620,7 @@ extern void guc_free_string(char *strval);
 extern void write_nondefault_variables(GucContext context);
 extern void read_nondefault_variables(void);
 extern void ResetGUCStateAtBackendExit(void);
+extern bool GUCStateMatchesResetBaseline(void);
 
 /* GUC serialization */
 extern Size EstimateGUCStateSpace(void);

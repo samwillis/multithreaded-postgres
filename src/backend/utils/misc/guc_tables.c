@@ -383,6 +383,12 @@ static const struct config_enum_entry timing_clock_source_options[] = {
 	{NULL, 0, false}
 };
 
+static const struct config_enum_entry threaded_session_pool_options[] = {
+	{"off", THREADED_SESSION_POOL_OFF, false},
+	{"shell", THREADED_SESSION_POOL_SHELL, false},
+	{NULL, 0, false}
+};
+
 static const struct config_enum_entry huge_pages_status_options[] = {
 	{"off", HUGE_PAGES_OFF, false},
 	{"on", HUGE_PAGES_ON, false},

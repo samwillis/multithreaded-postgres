@@ -2130,6 +2130,11 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 {
 	PgRuntime  *runtime;
 	PgBackend  *backend;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz pop_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz attach_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz accounting_end = TIMESTAMP_MINUS_INFINITY;
+	bool		log_timing;
 
 	Assert(carrier != NULL);
 	Assert(carrier == CurrentPgCarrier);
@@ -2144,9 +2149,16 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 	if (runtime == NULL)
 		return NULL;
 
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(runtime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	backend = PgRuntimeProtocolSchedulerPopRunnable(runtime);
 	if (backend == NULL)
 		return NULL;
+	if (log_timing)
+		pop_end = GetCurrentTimestamp();
 
 	if (backend->runtime != runtime ||
 		backend->carrier != NULL ||
@@ -2169,9 +2181,31 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 
 	PgCarrierAttachBackend(carrier, backend, backend->session,
 						   backend->connection, backend->execution);
+	if (log_timing)
+		attach_end = GetCurrentTimestamp();
 	SpinLockAcquire(&runtime->protocol_scheduler.lock);
 	runtime->protocol_scheduler.carrier_lease_count++;
 	SpinLockRelease(&runtime->protocol_scheduler.lock);
+	if (log_timing)
+	{
+		accounting_end = GetCurrentTimestamp();
+		ereport(LOG_SERVER_ONLY,
+				(errhidestmt(true),
+				 errhidecontext(true),
+				 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=pooled event=lease_runnable "
+								 "total_us=%llu pop_us=%llu attach_us=%llu accounting_us=%llu wake_events=%u",
+								 PgBackendGetSignalPid(backend),
+								 (unsigned int) backend->id,
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 accounting_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 pop_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(pop_end,
+																					 attach_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(attach_end,
+																					 accounting_end),
+								 backend->protocol_park.wake_events)));
+	}
 	return backend;
 }
 
@@ -2417,6 +2451,10 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 {
 	PgBackendProtocolParkState *park_state;
 	PgConnection *connection;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz detach_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz enqueue_end = TIMESTAMP_MINUS_INFINITY;
+	bool		log_timing;
 
 	Assert(carrier != NULL);
 	Assert(backend != NULL);
@@ -2432,10 +2470,17 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 	if (!PgConnectionCanParkBeforeMessage(connection))
 		elog(PANIC, "cannot commit protocol read park during active message read");
 
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(carrier->runtime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	park_state->state = PG_PROTOCOL_PARK_COMMITTED;
 	park_state->parked_carrier = carrier;
 	park_state->committed_at = GetCurrentTimestamp();
 	PgCarrierDetachBackend(carrier, backend);
+	if (log_timing)
+		detach_end = GetCurrentTimestamp();
 	if (!PgRuntimeProtocolSchedulerParkBackend(carrier->runtime, backend))
 		elog(PANIC, "could not enqueue committed protocol read park: backend_runtime_match=%d park_state=%d queue_state=%d carrier=%p backend_carrier=%p",
 			 backend->runtime == carrier->runtime,
@@ -2443,6 +2488,23 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 			 park_state->scheduler_queue_state,
 			 carrier,
 			 backend->carrier);
+	if (log_timing)
+	{
+		enqueue_end = GetCurrentTimestamp();
+		ereport(LOG_SERVER_ONLY,
+				(errhidestmt(true),
+				 errhidecontext(true),
+				 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=pooled event=park_enqueue "
+								 "total_us=%llu detach_us=%llu queue_us=%llu",
+								 PgBackendGetSignalPid(backend),
+								 (unsigned int) backend->id,
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 enqueue_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 detach_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(detach_end,
+																					 enqueue_end))));
+	}
 }
 
 bool

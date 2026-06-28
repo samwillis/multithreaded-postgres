@@ -590,12 +590,14 @@ If warm backend pooling lands, add user-facing documentation for:
 
 1. Add measurement-only lifecycle instrumentation and benchmark output.
 2. Record baseline and proof-of-value benchmark evidence.
-3. Add async janitor for detached private memory only, behind config.
-4. Add reusable shell object type, pool, counters, and strict disable path.
-5. Add shell validator and quarantine/destroy fallback.
-6. Admit shell pooling for threaded and pooled logical starts.
-7. Benchmark `off` versus `shell`; decide whether to continue.
-8. Add reusable-session validator framework.
+3. Add reusable shell object type, pool, counters, and strict disable path.
+4. Add shell validator and quarantine/destroy fallback.
+5. Admit shell pooling for threaded and pooled logical starts.
+6. Benchmark `off` versus `shell`; decide whether to continue.
+7. Revisit async janitor for detached private memory only if retained cleanup
+   remains on the critical path.
+8. Add reusable-session validator framework only if shell evidence justifies
+   moving beyond carrier-shell reuse.
 9. Add first warm backend keyed pool prototype for plain SQL workloads.
 10. Add isolation tests and dirty-state injection tests.
 11. Expand extension policy to destroy/hook-required/reject.
@@ -605,3 +607,247 @@ If warm backend pooling lands, add user-facing documentation for:
 
 Each commit must leave process mode buildable. Any reusable-session expansion
 must have a destroy fallback in the same commit.
+
+## Stage 0-5 Status, 2026-06-28
+
+Completed:
+
+- Stage 0 hygiene and baseline evidence are recorded in
+  `MULTITHREADED_BENCHMARKS.md`.
+- Measurement-only lifecycle instrumentation was added behind
+  `log_threaded_lifecycle_timing`, which is disabled by default.
+- Stage 1 disabled/enabled lifecycle benchmark runs are recorded in
+  `MULTITHREADED_BENCHMARKS.md`, including derived
+  `threaded_lifecycle_events.tsv` and `threaded_lifecycle_summary.tsv` files.
+- A retained-private-cleanup follow-up run was added in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_retained_cleanup_20260628_055213`.
+  It records the retained `TopMemoryContext` delete, freelist drain, and
+  `malloc_trim` timing that happens after `PgBackendExitCleanup()`.
+- Stage 2 short-idle burst upper-bound evidence is recorded in
+  `MULTITHREADED_BENCHMARKS.md`.
+- A Stage 4 shell carrier proof was added behind
+  `threaded_session_pool=shell` and `threaded_session_pool_max`. The current
+  proof defaults off and performs no SQL-session reuse: it uses idle shell
+  carrier capacity for fresh logical backend startup, then destroys the logical
+  backend on disconnect. When no idle shell carrier exists, the current client
+  falls back to the normal dedicated threaded path; `threaded_session_pool_max`
+  is a reusable-carrier cache limit, not a connection admission limit.
+- Stage 4 off-versus-shell benchmark evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_shell_proof_20260628_061003`
+  and summarized in `MULTITHREADED_BENCHMARKS.md`.
+- Final Stage 4 counter/checkpoint evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_shell_counters_20260628_062840`.
+  This includes a lifecycle-on counter smoke, a rerun c64 churn proof, and
+  short `pinned_hot`, `pool_idle_100ms`, `pool_burst_10ms`,
+  `pool_stateful_1000ms`, and `connection_memory_idle` checkpoint slices.
+- A bounded-admission shell attempt was rejected by benchmark evidence:
+  `pool_idle_100ms` with `clients=200` and `threaded_session_pool_max=64`
+  stalled during pgbench startup. A first fallback attempt reached 195 idle
+  sessions but left 5 clients unstarted. The final idle-only carrier cache
+  removes queueing behind persistent sessions.
+- Verification after the Stage 5 validator scaffold passed: `gmake -j18`,
+  `gmake install`, `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes`, and `git diff --check`.
+- Targeted shell fallback TAP proof passed by running
+  `prove -I src/test/perl src/test/modules/test_backend_runtime/t/011_phase16b_shell_pool_fallback.pl`
+  with the Stage 4 branch install on `PATH`. The test keeps
+  `threaded_session_pool_max=2`, admits five concurrent sessions, and verifies
+  carrier-limit fallback accounting with zero shell carrier start failures.
+- An initial Stage 5 reusable-session validator scaffold was added. It exposes
+  central reason codes for null runtime objects, active transaction state,
+  attached proc/socket state, prepared statements, portals, LISTEN state, temp
+  namespace state, extension state, DSM segments, resource owners, memory
+  contexts, active timeouts, lock state, buffer pin indicators, temp file
+  state, GUC stack/list state, plan-cache lists, snapshots/combo CIDs,
+  invalidation state, storage FD/sync state, XLog insert-in-progress state, and
+  pending async actions. The shell carrier destroy path runs the validator
+  before destroying the logical backend and, when lifecycle timing is enabled,
+  logs validation pass/fail counts plus per-reason cumulative counts. Failed
+  validation is counted separately as `quarantine_destroy_paths`, with
+  `action=quarantine_destroy` in the validation log. It still destroys every
+  logical backend and performs no SQL-session reuse.
+- Focused Stage 5 validation evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_validator_20260628_074210`.
+  `gmake -C src/test/modules/test_backend_runtime check
+  PROVE_TESTS='t/011_phase16b_shell_pool_fallback.pl
+  t/012_phase16b_reusable_session_validator.pl'` passed the extension
+  build/install path and SQL regression. Direct TAP then passed both
+  `011_phase16b_shell_pool_fallback.pl` and
+  `012_phase16b_reusable_session_validator.pl` against the temp install.
+- Expanded Stage 5 validation evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_validator_expanded_20260628_074953`.
+  The same module check and direct TAP pair passed after the additional dirty
+  state reason-code coverage was added.
+- Shell destroy-path state-isolation evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_shell_state_isolation_20260628_075754`.
+  The module check path passed extension build/install and process-mode SQL
+  regression, and direct TAP passed `011_phase16b_shell_pool_fallback.pl`,
+  `012_phase16b_reusable_session_validator.pl`, and
+  `013_phase16b_shell_pool_state_isolation.pl`. The new runtime proof dirties a
+  shell session with a temp table, prepared statement, LISTEN state, changed
+  `work_mem`, and a session advisory lock, then verifies that later clients do
+  not inherit those states.
+- Quarantine destroy evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_quarantine_destroy_20260628_080648`.
+  The module check path passed extension build/install and process-mode SQL
+  regression, and direct TAP passed `011_phase16b_shell_pool_fallback.pl`,
+  `012_phase16b_reusable_session_validator.pl`,
+  `013_phase16b_shell_pool_state_isolation.pl`, and
+  `014_phase16b_shell_pool_quarantine_destroy.pl`. The new runtime proof uses
+  the hidden `debug_threaded_session_pool_force_validation_failure` test knob to
+  force a failed validation when the session is otherwise clean, verifies
+  `action=quarantine_destroy` and nonzero `quarantine_destroy_paths`, and
+  confirms the destroyed session does not leak temp table, prepared statement,
+  LISTEN, GUC, or advisory-lock state to later clients.
+- Buffer refcount validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_buffer_refcount_validator_20260628_081523`.
+  The module check path passed extension build/install and process-mode SQL
+  regression, and direct TAP passed `011_phase16b_shell_pool_fallback.pl`,
+  `012_phase16b_reusable_session_validator.pl`,
+  `013_phase16b_shell_pool_state_isolation.pl`, and
+  `014_phase16b_shell_pool_quarantine_destroy.pl`. The validator now delegates
+  private shared-buffer refcount scanning to the buffer manager, including
+  resident array entries, hash entries, and buffer lock mode state, while
+  preserving the existing idle-memory release predicate.
+- Real buffer-pin reset-contract evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_buffer_pin_real_reset_20260628_092319`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all six
+  Phase 16B TAP files with 77 tests, and the lifecycle/global check with
+  `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3` all passed. The new runtime proof
+  exposes the live buffer-manager reusable-state predicate through the threaded
+  test extension, verifies it returns clean after real heap insert, heap scan,
+  and index scan work in the same shell session, then verifies shell destroy
+  validation succeeds with `action=destroy reusable=1 reason=ok` for that
+  backend PID and no `buffer_pins` or crash signatures in the saved cluster log.
+- Same-key GUC baseline evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_same_key_guc_baseline_20260628_093248`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all seven
+  Phase 16B TAP files with 104 tests, and the lifecycle/global check with
+  `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3` all passed. The runtime proof covers
+  database, role, role-in-database, and startup-packet GUC defaults for a
+  same-key shell session. Each covered GUC makes the reset-baseline predicate
+  dirty after `SET`, returns clean after `RESET`, and later same-key and
+  different-startup clients start from the expected clean baseline. The saved
+  cluster log records `action=destroy reusable=1 reason=ok` and no `guc_state`
+  failure for the proof workload.
+- Failed-validation no-leak evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_failed_validation_no_leak_20260628_093924`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all eight
+  Phase 16B TAP files with 127 tests, and the lifecycle/global check with
+  `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3` all passed. The runtime proof forces
+  validation failure after a broad real workload covering temp table, prepared
+  statement, LISTEN, session GUC, advisory lock, server-side file `COPY`, `COPY
+  TO STDOUT`, heap scan, and index scan activity. Shell validation records
+  `action=quarantine_destroy reusable=0` with nonzero quarantine/failure
+  counters, and later clients observe no inherited
+  temp/prepared/LISTEN/GUC/advisory-lock/buffer state.
+- Post-Stage-5 churn evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage6_churn_full_20260628_094300`.
+  The benchmark matrix runner now has a first-class `branch_shell` lane. Running
+  the standard connection-churn shape for `branch_threaded` versus
+  `branch_shell_64` (`duration=15`, `warmup=3`, `runs=3`, `clients=64`,
+  `threads=16`) produced 1585.2 TPS for pinned `branch_threaded` and 2615.0 TPS
+  for `branch_shell_64`, a 1.65x ratio with zero failed transactions.
+- Pgstat/ipc validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_pgstat_ipc_validator_20260628_082241`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all four
+  Phase 16B TAP files, and `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes` all passed. The validator now
+  fails closed on pgstat backend-status/pending-state remnants and
+  IPC/procsignal/shared-invalidation ownership markers, with DSM registry
+  leftovers mapped to the existing `dsm_segments` reason.
+- GUC baseline validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_guc_baseline_validator_20260628_083257`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all four
+  Phase 16B TAP files, and `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes` all passed. The GUC subsystem
+  now exposes a per-session reset-baseline source/value predicate. The
+  reusable-session validator uses it for the installed current session after the
+  existing no-active-nest/stack/report checks, so session-level `SET` drift fails
+  closed while `RESET` returns to the baseline. Fixed internal/server GUCs such
+  as `data_checksums` are intentionally outside this session baseline comparison.
+- Socket/FD validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_socket_fd_validator_20260628_085124`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all four
+  Phase 16B TAP files, and `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes` all passed. The validator now
+  fails closed on retained connection identity, cancel-key, socket I/O, protocol,
+  client auth identity, and security buffer state. File-access validation is
+  delegated to `fd.c`, which can inspect live VFD entries while allowing an
+  allocated but empty closed-state VFD cache.
+- Lock validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_lock_validator_20260628_085954`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all four
+  Phase 16B TAP files, and `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes` all passed. The lock manager
+  now owns reusable-lock-state validation: allocated empty local-lock scaffolding
+  is reusable, while retained `LOCALLOCK` entries, nonzero fast-path counters,
+  LWLocks, wait/deadlock state, predicate-lock state, and serializable lock
+  state fail closed.
+- Procarray/procsignal validator evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_procarray_procsignal_validator_20260628_090711`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all four
+  Phase 16B TAP files, and `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3 gmake
+  check-runtime-lifecycles check-global-lifetimes` all passed. The validator now
+  fails closed on pending backend interrupt/procsignal mailbox state, stored
+  proc-die sender identity, retained local transaction ID, procarray cached
+  completed-XID state, cached xmin horizon state, and global visibility horizon
+  state. These procarray baseline failures use the stable `procarray_state`
+  reason.
+- Real socket/FD no-leak evidence is recorded in
+  `/home/sam/codex-work/mtpg-bench-results/phase16b_stage5_socket_fd_real_no_leak_20260628_091526`.
+  `gmake -j18`, the backend-runtime module check path, direct TAP for all five
+  Phase 16B TAP files with 64 tests, and the lifecycle/global check with
+  `PHASE16_LOCAL_DEBROOT=/ MALLOC_CHECK_=3` all passed. The new runtime proof
+  exercises server-side `COPY` to/from a real
+  file and `COPY TO STDOUT` over the real client socket, then verifies shell
+  validation succeeds with `action=destroy reusable=1 reason=ok` after the
+  workload exits and that no `storage_state`, `socket_attached`, or crash
+  signatures appear in the saved cluster log.
+
+Current decisions:
+
+- Warm shell carrier caching is justified for continued hardening on reconnect-
+  heavy workloads only. The final idle-only proof improved pure connection
+  churn by 66.3% and realish churn by 42.0% at c64 with zero failed
+  transactions, while still avoiding reusable SQL session state.
+- Shell carrier caching is not justified as a general persistent-session pool
+  or as a default-on behavior. The broader checkpoint preserved TPS, but it did
+  not reduce threads or memory for persistent clients: c200 idle used 208
+  server threads both off and shell, and c1000 idle used 1008 server threads
+  both off and shell.
+- Async private cleanup is not justified as the next implementation. Retained
+  cleanup is small for pinned threaded churn and realish churn, and the pooled
+  stateful retained-cleanup tail appears in lanes that still lose throughput and
+  have a larger synchronous `shmem_exit` tail.
+- Full warm backend pooling remains deferred for the pure connection-churn
+  target. Existing pooled lanes regress realish churn and bursty wakeups, while
+  post-Stage-5 shell pooling already exceeds pinned-thread pure churn by 1.65x.
+  Stage 5 now has dirty-state reason codes, destroy-path logging, per-reason
+  accounting, quarantine-destroy accounting, shell destroy-path state-isolation
+  proofs for retained runtime state classes, same-key role/database/startup GUC
+  proof, and broad failed-validation no-leak proof. A conservative Stage 6
+  same-database/same-role prototype is unblocked by this validator work, but it
+  should remain follow-on work for authenticated SQL-session reuse or realish
+  churn goals rather than a requirement for closing Phase 16B pure churn.
+
+Next Stage 5 work:
+
+- Stage 5 is complete for the covered Phase 16B contract. Further Stage 5 work
+  should only add coverage for newly discovered retained-state classes.
+
+Next implementation step:
+
+1. Treat the Phase 16B pure connection-churn target as satisfied by warm shell
+   pooling. Only start a small Stage 6 warm backend pool prototype if the next
+   target is authenticated SQL-session reuse or realish-churn recovery; keep
+   strict validation and quarantine in that future disconnect/reuse path.
+2. Revisit async private cleanup only if later shell checkpoints leave retained
+   cleanup on the critical path or if stateful disconnect-tail latency becomes
+   the explicit target.
+3. Treat any further shell-pool work as reconnect-specific hardening: improve
+   counters/observability, test longer churn runs, and keep dedicated fallback
+   mandatory for persistent clients.
+
+Reusable SQL sessions remain fail-closed: any dirty, uncertain, unsupported, or
+policy-violating session must be destroyed or quarantined rather than reused.

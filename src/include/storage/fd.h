@@ -129,6 +129,7 @@ StaticAssertDecl((PG_O_DIRECT &
  */
 
 struct PgAioHandle;
+struct PgBackendStorageState;
 
 /* Operations on virtual Files --- equivalent to Unix kernel file ops */
 extern File PathNameOpenFile(const char *fileName, int fileFlags);
@@ -194,6 +195,7 @@ extern int	MakePGDirectory(const char *directoryName);
 /* Miscellaneous support routines */
 extern void InitFileAccess(void);
 extern void InitTemporaryFileAccess(void);
+extern bool FileAccessStateIsReusable(struct PgBackendStorageState *storage);
 extern void set_max_safe_fds(void);
 extern void closeAllVfds(void);
 extern void SetTempTablespaces(Oid *tableSpaces, int numSpaces);

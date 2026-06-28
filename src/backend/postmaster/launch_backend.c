@@ -239,6 +239,7 @@ typedef struct BackendPooledLogicalStart
 	ClientSocket client_sock;
 	sigjmp_buf	exit_jmp;
 	bool		exit_jmp_valid;
+	bool		protocol_scheduler_enabled;
 	struct BackendPooledLogicalStart *next;
 } BackendPooledLogicalStart;
 
@@ -247,9 +248,25 @@ typedef struct BackendPooledCarrierStart
 	PgCarrier	carrier;
 	PgThread	thread;
 	int			carrier_index;
+	bool		protocol_scheduler_enabled;
 	pg_tz	   *startup_session_timezone;
 	pg_tz	   *startup_log_timezone;
 } BackendPooledCarrierStart;
+
+typedef struct BackendShellPoolStats
+{
+	pg_atomic_uint64 requested_starts;
+	pg_atomic_uint64 successful_starts;
+	pg_atomic_uint64 start_failures;
+	pg_atomic_uint64 carrier_starts;
+	pg_atomic_uint64 idle_carrier_waits;
+	pg_atomic_uint64 carrier_limit_fallbacks;
+	pg_atomic_uint64 validation_passes;
+	pg_atomic_uint64 validation_failures;
+	pg_atomic_uint64 validation_reasons[PG_REUSABLE_SESSION_INVALID_REASON_COUNT];
+	pg_atomic_uint64 destroy_paths;
+	pg_atomic_uint64 quarantine_destroy_paths;
+} BackendShellPoolStats;
 
 static PG_GLOBAL_RUNTIME bool postmaster_thread_carriers_started = false;
 #ifndef WIN32
@@ -259,7 +276,11 @@ static PG_GLOBAL_RUNTIME BackendPooledLogicalStart *pooled_protocol_queue_head =
 static PG_GLOBAL_RUNTIME BackendPooledLogicalStart *pooled_protocol_queue_tail = NULL;
 static PG_GLOBAL_RUNTIME int pooled_protocol_queue_length = 0;
 static PG_GLOBAL_RUNTIME int pooled_protocol_carrier_count = 0;
+static PG_GLOBAL_RUNTIME int pooled_protocol_idle_waiter_count = 0;
+static PG_GLOBAL_RUNTIME int shell_pool_assigned_logical_count = 0;
 static PG_GLOBAL_RUNTIME bool pooled_protocol_pool_started = false;
+static PG_GLOBAL_RUNTIME BackendShellPoolStats shell_pool_stats;
+static PG_GLOBAL_RUNTIME bool shell_pool_stats_initialized = false;
 #endif
 #if defined(__GLIBC__)
 #define BACKEND_THREAD_MALLOC_TRIM_THRESHOLD ((Size) 64 * 1024 * 1024)
@@ -278,6 +299,11 @@ static bool postmaster_pooled_protocol_launch(PMChild *pmchild,
 											  void *startup_data,
 											  size_t startup_data_len,
 											  const ClientSocket *client_sock);
+static bool postmaster_shell_pool_launch(PMChild *pmchild,
+										 int child_slot,
+										 void *startup_data,
+										 size_t startup_data_len,
+										 const ClientSocket *client_sock);
 static BackendThreadStart *backend_thread_start_alloc(void);
 static void backend_thread_start_release(BackendThreadStart *thread_start);
 static BackendPooledLogicalStart *backend_pooled_logical_start_alloc(void);
@@ -293,6 +319,27 @@ static void backend_thread_init_random_state(void);
 static void backend_thread_clear_deleted_retained_memory_contexts(void);
 static void backend_thread_free_deleted_retained_memory_contexts(void);
 static void backend_thread_maybe_trim_reclaimed_memory(Size reclaimed);
+static bool backend_thread_log_lifecycle_timing(void);
+static const char *backend_thread_lifecycle_model(void);
+static uint64 backend_thread_lifecycle_elapsed(TimestampTz start,
+											   TimestampTz end);
+static void backend_thread_log_retained_cleanup_timing(int code,
+													   int lifecycle_pid,
+													   uint32 lifecycle_backend_id,
+													   const char *lifecycle_model,
+													   bool retained,
+													   Size accounted_bytes,
+													   Size reclaimed_bytes,
+													   TimestampTz total_start,
+													   TimestampTz account_start,
+													   TimestampTz account_end,
+													   TimestampTz delete_start,
+													   TimestampTz delete_end,
+													   TimestampTz freelist_start,
+													   TimestampTz freelist_end,
+													   TimestampTz trim_start,
+													   TimestampTz trim_end,
+													   TimestampTz total_end);
 pg_noreturn static void backend_thread_exit(int code);
 pg_noreturn static void backend_thread_finish(int code);
 pg_noreturn static void backend_pooled_logical_finish(int code);
@@ -301,6 +348,24 @@ static int	backend_thread_exitstatus(int code);
 static bool backend_pooled_protocol_start_pool(void);
 static bool backend_pooled_protocol_start_one_carrier(void);
 static void backend_pooled_protocol_maybe_start_carrier_for_work(void);
+static void backend_pooled_protocol_maybe_start_carriers_for_ready_work(int nready);
+static int	backend_pooled_protocol_carrier_limit(void);
+static bool backend_pooled_protocol_mode_enabled(void);
+static bool backend_shell_pool_try_reserve_logical(void);
+static void backend_shell_pool_maybe_start_idle_carrier(void);
+static void backend_shell_pool_release_logical(void);
+static void backend_shell_pool_stats_init(void);
+static void backend_shell_pool_count(volatile pg_atomic_uint64 *counter);
+static void backend_shell_pool_count_validation_reason(PgReusableSessionValidationReason reason);
+static uint64 backend_shell_pool_validation_reason_count(PgReusableSessionValidationReason reason);
+static void backend_shell_pool_log_stats(const char *event,
+										 int lifecycle_pid,
+										 uint32 lifecycle_backend_id,
+										 int code);
+static void backend_shell_pool_log_validation(int lifecycle_pid,
+											  uint32 lifecycle_backend_id,
+											  int code,
+											  PgReusableSessionValidationReason reason);
 static void backend_pooled_protocol_carrier_entry(void *arg);
 static void backend_thread_shutdown_wait_event_support(int code, Datum arg);
 static void backend_pooled_protocol_enqueue(BackendPooledLogicalStart *logical_start);
@@ -353,6 +418,16 @@ postmaster_child_launch_carrier(PMChild *pmchild,
 												 startup_data,
 												 startup_data_len,
 												 client_sock);
+	}
+
+	if (multithreaded &&
+		child_type == B_BACKEND &&
+		PgRuntimeThreadedSessionPoolShellRequested())
+	{
+		return postmaster_shell_pool_launch(pmchild, child_slot,
+											startup_data,
+											startup_data_len,
+											client_sock);
 	}
 
 	if (multithreaded &&
@@ -661,6 +736,7 @@ postmaster_pooled_protocol_launch(PMChild *pmchild, int child_slot,
 	logical_start->publication.kind = BACKEND_THREAD_START_POOLED_LOGICAL;
 	logical_start->publication.pmchild = pmchild;
 	logical_start->publication.postmaster_latch = MyLatch;
+	logical_start->protocol_scheduler_enabled = true;
 	if (logical_start->publication.postmaster_latch == NULL)
 		logical_start->publication.postmaster_latch = PgCurrentLocalLatchData();
 	Assert(logical_start->publication.postmaster_latch != NULL);
@@ -690,10 +766,110 @@ postmaster_pooled_protocol_launch(PMChild *pmchild, int child_slot,
 #endif
 }
 
+static bool
+postmaster_shell_pool_launch(PMChild *pmchild, int child_slot,
+							 void *startup_data, size_t startup_data_len,
+							 const ClientSocket *client_sock)
+{
+#ifdef WIN32
+	errno = ENOSYS;
+	return false;
+#else
+	BackendPooledLogicalStart *logical_start;
+
+	if (!shell_pool_stats_initialized)
+		backend_shell_pool_stats_init();
+	backend_shell_pool_count(&shell_pool_stats.requested_starts);
+
+	if (client_sock == NULL ||
+		startup_data == NULL ||
+		startup_data_len != sizeof(BackendStartupData))
+	{
+		backend_shell_pool_count(&shell_pool_stats.start_failures);
+		errno = EINVAL;
+		return false;
+	}
+
+	InitializePgThreadRuntime(backend_thread_exit);
+	if (!backend_pooled_protocol_start_pool())
+	{
+		backend_shell_pool_count(&shell_pool_stats.start_failures);
+		return false;
+	}
+
+	if (!backend_shell_pool_try_reserve_logical())
+	{
+		bool		started;
+
+		backend_shell_pool_maybe_start_idle_carrier();
+		backend_shell_pool_count(&shell_pool_stats.carrier_limit_fallbacks);
+		started = postmaster_backend_thread_launch(pmchild,
+												   B_BACKEND,
+												   child_slot,
+												   startup_data,
+												   startup_data_len,
+												   client_sock);
+		if (!started)
+			backend_shell_pool_count(&shell_pool_stats.start_failures);
+		else
+			backend_shell_pool_count(&shell_pool_stats.successful_starts);
+		return started;
+	}
+
+	logical_start = backend_pooled_logical_start_alloc();
+	if (logical_start == NULL)
+	{
+		backend_shell_pool_release_logical();
+		backend_shell_pool_count(&shell_pool_stats.start_failures);
+		errno = ENOMEM;
+		return false;
+	}
+	MemSet(logical_start, 0, sizeof(*logical_start));
+
+	logical_start->publication.kind = BACKEND_THREAD_START_POOLED_LOGICAL;
+	logical_start->publication.pmchild = pmchild;
+	logical_start->publication.postmaster_latch = MyLatch;
+	logical_start->protocol_scheduler_enabled = false;
+	if (logical_start->publication.postmaster_latch == NULL)
+		logical_start->publication.postmaster_latch = PgCurrentLocalLatchData();
+	Assert(logical_start->publication.postmaster_latch != NULL);
+	logical_start->startup_data = *((BackendStartupData *) startup_data);
+	logical_start->startup_data.fork_started = GetCurrentTimestamp();
+	logical_start->client_sock = *client_sock;
+	logical_start->client_sock.sock = dup(client_sock->sock);
+	if (logical_start->client_sock.sock < 0)
+	{
+		int			save_errno = errno;
+
+		backend_shell_pool_release_logical();
+		backend_shell_pool_count(&shell_pool_stats.start_failures);
+		backend_pooled_logical_start_release(logical_start);
+		errno = save_errno;
+		return false;
+	}
+
+	InitializePgThreadBackendLogicalState(&logical_start->logical, NULL,
+										  B_BACKEND, NULL, NULL);
+	PostmasterChildSetPooledLogical(pmchild);
+	PostmasterChildPublishLogicalBackend(pmchild,
+										 &logical_start->logical.backend);
+	backend_pooled_protocol_enqueue(logical_start);
+	backend_pooled_protocol_signal_work();
+	backend_pooled_protocol_maybe_start_carrier_for_work();
+	backend_shell_pool_count(&shell_pool_stats.successful_starts);
+	postmaster_thread_carriers_started = true;
+	return true;
+#endif
+}
+
 #ifndef WIN32
 static bool
 backend_pooled_protocol_start_pool(void)
 {
+	if (PgRuntimeThreadedSessionPoolShellRequested() &&
+		!shell_pool_stats_initialized)
+		backend_shell_pool_stats_init();
+
 	if (pooled_protocol_carrier_count > 0)
 		return true;
 
@@ -707,45 +883,72 @@ backend_pooled_protocol_start_one_carrier(void)
 	int			carrier_limit;
 	int			carrier_index;
 	int			rc;
+	bool		ok = false;
 
-	carrier_limit = PgRuntimePooledProtocolCarrierLimit();
+	rc = pthread_mutex_lock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not lock pooled protocol queue: %m");
+	}
+
+	carrier_limit = backend_pooled_protocol_carrier_limit();
 	if (carrier_limit <= 0)
 	{
 		errno = EINVAL;
-		return false;
+		goto done;
 	}
 	if (pooled_protocol_carrier_count >= carrier_limit)
-		return true;
+	{
+		ok = true;
+		goto done;
+	}
 
 	carrier_start = malloc(sizeof(BackendPooledCarrierStart));
 	if (carrier_start == NULL)
 	{
 		errno = ENOMEM;
-		return false;
+		goto done;
 	}
 	MemSet(carrier_start, 0, sizeof(*carrier_start));
 
 	carrier_index = pooled_protocol_carrier_count;
 	InitializePgThreadCarrierRuntimeState(&carrier_start->carrier);
 	carrier_start->carrier_index = carrier_index;
+	carrier_start->protocol_scheduler_enabled =
+		backend_pooled_protocol_mode_enabled();
 	carrier_start->startup_session_timezone = session_timezone;
 	carrier_start->startup_log_timezone = log_timezone;
 
 	rc = pg_thread_create(&carrier_start->thread,
-						  "postgres pooled protocol carrier",
+						  carrier_start->protocol_scheduler_enabled ?
+						  "postgres pooled protocol carrier" :
+						  "postgres shell pool carrier",
 						  backend_pooled_protocol_carrier_entry,
 						  carrier_start);
 	if (rc != 0)
 	{
 		free(carrier_start);
 		errno = rc;
-		return false;
+		goto done;
 	}
 
 	pooled_protocol_carrier_count++;
+	if (!carrier_start->protocol_scheduler_enabled)
+		backend_shell_pool_count(&shell_pool_stats.carrier_starts);
 	pooled_protocol_pool_started = true;
 	postmaster_thread_carriers_started = true;
-	return true;
+	ok = true;
+
+done:
+	rc = pthread_mutex_unlock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not unlock pooled protocol queue: %m");
+	}
+
+	return ok;
 }
 
 static void
@@ -756,7 +959,7 @@ backend_pooled_protocol_maybe_start_carrier_for_work(void)
 
 	if (!pooled_protocol_pool_started)
 		return;
-	if (pooled_protocol_carrier_count >= PgRuntimePooledProtocolCarrierLimit())
+	if (pooled_protocol_carrier_count >= backend_pooled_protocol_carrier_limit())
 		return;
 
 	queue_length = backend_pooled_protocol_queue_count();
@@ -768,6 +971,119 @@ backend_pooled_protocol_maybe_start_carrier_for_work(void)
 		return;
 
 	(void) backend_pooled_protocol_start_one_carrier();
+}
+
+static void
+backend_pooled_protocol_maybe_start_carriers_for_ready_work(int nready)
+{
+	uint32		idle_carriers;
+	int			needed_carriers;
+
+	if (!pooled_protocol_pool_started ||
+		!backend_pooled_protocol_mode_enabled() ||
+		nready <= 1)
+		return;
+
+	/*
+	 * The polling carrier will loop and lease one runnable backend itself.
+	 * Existing idle carriers can cover the rest after they are signalled.
+	 */
+	idle_carriers = backend_pooled_protocol_idle_carrier_count();
+	needed_carriers = nready - (int) idle_carriers - 1;
+	while (needed_carriers-- > 0)
+	{
+		if (pooled_protocol_carrier_count >=
+			backend_pooled_protocol_carrier_limit())
+			break;
+		if (!backend_pooled_protocol_start_one_carrier())
+			break;
+	}
+}
+
+static int
+backend_pooled_protocol_carrier_limit(void)
+{
+	if (PgRuntimePooledProtocolRequested())
+		return PgRuntimePooledProtocolCarrierLimit();
+	if (PgRuntimeThreadedSessionPoolShellRequested())
+		return PgRuntimeThreadedSessionPoolCarrierLimit();
+	return 0;
+}
+
+static bool
+backend_pooled_protocol_mode_enabled(void)
+{
+	return PgRuntimePooledProtocolRequested();
+}
+
+static bool
+backend_shell_pool_try_reserve_logical(void)
+{
+	bool		reserved = false;
+	int			rc;
+
+	Assert(PgRuntimeThreadedSessionPoolShellRequested());
+
+	rc = pthread_mutex_lock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not lock shell pool queue: %m");
+	}
+
+	/*
+	 * The shell carrier limit is a reuse-cache limit, not a connection
+	 * admission limit.  Queue work only for idle carriers that are not already
+	 * matched to queued starts; otherwise callers fall back to a dedicated
+	 * backend thread.
+	 */
+	if (pooled_protocol_queue_length < pooled_protocol_idle_waiter_count)
+	{
+		shell_pool_assigned_logical_count++;
+		reserved = true;
+	}
+
+	rc = pthread_mutex_unlock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not unlock shell pool queue: %m");
+	}
+
+	return reserved;
+}
+
+static void
+backend_shell_pool_maybe_start_idle_carrier(void)
+{
+	if (pooled_protocol_carrier_count >= backend_pooled_protocol_carrier_limit())
+		return;
+
+	(void) backend_pooled_protocol_start_one_carrier();
+}
+
+static void
+backend_shell_pool_release_logical(void)
+{
+	int			rc;
+
+	rc = pthread_mutex_lock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not lock shell pool queue: %m");
+	}
+
+	Assert(shell_pool_assigned_logical_count > 0);
+	if (shell_pool_assigned_logical_count > 0)
+		shell_pool_assigned_logical_count--;
+
+	rc = pthread_mutex_unlock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not unlock shell pool queue: %m");
+	}
 }
 
 static void
@@ -862,7 +1178,29 @@ backend_pooled_protocol_queue_count(void)
 static uint32
 backend_pooled_protocol_idle_carrier_count(void)
 {
-	return PgRuntimePooledProtocolIdleCarrierCount();
+	uint32		idle_carriers;
+	int			rc;
+
+	if (backend_pooled_protocol_mode_enabled())
+		return PgRuntimePooledProtocolIdleCarrierCount();
+
+	rc = pthread_mutex_lock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not lock shell pool queue: %m");
+	}
+
+	idle_carriers = (uint32) pooled_protocol_idle_waiter_count;
+
+	rc = pthread_mutex_unlock(&pooled_protocol_queue_mutex);
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not unlock shell pool queue: %m");
+	}
+
+	return idle_carriers;
 }
 
 static void
@@ -940,10 +1278,14 @@ backend_pooled_protocol_wait_for_work(long timeout_us)
 
 	if (pooled_protocol_queue_length == 0)
 	{
+		if (!backend_pooled_protocol_mode_enabled())
+			backend_shell_pool_count(&shell_pool_stats.idle_carrier_waits);
+		pooled_protocol_idle_waiter_count++;
 		backend_pooled_protocol_deadline_after(timeout_us, &deadline);
 		rc = pthread_cond_timedwait(&pooled_protocol_queue_cond,
 									&pooled_protocol_queue_mutex,
 									&deadline);
+		pooled_protocol_idle_waiter_count--;
 		if (rc != 0 && rc != ETIMEDOUT)
 		{
 			errno = rc;
@@ -1024,7 +1366,8 @@ backend_pooled_protocol_carrier_entry(void *arg)
 									  sizeof(struct pollfd) *
 									  (max_scratch_backends + 1));
 
-	if (!PgRuntimeProtocolSchedulerRegisterCarrier(CurrentPgRuntime,
+	if (carrier_start->protocol_scheduler_enabled &&
+		!PgRuntimeProtocolSchedulerRegisterCarrier(CurrentPgRuntime,
 												   CurrentPgCarrier))
 		elog(FATAL, "could not register pooled protocol carrier");
 
@@ -1040,13 +1383,16 @@ backend_pooled_protocol_carrier_entry(void *arg)
 		Assert(CurrentPgConnection == NULL);
 		Assert(CurrentPgExecution == NULL);
 
-		backend = PgCarrierLeaseRunnableProtocolBackend(CurrentPgCarrier);
-		if (backend != NULL)
+		if (carrier_start->protocol_scheduler_enabled)
 		{
-			logical_start =
-				backend_pooled_logical_start_from_backend(backend);
-			backend_pooled_protocol_resume_logical_start(logical_start);
-			continue;
+			backend = PgCarrierLeaseRunnableProtocolBackend(CurrentPgCarrier);
+			if (backend != NULL)
+			{
+				logical_start =
+					backend_pooled_logical_start_from_backend(backend);
+				backend_pooled_protocol_resume_logical_start(logical_start);
+				continue;
+			}
 		}
 
 		logical_start = backend_pooled_protocol_dequeue();
@@ -1057,15 +1403,19 @@ backend_pooled_protocol_carrier_entry(void *arg)
 			continue;
 		}
 
-		nready = PgRuntimeProtocolSchedulerWaitParkedReads(CurrentPgRuntime,
-														   scratch,
-														   poll_scratch,
-														   max_scratch_backends,
-														   10L);
-		if (nready > 0)
+		if (carrier_start->protocol_scheduler_enabled)
 		{
-			backend_pooled_protocol_signal_ready_work(nready);
-			continue;
+			nready = PgRuntimeProtocolSchedulerWaitParkedReads(CurrentPgRuntime,
+															   scratch,
+															   poll_scratch,
+															   max_scratch_backends,
+															   10L);
+			if (nready > 0)
+			{
+				backend_pooled_protocol_maybe_start_carriers_for_ready_work(nready);
+				backend_pooled_protocol_signal_ready_work(nready);
+				continue;
+			}
 		}
 
 		backend_pooled_protocol_wait_for_work(10000L);
@@ -1123,11 +1473,23 @@ backend_pooled_protocol_run_logical_start(BackendPooledCarrierStart *carrier_sta
 	}
 
 	logical_start->exit_jmp_valid = true;
-	session = BackendStartSessionWithStartupData(&logical_start->startup_data,
-												 &logical_start->client_sock,
-												 BACKEND_STARTUP_THREAD);
-	(void) backend_pooled_protocol_run_attached_logical(logical_start,
-														session);
+	if (logical_start->protocol_scheduler_enabled)
+	{
+		PgStepResult result;
+
+		session = BackendStartSessionWithStartupData(&logical_start->startup_data,
+													 &logical_start->client_sock,
+													 BACKEND_STARTUP_THREAD);
+		result = backend_pooled_protocol_run_attached_logical(logical_start,
+															 session);
+		if (result == PG_STEP_PARK_PROTOCOL_READ)
+			return;
+	}
+	else
+		BackendMainWithStartupData(&logical_start->startup_data,
+								   &logical_start->client_sock,
+								   BACKEND_STARTUP_THREAD);
+	pg_unreachable();
 }
 
 static void
@@ -1419,6 +1781,204 @@ backend_thread_maybe_trim_reclaimed_memory(Size reclaimed)
 #endif
 }
 
+#ifndef WIN32
+static void
+backend_shell_pool_stats_init(void)
+{
+	pg_atomic_init_u64(&shell_pool_stats.requested_starts, 0);
+	pg_atomic_init_u64(&shell_pool_stats.successful_starts, 0);
+	pg_atomic_init_u64(&shell_pool_stats.start_failures, 0);
+	pg_atomic_init_u64(&shell_pool_stats.carrier_starts, 0);
+	pg_atomic_init_u64(&shell_pool_stats.idle_carrier_waits, 0);
+	pg_atomic_init_u64(&shell_pool_stats.carrier_limit_fallbacks, 0);
+	pg_atomic_init_u64(&shell_pool_stats.validation_passes, 0);
+	pg_atomic_init_u64(&shell_pool_stats.validation_failures, 0);
+	for (int reason = 0; reason < PG_REUSABLE_SESSION_INVALID_REASON_COUNT; reason++)
+		pg_atomic_init_u64(&shell_pool_stats.validation_reasons[reason], 0);
+	pg_atomic_init_u64(&shell_pool_stats.destroy_paths, 0);
+	pg_atomic_init_u64(&shell_pool_stats.quarantine_destroy_paths, 0);
+	shell_pool_stats_initialized = true;
+}
+
+static void
+backend_shell_pool_count(volatile pg_atomic_uint64 *counter)
+{
+	if (!shell_pool_stats_initialized || !log_threaded_lifecycle_timing)
+		return;
+
+	(void) pg_atomic_fetch_add_u64(counter, 1);
+}
+
+static void
+backend_shell_pool_count_validation_reason(PgReusableSessionValidationReason reason)
+{
+	if (!shell_pool_stats_initialized || !log_threaded_lifecycle_timing)
+		return;
+	if (reason < 0 || reason >= PG_REUSABLE_SESSION_INVALID_REASON_COUNT)
+		return;
+
+	(void) pg_atomic_fetch_add_u64(&shell_pool_stats.validation_reasons[reason],
+								   1);
+}
+
+static uint64
+backend_shell_pool_validation_reason_count(PgReusableSessionValidationReason reason)
+{
+	if (!shell_pool_stats_initialized ||
+		reason < 0 || reason >= PG_REUSABLE_SESSION_INVALID_REASON_COUNT)
+		return 0;
+
+	return pg_atomic_read_u64(&shell_pool_stats.validation_reasons[reason]);
+}
+
+static void
+backend_shell_pool_log_stats(const char *event,
+							 int lifecycle_pid,
+							 uint32 lifecycle_backend_id,
+							 int code)
+{
+	if (!shell_pool_stats_initialized || !log_threaded_lifecycle_timing)
+		return;
+
+	write_stderr("threaded_session_pool_stats "
+				 "pid=%d backend_id=%u event=%s code=%d "
+				 "requested_starts=" UINT64_FORMAT " "
+				 "successful_starts=" UINT64_FORMAT " "
+				 "start_failures=" UINT64_FORMAT " "
+				 "carrier_starts=" UINT64_FORMAT " "
+				 "idle_carrier_waits=" UINT64_FORMAT " "
+				 "carrier_limit_fallbacks=" UINT64_FORMAT " "
+				 "validation_passes=" UINT64_FORMAT " "
+				 "validation_failures=" UINT64_FORMAT " "
+				 "destroy_paths=" UINT64_FORMAT " "
+				 "quarantine_destroy_paths=" UINT64_FORMAT " "
+				 "max_carriers=%d\n",
+				 lifecycle_pid,
+				 (unsigned int) lifecycle_backend_id,
+				 event != NULL ? event : "unknown",
+				 code,
+				 pg_atomic_read_u64(&shell_pool_stats.requested_starts),
+				 pg_atomic_read_u64(&shell_pool_stats.successful_starts),
+				 pg_atomic_read_u64(&shell_pool_stats.start_failures),
+				 pg_atomic_read_u64(&shell_pool_stats.carrier_starts),
+				 pg_atomic_read_u64(&shell_pool_stats.idle_carrier_waits),
+				 pg_atomic_read_u64(&shell_pool_stats.carrier_limit_fallbacks),
+				 pg_atomic_read_u64(&shell_pool_stats.validation_passes),
+				 pg_atomic_read_u64(&shell_pool_stats.validation_failures),
+				 pg_atomic_read_u64(&shell_pool_stats.destroy_paths),
+				 pg_atomic_read_u64(&shell_pool_stats.quarantine_destroy_paths),
+				 threaded_session_pool_max);
+}
+
+static void
+backend_shell_pool_log_validation(int lifecycle_pid,
+								  uint32 lifecycle_backend_id,
+								  int code,
+								  PgReusableSessionValidationReason reason)
+{
+	const char *action;
+
+	if (!shell_pool_stats_initialized || !log_threaded_lifecycle_timing)
+		return;
+
+	action = reason == PG_REUSABLE_SESSION_VALID ? "destroy" :
+		"quarantine_destroy";
+
+	write_stderr("threaded_session_pool_validation "
+				 "pid=%d backend_id=%u code=%d action=%s "
+				 "reusable=%d reason=%s "
+				 "reason_count=" UINT64_FORMAT " "
+				 "quarantine_destroy_paths=" UINT64_FORMAT " "
+				 "validation_passes=" UINT64_FORMAT " "
+				 "validation_failures=" UINT64_FORMAT "\n",
+				 lifecycle_pid,
+				 (unsigned int) lifecycle_backend_id,
+				 code,
+				 action,
+				 reason == PG_REUSABLE_SESSION_VALID ? 1 : 0,
+				 PgReusableSessionValidationReasonName(reason),
+				 backend_shell_pool_validation_reason_count(reason),
+				 pg_atomic_read_u64(&shell_pool_stats.quarantine_destroy_paths),
+				 pg_atomic_read_u64(&shell_pool_stats.validation_passes),
+				 pg_atomic_read_u64(&shell_pool_stats.validation_failures));
+}
+#endif
+
+static bool
+backend_thread_log_lifecycle_timing(void)
+{
+	return log_threaded_lifecycle_timing &&
+		IsExternalConnectionBackend(MyBackendType);
+}
+
+static const char *
+backend_thread_lifecycle_model(void)
+{
+	if (CurrentPgRuntime != NULL &&
+		PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return "pooled";
+	if (CurrentPgRuntime != NULL &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		return "threaded";
+	return "process";
+}
+
+static uint64
+backend_thread_lifecycle_elapsed(TimestampTz start, TimestampTz end)
+{
+	if (start == TIMESTAMP_MINUS_INFINITY ||
+		end == TIMESTAMP_MINUS_INFINITY ||
+		end < start)
+		return 0;
+
+	return TimestampDifferenceMicroseconds(start, end);
+}
+
+static void
+backend_thread_log_retained_cleanup_timing(int code,
+										   int lifecycle_pid,
+										   uint32 lifecycle_backend_id,
+										   const char *lifecycle_model,
+										   bool retained,
+										   Size accounted_bytes,
+										   Size reclaimed_bytes,
+										   TimestampTz total_start,
+										   TimestampTz account_start,
+										   TimestampTz account_end,
+										   TimestampTz delete_start,
+										   TimestampTz delete_end,
+										   TimestampTz freelist_start,
+										   TimestampTz freelist_end,
+										   TimestampTz trim_start,
+										   TimestampTz trim_end,
+										   TimestampTz total_end)
+{
+	/*
+	 * At this point the retained TopMemoryContext may already be gone.  Avoid
+	 * ereport(), which needs ErrorContext, and write a parseable diagnostics
+	 * line directly to stderr for the benchmark log.
+	 */
+	write_stderr("threaded_lifecycle_retained_cleanup "
+				 "pid=%d backend_id=%u model=%s code=%d retained=%d "
+				 "total_us=" UINT64_FORMAT " account_us=" UINT64_FORMAT " "
+				 "delete_us=" UINT64_FORMAT " freelist_us=" UINT64_FORMAT " "
+				 "trim_us=" UINT64_FORMAT " accounted_bytes=%zu "
+				 "reclaimed_bytes=%zu\n",
+				 lifecycle_pid,
+				 (unsigned int) lifecycle_backend_id,
+				 lifecycle_model != NULL ? lifecycle_model : "unknown",
+				 code,
+				 retained ? 1 : 0,
+				 backend_thread_lifecycle_elapsed(total_start, total_end),
+				 backend_thread_lifecycle_elapsed(account_start, account_end),
+				 backend_thread_lifecycle_elapsed(delete_start, delete_end),
+				 backend_thread_lifecycle_elapsed(freelist_start,
+												  freelist_end),
+				 backend_thread_lifecycle_elapsed(trim_start, trim_end),
+				 accounted_bytes,
+				 reclaimed_bytes);
+}
+
 void
 ThreadedBackendStartupComplete(void)
 {
@@ -1467,14 +2027,37 @@ backend_thread_finish(int code)
 	PgBackendExitState *exit_state;
 	MemoryContext retained_top_context;
 	int			exitstatus;
+	bool		log_lifecycle_timing;
+	const char *lifecycle_model = NULL;
+	int			lifecycle_pid = 0;
+	uint32		lifecycle_backend_id = 0;
 	Size		top_memory_allocated = 0;
 	Size		top_memory_accounted = 0;
 	Size		top_memory_reclaimed = 0;
+	TimestampTz retained_total_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_account_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_account_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_delete_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_delete_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_freelist_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_freelist_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_trim_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_trim_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_total_end = TIMESTAMP_MINUS_INFINITY;
 
 	Assert(thread_start != NULL);
 
 	exit_state = PgCurrentBackendExitStateRef();
 	retained_top_context = exit_state->retained_top_memory_context;
+	log_lifecycle_timing = backend_thread_log_lifecycle_timing();
+	if (log_lifecycle_timing)
+	{
+		lifecycle_model = backend_thread_lifecycle_model();
+		lifecycle_pid = PgCurrentBackendSignalPid();
+		if (CurrentPgBackend != NULL)
+			lifecycle_backend_id = (uint32) CurrentPgBackend->id;
+		retained_total_start = GetCurrentTimestamp();
+	}
 	top_memory_accounted = PgBackendConsumeRetainedTopMemoryAllocated();
 	exitstatus = backend_thread_exitstatus(code);
 	MyClientSocket = NULL;
@@ -1507,16 +2090,56 @@ backend_thread_finish(int code)
 		 * PMChild exit.  If this is wrong, teardown stress should expose a
 		 * remaining cross-backend owner as a crash or corruption signature.
 		 */
+		if (log_lifecycle_timing)
+			retained_account_start = GetCurrentTimestamp();
 		top_memory_reclaimed = MemoryContextMemAllocated(retained_top_context,
 														 true);
+		if (log_lifecycle_timing)
+		{
+			retained_account_end = GetCurrentTimestamp();
+			retained_delete_start = retained_account_end;
+		}
 		MemoryContextDelete(retained_top_context);
+		if (log_lifecycle_timing)
+		{
+			retained_delete_end = GetCurrentTimestamp();
+			retained_freelist_start = retained_delete_end;
+		}
 		backend_thread_free_deleted_retained_memory_contexts();
+		if (log_lifecycle_timing)
+		{
+			retained_freelist_end = GetCurrentTimestamp();
+			retained_trim_start = retained_freelist_end;
+		}
 		backend_thread_clear_deleted_retained_memory_contexts();
 		if (top_memory_accounted < top_memory_reclaimed)
 			top_memory_accounted = top_memory_reclaimed;
 		backend_thread_maybe_trim_reclaimed_memory(top_memory_accounted);
+		if (log_lifecycle_timing)
+			retained_trim_end = GetCurrentTimestamp();
 		exit_state->retained_top_memory_context = NULL;
 		top_memory_allocated = 0;
+	}
+	if (log_lifecycle_timing)
+	{
+		retained_total_end = GetCurrentTimestamp();
+		backend_thread_log_retained_cleanup_timing(code,
+												   lifecycle_pid,
+												   lifecycle_backend_id,
+												   lifecycle_model,
+												   retained_top_context != NULL,
+												   top_memory_accounted,
+												   top_memory_reclaimed,
+												   retained_total_start,
+												   retained_account_start,
+												   retained_account_end,
+												   retained_delete_start,
+												   retained_delete_end,
+												   retained_freelist_start,
+												   retained_freelist_end,
+												   retained_trim_start,
+												   retained_trim_end,
+												   retained_total_end);
 	}
 	PostmasterChildPublishThreadExit(thread_start->publication.pmchild, exitstatus,
 									 top_memory_allocated,
@@ -1536,9 +2159,23 @@ backend_pooled_logical_finish(int code)
 	PgBackendExitState *exit_state;
 	MemoryContext retained_top_context;
 	int			exitstatus;
+	bool		log_lifecycle_timing;
+	const char *lifecycle_model = NULL;
+	int			lifecycle_pid = 0;
+	uint32		lifecycle_backend_id = 0;
 	Size		top_memory_allocated = 0;
 	Size		top_memory_accounted = 0;
 	Size		top_memory_reclaimed = 0;
+	TimestampTz retained_total_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_account_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_account_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_delete_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_delete_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_freelist_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_freelist_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_trim_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_trim_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz retained_total_end = TIMESTAMP_MINUS_INFINITY;
 
 	logical_start =
 		(BackendPooledLogicalStart *) backend_thread_current_publication();
@@ -1548,6 +2185,15 @@ backend_pooled_logical_finish(int code)
 
 	exit_state = PgCurrentBackendExitStateRef();
 	retained_top_context = exit_state->retained_top_memory_context;
+	log_lifecycle_timing = backend_thread_log_lifecycle_timing();
+	if (log_lifecycle_timing)
+	{
+		lifecycle_model = backend_thread_lifecycle_model();
+		lifecycle_pid = PgCurrentBackendSignalPid();
+		if (CurrentPgBackend != NULL)
+			lifecycle_backend_id = (uint32) CurrentPgBackend->id;
+		retained_total_start = GetCurrentTimestamp();
+	}
 	top_memory_accounted = PgBackendConsumeRetainedTopMemoryAllocated();
 	exitstatus = backend_thread_exitstatus(code);
 	MyClientSocket = NULL;
@@ -1566,17 +2212,95 @@ backend_pooled_logical_finish(int code)
 	PostmasterChildUnpublishLogicalBackend(logical_start->publication.pmchild);
 	if (retained_top_context != NULL)
 	{
+		if (log_lifecycle_timing)
+			retained_account_start = GetCurrentTimestamp();
 		top_memory_reclaimed = MemoryContextMemAllocated(retained_top_context,
 														 true);
+		if (log_lifecycle_timing)
+		{
+			retained_account_end = GetCurrentTimestamp();
+			retained_delete_start = retained_account_end;
+		}
 		MemoryContextDelete(retained_top_context);
+		if (log_lifecycle_timing)
+		{
+			retained_delete_end = GetCurrentTimestamp();
+			retained_freelist_start = retained_delete_end;
+		}
 		backend_thread_free_deleted_retained_memory_contexts();
+		if (log_lifecycle_timing)
+		{
+			retained_freelist_end = GetCurrentTimestamp();
+			retained_trim_start = retained_freelist_end;
+		}
 		backend_thread_clear_deleted_retained_memory_contexts();
 		if (top_memory_accounted < top_memory_reclaimed)
 			top_memory_accounted = top_memory_reclaimed;
 		backend_thread_maybe_trim_reclaimed_memory(top_memory_accounted);
+		if (log_lifecycle_timing)
+			retained_trim_end = GetCurrentTimestamp();
 		exit_state->retained_top_memory_context = NULL;
 		top_memory_allocated = 0;
 	}
+	if (log_lifecycle_timing)
+	{
+		retained_total_end = GetCurrentTimestamp();
+		backend_thread_log_retained_cleanup_timing(code,
+												   lifecycle_pid,
+												   lifecycle_backend_id,
+												   lifecycle_model,
+												   retained_top_context != NULL,
+												   top_memory_accounted,
+												   top_memory_reclaimed,
+												   retained_total_start,
+												   retained_account_start,
+												   retained_account_end,
+												   retained_delete_start,
+												   retained_delete_end,
+												   retained_freelist_start,
+												   retained_freelist_end,
+												   retained_trim_start,
+												   retained_trim_end,
+												   retained_total_end);
+	}
+#ifndef WIN32
+	if (!logical_start->protocol_scheduler_enabled)
+	{
+		PgReusableSessionValidationReason validation_reason;
+
+		validation_reason =
+			PgValidateReusableSessionState(CurrentPgBackend,
+										   CurrentPgSession,
+										   CurrentPgConnection,
+										   CurrentPgExecution,
+										   false);
+		if (debug_threaded_session_pool_force_validation_failure &&
+			validation_reason == PG_REUSABLE_SESSION_VALID)
+			validation_reason = PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE;
+		if (validation_reason == PG_REUSABLE_SESSION_VALID)
+			backend_shell_pool_count(&shell_pool_stats.validation_passes);
+		else
+		{
+			backend_shell_pool_count(&shell_pool_stats.validation_failures);
+			backend_shell_pool_count(&shell_pool_stats.quarantine_destroy_paths);
+		}
+		backend_shell_pool_count_validation_reason(validation_reason);
+
+		backend_shell_pool_release_logical();
+		backend_shell_pool_count(&shell_pool_stats.destroy_paths);
+		if (log_lifecycle_timing)
+		{
+			backend_shell_pool_log_validation(lifecycle_pid,
+											  lifecycle_backend_id,
+											  code,
+											  validation_reason);
+			backend_shell_pool_log_stats("destroy",
+										 lifecycle_pid,
+										 lifecycle_backend_id,
+										 code);
+		}
+	}
+#endif
 	PostmasterChildPublishPooledLogicalExit(logical_start->publication.pmchild,
 											exitstatus,
 											top_memory_allocated,

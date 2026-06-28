@@ -1257,6 +1257,21 @@ PgRuntimePooledProtocolCarrierLimit(void)
 	return pooled_protocol_carriers;
 }
 
+bool
+PgRuntimeThreadedSessionPoolShellRequested(void)
+{
+	return multithreaded &&
+		threaded_session_pool == THREADED_SESSION_POOL_SHELL &&
+		threaded_session_pool_max > 0 &&
+		!PgRuntimePooledProtocolRequested();
+}
+
+int
+PgRuntimeThreadedSessionPoolCarrierLimit(void)
+{
+	return threaded_session_pool_max;
+}
+
 uint32
 PgRuntimePooledProtocolIdleCarrierCount(void)
 {

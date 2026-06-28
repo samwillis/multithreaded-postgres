@@ -2280,6 +2280,15 @@ typedef struct ConnectionTiming
 
 	/* Time at which authentication was finished */
 	TimestampTz auth_end;
+
+	/* Phase 16B measurement-only backend bootstrap timings. */
+	TimestampTz lifecycle_bootstrap_start;
+	TimestampTz lifecycle_signal_setup_end;
+	TimestampTz lifecycle_baseinit_start;
+	TimestampTz lifecycle_baseinit_end;
+	TimestampTz lifecycle_initpostgres_start;
+	TimestampTz lifecycle_initpostgres_end;
+	TimestampTz lifecycle_bootstrap_end;
 } ConnectionTiming;
 
 typedef struct PgConnectionInterruptState
@@ -2578,6 +2587,38 @@ typedef struct PgThreadBackendRuntimeState
 	PgCarrier	carrier;
 	PgThreadBackendLogicalState logical;
 } PgThreadBackendRuntimeState;
+
+typedef enum PgReusableSessionValidationReason
+{
+	PG_REUSABLE_SESSION_VALID = 0,
+	PG_REUSABLE_SESSION_INVALID_NULL_OBJECT,
+	PG_REUSABLE_SESSION_INVALID_TRANSACTION_ACTIVE,
+	PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED,
+	PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE,
+	PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+	PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+	PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+	PG_REUSABLE_SESSION_INVALID_PREPARED_STATEMENTS,
+	PG_REUSABLE_SESSION_INVALID_PORTALS,
+	PG_REUSABLE_SESSION_INVALID_LISTEN,
+	PG_REUSABLE_SESSION_INVALID_TEMP_NAMESPACE,
+	PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE,
+	PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS,
+	PG_REUSABLE_SESSION_INVALID_RESOURCE_OWNER,
+	PG_REUSABLE_SESSION_INVALID_MEMORY_CONTEXTS,
+	PG_REUSABLE_SESSION_INVALID_ACTIVE_TIMEOUTS,
+	PG_REUSABLE_SESSION_INVALID_LOCKS,
+	PG_REUSABLE_SESSION_INVALID_BUFFER_PINS,
+	PG_REUSABLE_SESSION_INVALID_TEMP_FILES,
+	PG_REUSABLE_SESSION_INVALID_GUC_STATE,
+	PG_REUSABLE_SESSION_INVALID_PLAN_CACHE,
+	PG_REUSABLE_SESSION_INVALID_SNAPSHOTS,
+	PG_REUSABLE_SESSION_INVALID_INVALIDATIONS,
+	PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+	PG_REUSABLE_SESSION_INVALID_XLOG_INSERT_STATE,
+	PG_REUSABLE_SESSION_INVALID_ASYNC_ACTIONS,
+	PG_REUSABLE_SESSION_INVALID_REASON_COUNT
+} PgReusableSessionValidationReason;
 
 extern void PgRuntimeResetAfterFork(void);
 
@@ -3425,6 +3466,14 @@ extern bool PgRuntimeIsPooledProtocol(PgRuntime *runtime);
 extern bool PgRuntimePooledProtocolRequested(void);
 extern int	PgRuntimePooledProtocolCarrierLimit(void);
 extern uint32 PgRuntimePooledProtocolIdleCarrierCount(void);
+extern bool PgRuntimeThreadedSessionPoolShellRequested(void);
+extern int	PgRuntimeThreadedSessionPoolCarrierLimit(void);
+extern PgReusableSessionValidationReason PgValidateReusableSessionState(PgBackend *backend,
+																		PgSession *session,
+																		PgConnection *connection,
+																		PgExecution *execution,
+																		bool check_transaction_state);
+extern const char *PgReusableSessionValidationReasonName(PgReusableSessionValidationReason reason);
 extern PgBackendLaunchModel PgRuntimeGetBackendLaunchModel(BackendType backend_type);
 extern bool PgRuntimeShouldThreadBackend(BackendType backend_type);
 extern PgBackendModel PgRuntimeGetExtensionBackendModel(void);
