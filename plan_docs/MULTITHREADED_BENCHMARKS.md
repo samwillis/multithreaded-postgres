@@ -2,8 +2,136 @@ Multithreaded PostgreSQL Benchmarks
 ===================================
 
 This document records benchmark evidence for the multithreaded PostgreSQL
-branch. The latest full benchmark suite is the Phase 16 rerun below; the
-earlier Phase 15 run remains the comparison baseline.
+branch. The latest full benchmark checkpoint is the Phase 16B full-suite and
+shell-pool rerun below; the earlier Phase 16 and Phase 15 runs remain
+comparison baselines.
+
+Phase 16B full-suite and shell-pool checkpoint
+----------------------------------------------
+
+This run repeats the full 12-profile benchmark suite after the Phase 16B
+thread-pool hot-path work and then runs a supplemental shell-pool on/off pass
+over the same profile list. The two passes answer different questions:
+
+- The full suite compares vanilla PostgreSQL, branch process mode, pinned
+  threaded mode, and bounded protocol-carrier pools.
+- The shell pass compares pinned threaded mode against
+  `threaded_session_pool=shell` with `threaded_session_pool_max=64` and
+  `pooled_protocol_carriers=0`. This isolates shell carrier reuse from the
+  protocol-carrier scheduler.
+
+| Field | Value |
+| --- | --- |
+| Date | June 29, 2026 |
+| Branch | `phase16-plan` |
+| Commit | `5401ee4cd9` |
+| Branch install | `/home/sam/codex-work/mtpg-current/tmp_install` |
+| Vanilla install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Vanilla identity | `REL_19_BETA1`, `postgres (PostgreSQL) 19beta1` |
+| Client install | `/home/sam/codex-work/vanilla-pg19/tmp_install` |
+| Full-suite result directory | `/home/sam/codex-work/mtpg-bench-results/phase16b_full_suite_current_20260629_160750` |
+| Shell on/off result directory | `/home/sam/codex-work/mtpg-bench-results/phase16b_shell_onoff_full_20260629_180959` |
+| Full-suite runner | `src/tools/benchmark/mtpg_phase15_benchmark_suite.pl --profiles=all` |
+| Shell runner | same suite with `--matrix-arg=--lanes=branch_threaded,branch_shell --matrix-arg=--pool-sizes=64` |
+| Result status | Both suites completed with exit status `0`; all recorded rows had `failed_transactions = 0`. |
+
+Validation and environment checks around this benchmark run:
+
+| Check | Result |
+| --- | --- |
+| `gmake -s -j18` | PASS before the benchmark run |
+| `gmake -s install -j18 prefix=/home/sam/codex-work/mtpg-current/tmp_install` | PASS before the benchmark run |
+| `perl -c src/tools/benchmark/mtpg_phase15_benchmark_suite.pl` | PASS |
+| `perl -c src/tools/benchmark/mtpg_pgbench_matrix.pl` | PASS |
+| `git diff --check` | PASS before and after the benchmark/doc pass |
+| Filesystem health | `/dev/sdd` on `/` stayed mounted `rw`; about 860 GB remained free after both suites. |
+
+Full-suite performance highlights:
+
+| Profile / workload | Key result |
+| --- | --- |
+| `pinned_hot` / `builtin_select_prepared` | Vanilla 273165.3 TPS; branch process 236387.3 TPS; pinned threaded 251692.6 TPS. |
+| `pinned_hot` / `select1_prepared` | Vanilla 371597.7 TPS; branch process 337934.6 TPS; pinned threaded 356553.0 TPS. |
+| `pinned_hot` / `bench_one_prepared` | Vanilla 311695.7 TPS; branch process 284821.0 TPS; pinned threaded 307125.6 TPS. |
+| `pinned_hot` / `kv_read_prepared` | Vanilla 266036.8 TPS; branch process 247289.0 TPS; pinned threaded 265700.8 TPS. |
+| `pool_realish_100ms` | `branch_pool_64` is 1.006x pinned on indexed read, 1.022x pinned on app transaction, and 1.014x pinned on mixed app work. |
+| `pool_realish_1000ms` | `branch_pool_64` is 0.999x pinned on indexed read and 1.000x pinned on app transaction. |
+| `pool_idle_100ms` | `branch_pool_64` is 0.999x pinned. |
+| `pool_idle_1000ms` | `branch_pool_64` is 0.999x pinned. |
+| `pool_scale_1000_realish` | `branch_pool_64` is 0.994x pinned; `branch_pool_512` reaches 1.000x pinned. |
+| `pool_scale_1000_idle` | `branch_pool_64` is 0.995x pinned; `branch_pool_512` reaches 0.999x pinned. |
+| `pool_stateful_1000ms` | `branch_pool_64` is 0.990x pinned. This remains clean but slightly below pinned. |
+| `pool_burst_10ms` | `branch_pool_64` is 0.901x pinned, `branch_pool_128` is 0.964x pinned, and `branch_pool_192` closes the gap at 1.008x pinned. |
+| `connection_churn` | Vanilla 3789.8 TPS; branch process 3472.5 TPS; pinned threaded 1613.4 TPS; `branch_pool_64` 2539.4 TPS, or 1.574x pinned. |
+| `connection_churn_realish` | Vanilla 2185.2 TPS; branch process 2058.3 TPS; pinned threaded 1369.2 TPS; `branch_pool_64` 1916.4 TPS, or 1.400x pinned. |
+
+Connection-memory profile:
+
+| Lane | Clients | Max server threads | Private delta MB | PSS delta MB | Private KB/client |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vanilla` | 1000 | 1008 | 1159.2 | 1173.3 | 1187.1 |
+| `branch_process` | 1000 | 1008 | 1018.4 | 1037.1 | 1042.8 |
+| `branch_threaded` | 1000 | 1008 | 1002.2 | 1005.4 | 1026.2 |
+| `branch_pool_64` | 1000 | 72 | 575.5 | 578.7 | 589.3 |
+| `branch_pool_128` | 1000 | 136 | 601.6 | 604.7 | 616.0 |
+| `branch_pool_256` | 1000 | 264 | 660.3 | 663.5 | 676.1 |
+| `branch_pool_512` | 1000 | 520 | 780.1 | 783.3 | 798.9 |
+
+Shell-pool on/off pass:
+
+| Profile / workload | Pinned threaded TPS | `branch_shell_64` TPS | Shell / pinned |
+| --- | ---: | ---: | ---: |
+| `pinned_hot` / `builtin_select_prepared` | 233505.0 | 246838.4 | 1.057 |
+| `pinned_hot` / `select1_prepared` | 350585.7 | 353369.8 | 1.008 |
+| `pinned_hot` / `bench_one_prepared` | 300773.5 | 302311.4 | 1.005 |
+| `pinned_hot` / `kv_read_prepared` | 263280.7 | 262668.9 | 0.998 |
+| `pool_realish_100ms` / indexed read | 1958.8 | 1958.9 | 1.000 |
+| `pool_realish_100ms` / app transaction | 1808.8 | 1807.2 | 0.999 |
+| `pool_realish_100ms` / mixed app work | 1832.2 | 1838.4 | 1.003 |
+| `pool_realish_1000ms` / indexed read | 199.5 | 199.5 | 1.000 |
+| `pool_realish_1000ms` / app transaction | 197.0 | 196.7 | 0.998 |
+| `pool_stateful_1000ms` | 99.6 | 99.6 | 1.000 |
+| `pool_scale_1000_realish` | 994.7 | 993.9 | 0.999 |
+| `pool_idle_100ms` | 1964.1 | 1962.1 | 0.999 |
+| `pool_idle_1000ms` | 199.5 | 199.6 | 1.000 |
+| `pool_burst_10ms` | 19148.0 | 19127.5 | 0.999 |
+| `pool_scale_1000_idle` | 997.3 | 997.3 | 1.000 |
+| `connection_memory_idle` | 995.7 | 996.0 | 1.000 |
+| `connection_churn_realish` | 1445.2 | 1996.6 | 1.382 |
+| `connection_churn` | 1617.2 | 2648.3 | 1.638 |
+
+Shell-pool memory profile:
+
+| Lane | Clients | Max server threads | Private delta MB | PSS delta MB | Private KB/client |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `branch_threaded` | 1000 | 1008 | 998.8 | 1002.0 | 1022.8 |
+| `branch_shell_64` | 1000 | 1008 | 1002.8 | 1006.0 | 1026.8 |
+
+Phase 16B benchmark decisions:
+
+- Use the normal protocol carrier pool for steady-state mostly-idle and
+  memory-footprint wins. It now matches pinned threaded throughput on the
+  100 ms, 1000 ms, and 1000-client idle/real-ish profiles within benchmark
+  noise while cutting server-thread and memory footprint substantially.
+- Use the shell pool as the reconnect-heavy accelerator. It improves
+  connection churn by 1.38x to 1.64x over pinned threaded mode and is neutral
+  on hot, idle, stateful, and burst profiles in the full on/off pass.
+- Keep shell pooling conceptually separate from the protocol carrier pool.
+  `branch_shell_64` keeps one server thread per client in the 1000-connection
+  memory profile, so it is not a memory-footprint replacement for
+  `branch_pool_N`.
+- Do not jump to a full warm backend/session pool based on these numbers. The
+  current evidence says the normal thread pool and shell pool cover their
+  intended shapes; dirty SQL session reuse should remain fail-closed and
+  deferred until a separate benchmark proves it is needed.
+- The remaining scheduler target is the short-idle burst profile. Protocol
+  pool64 and pool128 are still below pinned threaded at 10 ms sleeps, while
+  pool192 closes the gap. Treat this as a capacity/scheduling follow-up rather
+  than evidence that the overall pooled path is unhealthy.
+- The full-suite checkpoint used tuned glibc malloc, not tcmalloc. Earlier
+  tcmalloc probes in preserved result directories were mixed and noisy across
+  code points; they did not show a reliable advantage over the tuned glibc
+  configuration sufficient to change the default allocator decision.
 
 Phase 16 full-suite rerun
 -------------------------
@@ -167,6 +295,7 @@ Lane definitions
 | `branch_process` | This branch with normal process-per-backend execution. |
 | `branch_threaded` | This branch with `multithreaded = on` and `pooled_protocol_carriers = 0`, giving one carrier thread per session. |
 | `branch_pool_N` | This branch with `multithreaded = on` and `pooled_protocol_carriers = N`, giving a bounded pool of protocol carrier threads. |
+| `branch_shell_N` | This branch with `multithreaded = on`, `pooled_protocol_carriers = 0`, `threaded_session_pool = shell`, and `threaded_session_pool_max = N`, giving reusable shell carrier threads for reconnect-heavy threaded workloads. |
 
 The pooled mode in this phase only detaches at top-level frontend protocol
 input. Deep waits remain carrier-pinned.

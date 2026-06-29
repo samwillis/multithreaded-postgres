@@ -191,7 +191,8 @@ How To Benchmark
 ----------------
 
 The benchmark scripts compare vanilla PostgreSQL, this branch in process mode,
-thread-per-session mode, and pooled-carrier mode.
+thread-per-session mode, pooled-carrier mode, and the optional shell session
+pool used for reconnect-heavy workloads.
 
 Run the full Phase 15 suite by pointing the runner at a vanilla PostgreSQL
 install, this branch's install, and the client binaries to use:
@@ -217,11 +218,12 @@ Latest benchmark summary:
 
 | Signal | Current result |
 | --- | --- |
-| Hot tiny-query path | Branch process is 0.907x to 0.934x vanilla; pinned threads are 0.797x to 0.952x vanilla depending on workload. |
-| 200 mostly-idle clients, 100 ms wake cycle | Pooled carriers are near process/threaded throughput once the pool is at least 64 carriers; pool 32 shows an `app_mixed` outlier. |
-| 1000 mostly-idle clients, `SELECT 1; \sleep 1000 ms; SELECT 1;` | `branch_pool_128` reaches 978 TPS versus 997 TPS for pinned threads, while using 122 server threads instead of 1008. |
-| 1000 mostly-idle memory profile | Pooled lanes use about 537 KB to 561 KB PSS per client versus 961 KB for pinned threads, 1062 KB for branch process, and 1212 KB for vanilla. |
-| Connection churn | Pooled mode is not yet competitive with process or pinned threads; this remains a known optimization target. |
+| Hot tiny-query path | In the June 29, 2026 full-suite run, pinned threads are 0.921x to 0.999x vanilla across the hot prepared workloads; branch process is 0.865x to 0.929x vanilla. |
+| 200 mostly-idle clients, 100 ms and 1000 ms wake cycles | `branch_pool_64` is within noise of pinned threads and sometimes slightly ahead: 0.999x to 1.022x on the 100 ms real-ish/idle rows and 0.999x to 1.000x on the 1000 ms rows. |
+| 1000 mostly-idle clients | Pooled protocol carriers preserve throughput while capping server threads: `branch_pool_64` is 0.995x pinned on idle and 0.994x pinned on real-ish indexed reads. Larger pools close the remaining gap. |
+| 1000 mostly-idle memory profile | Protocol pooling gives the memory win: `branch_pool_64` uses about 575 MB private delta / 589 KB per client versus about 1002 MB / 1026 KB for pinned threads. Shell pooling is not a memory-footprint feature and stays near pinned-thread footprint. |
+| Connection churn | Normal protocol pooling improves churn over pinned threads (`branch_pool_64` is 1.57x pinned on pure churn and 1.40x on real-ish churn) but still trails process/vanilla. The shell pool is the reconnect accelerator: `branch_shell_64` is 1.64x pinned on pure churn and 1.38x on real-ish churn, while staying neutral on hot/idle/stateful profiles. |
+| Short-idle burst wakeups | The remaining clear regression signal is protocol-pool capacity at 10 ms sleeps: `branch_pool_64` is 0.901x pinned and `branch_pool_128` is 0.964x, while `branch_pool_192` closes the gap at 1.008x. Shell pooling is neutral on the same burst shape. |
 
 Detailed results and workload definitions are in
 [benchmark results](plan_docs/MULTITHREADED_BENCHMARKS.md).
@@ -235,9 +237,9 @@ Project Documents
   boundaries.
 - [Protocol scheduler design](plan_docs/MULTITHREADED_PROTOCOL_SCHEDULER_DESIGN.md):
   Phase 14/15 protocol-boundary scheduler design.
-- [Benchmark results](plan_docs/MULTITHREADED_BENCHMARKS.md): latest Phase 15
-  benchmark suite, workload definitions, TPS tables, and memory-footprint
-  results.
+- [Benchmark results](plan_docs/MULTITHREADED_BENCHMARKS.md): latest Phase 16B
+  full-suite and shell-pool evidence, workload definitions, TPS tables, and
+  memory-footprint results.
 - [Threading review](plan_docs/MULTITHREADED_THREADING_REVIEW.md): review of
   the branch direction, risks, and historical correctness blockers.
 
