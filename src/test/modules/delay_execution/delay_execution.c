@@ -23,18 +23,59 @@
 #include <limits.h>
 
 #include "optimizer/planner.h"
+#include "utils/backend_runtime.h"
 #include "utils/fmgrprotos.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "delay_execution",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
+
+#define DELAY_EXECUTION_SESSION_STATE_KEY "delay_execution.session"
+#define DELAY_EXECUTION_RUNTIME_STATE_KEY "delay_execution.runtime"
+
+typedef struct DelayExecutionSessionState
+{
+	int			post_planning_lock_id;
+} DelayExecutionSessionState;
+
+typedef struct DelayExecutionRuntimeState
+{
+	planner_hook_type prev_planner_hook;
+	bool		hook_installed;
+} DelayExecutionRuntimeState;
+
+static DelayExecutionSessionState *
+delay_execution_session_state(void)
+{
+	return (DelayExecutionSessionState *)
+		PgSessionEnsureExtensionPrivateState(DELAY_EXECUTION_SESSION_STATE_KEY,
+											 sizeof(DelayExecutionSessionState),
+											 NULL);
+}
+
+static DelayExecutionRuntimeState *
+delay_execution_runtime_state(void)
+{
+	return (DelayExecutionRuntimeState *)
+		PgRuntimeEnsureExtensionPrivateState(DELAY_EXECUTION_RUNTIME_STATE_KEY,
+											 sizeof(DelayExecutionRuntimeState),
+											 NULL);
+}
 
 /* GUC: advisory lock ID to use.  Zero disables the feature. */
-static int	post_planning_lock_id = 0;
+#define post_planning_lock_id \
+	(delay_execution_session_state()->post_planning_lock_id)
 
 /* Save previous planner hook user to be a good citizen */
-static planner_hook_type prev_planner_hook = NULL;
+#define prev_planner_hook \
+	(delay_execution_runtime_state()->prev_planner_hook)
+#define delay_execution_hook_installed \
+	(delay_execution_runtime_state()->hook_installed)
 
 
 /* planner_hook function to provide the desired delay */
@@ -91,6 +132,10 @@ _PG_init(void)
 	MarkGUCPrefixReserved("delay_execution");
 
 	/* Install our hook */
-	prev_planner_hook = planner_hook;
-	planner_hook = delay_execution_planner;
+	if (!delay_execution_hook_installed)
+	{
+		prev_planner_hook = planner_hook;
+		planner_hook = delay_execution_planner;
+		delay_execution_hook_installed = true;
+	}
 }

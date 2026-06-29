@@ -923,6 +923,30 @@ Threaded mode should become credible and complete for bundled in-tree modules,
 procedural languages, and contrib extensions without delaying Phase 13
 wait-observability or Phase 14/15 protocol-scheduler work.
 
+Detailed working plan: `MULTITHREADED_PHASE16_PLAN.md`.
+Phase 16 lock-order and debug-surface evidence:
+`MULTITHREADED_PHASE16_LOCKS_AND_DEBUG.md`.
+
+Status: complete as of the June 27, 2026 Gate G closeout audit. The detailed
+plan records the current local `check-phase16-gate-g-local` pass, optional
+dependency evidence, sanitizer/performance evidence, and the remaining
+non-release-blocking platform/configure rows.
+
+Primary coverage contract:
+
+```text
+check-world-threaded = check-world - explicit_manifest_exclusions
+```
+
+Every component covered by `check-world` must either run under
+`check-world-threaded` or appear in a checked Phase 16 exclusion manifest with
+a concrete reason and status. Phase 16 should not allow hidden skips, implicit
+omissions, or broad target names that cover only the easy subset.
+
+The threaded-world coverage surface includes the non-contrib `check-world`
+categories under `src/test`, `src/pl`, `src/interfaces`, `src/bin`, and
+`src/tools/pg_bsd_indent`, not only contrib extensions.
+
 Likely work:
 
 - migrate every contrib extension to explicit backend model metadata;
@@ -946,11 +970,35 @@ Likely work:
 Exit gate:
 
 - Gate E2-Extensions / Gate G is part of Phase 16 completion and may need to
-  run repeatedly during hardening. Before considering Phase 16 complete, run
-  the Gate G checks from the Test Strategy section: feasible sanitizers,
-  repeated full suites, threaded contrib regression for every contrib
-  extension, bundled procedural-language checks, custom/extension GUC stress,
-  crash/FATAL behavior tests, and performance baselines.
+  run repeatedly during hardening. Before considering Phase 16 complete,
+  `check-world-threaded` must mechanically cover every enabled `check-world`
+  leaf component except explicit manifest exclusions. Run the Gate G checks
+  from the Test Strategy section: feasible sanitizers, repeated full suites,
+  threaded contrib regression for every contrib extension, non-contrib
+  `check-world` coverage under `src/test`, `src/pl`, `src/interfaces`,
+  `src/bin`, and `src/tools/pg_bsd_indent`, bundled procedural-language checks,
+  custom/extension GUC stress, crash/FATAL behavior tests, and performance
+  baselines.
+
+## Phase 16B: Warm Session Pool And Lifecycle Offload
+
+Detailed working plan: `MULTITHREADED_PHASE16B_WARM_SESSION_POOL_PLAN.md`.
+
+Goal: determine whether connection churn and pooled protocol latency can be
+improved by moving private lifecycle cleanup off the foreground disconnect path
+and by keeping clean warm session capacity ready.
+
+Phase 16B starts with lifecycle instrumentation and proof-of-value benchmarks.
+It should move into implementation only if measured startup, teardown, private
+memory cleanup, scheduler, or current-work rebinding costs are large enough to
+justify the complexity. The implementation path is staged from low-risk async
+private cleanup and warm session shells toward a configurable warm backend pool
+keyed by database, authenticated role, security class, and baseline startup
+options.
+
+The correctness rule is fail-closed: configuration can choose memory versus
+connection latency, but it must not allow dirty session reuse. Any retired
+session that fails validation is destroyed instead of returned to a pool.
 
 ## Phase 17: Advanced Scheduler Boundaries
 

@@ -31,6 +31,9 @@
 
 /* Static state for pg_strtok */
 #define pg_strtok_ptr (*PgCurrentNodeReadStrtokPtrRef())
+#ifdef DEBUG_NODE_TESTS_ENABLED
+#define pg_node_restore_location_fields (*PgCurrentNodeRestoreLocationFieldsRef())
+#endif
 
 /*
  * stringToNode -
@@ -63,8 +66,8 @@ stringToNodeInternal(const char *str, bool restore_loc_fields)
 	 * If enabled, likewise save/restore the location field handling flag.
 	 */
 #ifdef DEBUG_NODE_TESTS_ENABLED
-	save_restore_location_fields = restore_location_fields;
-	restore_location_fields = restore_loc_fields;
+	save_restore_location_fields = pg_node_restore_location_fields;
+	pg_node_restore_location_fields = restore_loc_fields;
 #endif
 
 	retval = nodeRead(NULL, 0); /* do the reading */
@@ -72,7 +75,7 @@ stringToNodeInternal(const char *str, bool restore_loc_fields)
 	pg_strtok_ptr = save_strtok;
 
 #ifdef DEBUG_NODE_TESTS_ENABLED
-	restore_location_fields = save_restore_location_fields;
+	pg_node_restore_location_fields = save_restore_location_fields;
 #endif
 
 	return retval;

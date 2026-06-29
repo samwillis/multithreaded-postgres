@@ -28,7 +28,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "sepgsql",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /*
@@ -436,11 +437,19 @@ sepgsql_utility_command(PlannedStmt *pstmt,
 void
 _PG_init(void)
 {
+	bool		install_runtime_hooks;
+	bool		threaded_session_init;
+
+	threaded_session_init = dynamic_library_threaded_session_init_in_progress();
+	install_runtime_hooks = !IsUnderPostmaster;
+
 	/*
 	 * We allow to load the SE-PostgreSQL module on single-user-mode or
 	 * shared_preload_libraries settings only.
 	 */
-	if (IsUnderPostmaster)
+	if (IsUnderPostmaster &&
+		!process_shared_preload_libraries_in_progress &&
+		!threaded_session_init)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("sepgsql must be loaded via \"shared_preload_libraries\"")));
@@ -497,7 +506,10 @@ _PG_init(void)
 	sepgsql_avc_init();
 
 	/* Initialize security label of the client and related stuff */
-	sepgsql_init_client_label();
+	sepgsql_init_client_label(install_runtime_hooks);
+
+	if (!install_runtime_hooks)
+		return;
 
 	/* Security label provider hook */
 	register_label_provider(SEPGSQL_LABEL_TAG,

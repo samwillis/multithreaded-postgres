@@ -36,6 +36,21 @@ static PG_GLOBAL_RUNTIME PgRuntimeServerGUCState early_runtime_server_guc = {
 	.external_pid_file_value = NULL
 };
 
+static char *
+PgRuntimeAdoptServerGUCString(char *current, const char *source)
+{
+	if (source != NULL && current != NULL && strcmp(current, source) == 0)
+		return current;
+
+	if (current != NULL)
+		guc_free(current);
+
+	if (source == NULL)
+		return NULL;
+
+	return guc_strdup(FATAL, source);
+}
+
 void
 PgRuntimeInitializeServerGUCState(PgRuntimeServerGUCState *server_guc)
 {
@@ -54,17 +69,40 @@ void
 PgRuntimeAdoptEarlyServerGUCState(PgRuntime *runtime)
 {
 	Assert(runtime != NULL);
+	Assert(CurrentPgRuntime == runtime);
 
 	if (!early_runtime_server_guc.initialized)
 		PgRuntimeInitializeServerGUCState(&early_runtime_server_guc);
+	if (!runtime->server_guc.initialized)
+		PgRuntimeInitializeServerGUCState(&runtime->server_guc);
 
 	/*
 	 * Runtime server GUC strings describe address-space state selected during
 	 * postmaster startup.  Auxiliary threads can initialize process runtime
 	 * state more than once, so keep the early fallback as a persistent mirror
-	 * rather than consuming it on first adoption.
+	 * rather than consuming it on first adoption.  The process runtime must
+	 * own copies of these strings: ordinary GUC assignment can free and
+	 * replace the current runtime's backing strings, and the early fallback
+	 * remains visible to paths that run without installed runtime state.
 	 */
-	runtime->server_guc = early_runtime_server_guc;
+	runtime->server_guc.cluster_name_value =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.cluster_name_value,
+									  early_runtime_server_guc.cluster_name_value);
+	runtime->server_guc.config_file_name =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.config_file_name,
+									  early_runtime_server_guc.config_file_name);
+	runtime->server_guc.hba_file_name =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.hba_file_name,
+									  early_runtime_server_guc.hba_file_name);
+	runtime->server_guc.ident_file_name =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.ident_file_name,
+									  early_runtime_server_guc.ident_file_name);
+	runtime->server_guc.hosts_file_name =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.hosts_file_name,
+									  early_runtime_server_guc.hosts_file_name);
+	runtime->server_guc.external_pid_file_value =
+		PgRuntimeAdoptServerGUCString(runtime->server_guc.external_pid_file_value,
+									  early_runtime_server_guc.external_pid_file_value);
 }
 
 bool
@@ -513,6 +551,12 @@ PgCurrentReplicationOriginSessionStateRef(void)
 	return &PgCurrentSessionLogicalReplicationState()->session_replication_state;
 }
 
+bool *
+PgCurrentReplicationOriginCleanupRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->replication_origin_cleanup_registered;
+}
+
 MemoryContext *
 PgCurrentLogicalRepRelMapContextRef(void)
 {
@@ -547,6 +591,18 @@ HTAB **
 PgCurrentPgOutputRelationSyncCacheRef(void)
 {
 	return &PgCurrentSessionLogicalReplicationState()->pgoutput_relation_sync_cache;
+}
+
+bool *
+PgCurrentPgOutputPublicationCallbackRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->pgoutput_publication_callback_registered;
+}
+
+bool *
+PgCurrentPgOutputRelationCallbacksRegisteredRef(void)
+{
+	return &PgCurrentSessionLogicalReplicationState()->pgoutput_relation_callbacks_registered;
 }
 
 int *

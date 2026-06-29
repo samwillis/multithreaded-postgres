@@ -113,7 +113,11 @@ rt_num_entries(rt_radix_tree *tree)
 	return tree->ctl->num_keys;
 }
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_radixtree",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 PG_FUNCTION_INFO_V1(test_radixtree);
 

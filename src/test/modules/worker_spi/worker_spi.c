@@ -52,11 +52,30 @@ PG_FUNCTION_INFO_V1(worker_spi_launch);
 
 pg_noreturn PGDLLEXPORT void worker_spi_main(Datum main_arg);
 
+typedef struct WorkerSpiSessionState
+{
+	int			naptime;
+	char	   *database;
+	char	   *role;
+} WorkerSpiSessionState;
+
+#define WORKER_SPI_SESSION_STATE_KEY "worker_spi.session"
+
+static WorkerSpiSessionState *
+worker_spi_session_state(void)
+{
+	return (WorkerSpiSessionState *)
+		PgSessionEnsureExtensionPrivateState(WORKER_SPI_SESSION_STATE_KEY,
+											 sizeof(WorkerSpiSessionState),
+											 NULL);
+}
+
 /* GUC variables */
-static int	worker_spi_naptime = 10;
+#define worker_spi_naptime (worker_spi_session_state()->naptime)
+#define worker_spi_database (worker_spi_session_state()->database)
+#define worker_spi_role (worker_spi_session_state()->role)
+
 static int	worker_spi_total_workers = 2;
-static char *worker_spi_database = NULL;
-static char *worker_spi_role = NULL;
 
 /*
  * Value cached after lookup in the shared custom wait-event registry.  This is
@@ -361,21 +380,23 @@ _PG_init(void)
 							   0,
 							   NULL, NULL, NULL);
 
+	if (process_shared_preload_libraries_in_progress ||
+		dynamic_library_threaded_session_init_in_progress())
+		DefineCustomIntVariable("worker_spi.total_workers",
+								"Number of workers.",
+								NULL,
+								&worker_spi_total_workers,
+								2,
+								1,
+								100,
+								PGC_POSTMASTER,
+								0,
+								NULL,
+								NULL,
+								NULL);
+
 	if (!process_shared_preload_libraries_in_progress)
 		return;
-
-	DefineCustomIntVariable("worker_spi.total_workers",
-							"Number of workers.",
-							NULL,
-							&worker_spi_total_workers,
-							2,
-							1,
-							100,
-							PGC_POSTMASTER,
-							0,
-							NULL,
-							NULL,
-							NULL);
 
 	MarkGUCPrefixReserved("worker_spi");
 

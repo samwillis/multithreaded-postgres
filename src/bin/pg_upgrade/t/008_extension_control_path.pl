@@ -23,11 +23,18 @@ mkpath("$ext_dir/extension");
 mkpath("$ext_dir/lib");
 my $ext_lib = $ext_dir . '/lib';
 
-# Copy the .so file into the lib/ subdirectory.
-copy($ext_lib_so, $ext_lib)
-  or die "could not copy '$ext_lib_so' to '$ext_lib': $!";
+# Copy the chosen test library into the lib/ subdirectory under the extension
+# name used by this test.
+my $ext_name = 'test_ext';
+my ($ext_lib_suffix) = $ext_lib_so =~ /(\.[^\/\\.]+)$/;
+die "could not determine extension library suffix for '$ext_lib_so'"
+  unless defined $ext_lib_suffix;
 
-create_extension_files('test_ext', $ext_dir);
+copy($ext_lib_so, "$ext_lib/$ext_name$ext_lib_suffix")
+  or die
+  "could not copy '$ext_lib_so' to '$ext_lib/$ext_name$ext_lib_suffix': $!";
+
+create_extension_files($ext_name, $ext_dir);
 
 my $sep = $windows_os ? ";" : ":";
 my $ext_path = $windows_os ? ($ext_dir =~ s/\\/\\\\/gr) : $ext_dir;

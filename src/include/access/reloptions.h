@@ -187,6 +187,7 @@ typedef struct local_relopts
 	 (char *)(optstruct) + (optstruct)->member)
 
 extern relopt_kind add_reloption_kind(void);
+extern bool reloption_kind_has_option(relopt_kind kind, const char *name);
 extern void add_bool_reloption(uint32 kinds, const char *name, const char *desc,
 							   bool default_val, LOCKMODE lockmode);
 extern void add_ternary_reloption(uint32 kinds, const char *name,

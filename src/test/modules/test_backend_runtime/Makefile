@@ -1,7 +1,7 @@
 # src/test/modules/test_backend_runtime/Makefile
 
 MODULE_big = test_backend_runtime
-MODULES = test_backend_runtime_threaded
+MODULES = test_backend_runtime_threaded test_backend_runtime_threaded_initfail
 OBJS = \
 	$(WIN32RES) \
 	test_backend_runtime_adoption.o \

@@ -85,19 +85,11 @@ typedef enum CopySeqResult
 
 #define seqinfos (PgCurrentLogicalReplicationState()->seqinfos)
 
-static bool
-SequenceSyncWorkerThreadedRuntime(void)
-{
-	return PgRuntimeIsThreadBacked(CurrentPgRuntime);
-}
-
 static void
 ProcessSequenceSyncConfigReload(void)
 {
 	ConfigReloadPending = false;
-
-	if (!SequenceSyncWorkerThreadedRuntime())
-		ProcessConfigFile(PGC_SIGHUP);
+	ProcessConfigReloadForCurrentWorker();
 }
 
 /*
@@ -512,7 +504,7 @@ copy_sequences(WalReceiverConn *conn)
 			Relation	sequence_rel = NULL;
 			int			seqidx;
 
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 
 			if (ConfigReloadPending)
 				ProcessSequenceSyncConfigReload();
@@ -666,7 +658,7 @@ LogicalRepSyncSequences(void)
 		Relation	sequence_rel;
 		MemoryContext oldctx;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		subrel = (Form_pg_subscription_rel) GETSTRUCT(tup);
 

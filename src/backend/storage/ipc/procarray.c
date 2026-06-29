@@ -3513,7 +3513,7 @@ SignalRecoveryConflict(PGPROC *proc, pid_t pid, RecoveryConflictReason reason)
 	 * Kill the pid if it's still here. If not, that's what we wanted so
 	 * ignore any errors.
 	 */
-	if (proc->pid == pid)
+	if (PGProcSignalPid(proc) == pid)
 	{
 		(void) pg_atomic_fetch_or_u32(&proc->pendingRecoveryConflicts, (1 << reason));
 

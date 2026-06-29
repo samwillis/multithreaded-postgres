@@ -16,6 +16,7 @@
 
 #include "postgres.h"
 
+#include "access/xlog.h"
 #include "executor/instrument.h"
 #include "storage/bufmgr.h"
 #include "utils/backend_runtime.h"

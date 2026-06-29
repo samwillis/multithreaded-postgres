@@ -15,6 +15,7 @@
 #include "plpy_spi.h"
 #include "plpy_subxactobject.h"
 #include "plpy_util.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 
 HTAB	   *PLy_spi_exceptions = NULL;
@@ -160,8 +161,10 @@ PLy_add_exceptions(PyObject *plpy)
 
 	hash_ctl.keysize = sizeof(int);
 	hash_ctl.entrysize = sizeof(PLyExceptionEntry);
+	hash_ctl.hcxt = PgCurrentRuntimeExtensionModuleMemoryContext();
 	PLy_spi_exceptions = hash_create("PL/Python SPI exceptions", 256,
-									 &hash_ctl, HASH_ELEM | HASH_BLOBS);
+									 &hash_ctl,
+									 HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	PLy_generate_spi_exceptions(excmod, PLy_exc_spi_error);
 

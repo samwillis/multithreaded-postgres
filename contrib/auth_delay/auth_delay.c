@@ -81,9 +81,7 @@ auth_delay_checks(Port *port, int status)
 	 * Inject a short delay if authentication failed.
 	 */
 	if (status != STATUS_OK)
-	{
 		pg_usleep(1000L * auth_delay_milliseconds);
-	}
 }
 
 /*
@@ -106,6 +104,13 @@ _PG_init(void)
 							NULL);
 
 	MarkGUCPrefixReserved("auth_delay");
+
+	/*
+	 * Threaded session replay only needs the GUC descriptor; hook chain
+	 * registration is process/runtime-global and must happen once.
+	 */
+	if (!process_shared_preload_libraries_in_progress)
+		return;
 
 	/* Install Hooks */
 	if (!auth_delay_hook_installed)

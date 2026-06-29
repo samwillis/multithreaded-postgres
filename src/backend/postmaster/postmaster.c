@@ -470,6 +470,8 @@ static void TerminateChildren(int signal);
 static int	CountChildren(BackendTypeMask targetMask);
 static void LaunchMissingBackgroundProcesses(void);
 static void maybe_start_bgworkers(void);
+static void process_pm_child_exit_by_pid(int pid, int exitstatus);
+static bool process_pm_threaded_child_exit(void);
 static bool maybe_reap_io_worker(int pid);
 static void maybe_handoff_syslogger(void);
 static void maybe_handoff_io_workers(void);
@@ -1591,6 +1593,7 @@ static int
 DetermineSleepTime(void)
 {
 	TimestampTz next_wakeup;
+	int			sleep_cap = 60 * 1000;
 
 	/*
 	 * If in ImmediateShutdown with a SIGKILL timeout, ignore everything else
@@ -1622,6 +1625,16 @@ DetermineSleepTime(void)
 
 	/* Time of next maybe_start_io_workers() call, or 0 for none. */
 	next_wakeup = maybe_start_io_workers_scheduled_at();
+
+	/*
+	 * Thread-backed startup/recovery children publish logical exits through
+	 * shared PMChild state.  Their direct latch wake can race with the
+	 * postmaster wait loop, so keep early threaded states on a short poll until
+	 * the startup child has been reaped and normal PM_RUN processing starts.
+	 */
+	if (multithreaded &&
+		(pmState == PM_STARTUP || pmState == PM_RECOVERY))
+		sleep_cap = 100;
 
 	/* Ignore bgworkers during shutdown. */
 	if (StartWorkerNeeded && Shutdown == NoShutdown)
@@ -1668,10 +1681,10 @@ DetermineSleepTime(void)
 		/* result of TimestampDifferenceMilliseconds is in [0, INT_MAX] */
 		ms = (int) TimestampDifferenceMilliseconds(GetCurrentTimestamp(),
 												   next_wakeup);
-		return Min(60 * 1000, ms);
+		return Min(sleep_cap, ms);
 	}
 
-	return 60 * 1000;
+	return sleep_cap;
 }
 
 /*
@@ -1727,11 +1740,13 @@ ServerLoop(void)
 		 * postmaster has finished creating the wait set and recorded a latch
 		 * pointer for direct wakeups.  Drain thread handoff state before
 		 * blocking so such early publications cannot sleep until the next
-		 * timeout.
+		 * timeout.  Drain exits first so a bgworker that starts and exits
+		 * before the postmaster observes it is cleaned up, not published as
+		 * newly running.
 		 */
-		process_pm_thread_startup_complete();
 		process_pm_pooled_logical_exit();
 		process_pm_thread_exit();
+		process_pm_thread_startup_complete();
 
 		nevents = WaitEventSetWait(pm_wait_set,
 								   DetermineSleepTime(),
@@ -1773,9 +1788,9 @@ ServerLoop(void)
 			process_pm_child_exit();
 		if (pending_pm_pmsignal)
 			process_pm_pmsignal();
-		process_pm_thread_startup_complete();
 		process_pm_pooled_logical_exit();
 		process_pm_thread_exit();
+		process_pm_thread_startup_complete();
 
 		for (int i = 0; i < nevents; i++)
 		{
@@ -2114,7 +2129,14 @@ process_pm_reload_request(void)
 	{
 		ereport(LOG,
 				(errmsg("received SIGHUP, reloading configuration files")));
-		ProcessConfigFile(PGC_SIGHUP);
+#ifdef EXEC_BACKEND
+		ProcessConfigFileAndWriteNondefaultVariables(PGC_SIGHUP);
+#else
+		if (multithreaded)
+			ProcessConfigFileAndWriteNondefaultVariables(PGC_SIGHUP);
+		else
+			ProcessConfigFile(PGC_SIGHUP);
+#endif
 		SignalChildren(SIGHUP, btmask_all_except(B_DEAD_END_BACKEND));
 
 		/* Reload authentication config files too */
@@ -2142,14 +2164,6 @@ process_pm_reload_request(void)
 			secure_destroy();
 			LoadedSSL = false;
 		}
-#endif
-
-		/* Update the starting-point file for future children */
-#ifdef EXEC_BACKEND
-		write_nondefault_variables(PGC_SIGHUP);
-#else
-		if (multithreaded)
-			write_nondefault_variables(PGC_SIGHUP);
 #endif
 	}
 }
@@ -2362,6 +2376,231 @@ handle_pm_child_exit_signal(SIGNAL_ARGS)
  * Cleanup after a child process dies.
  */
 static void
+process_pm_child_exit_by_pid(int pid, int exitstatus)
+{
+	PMChild    *pmchild;
+
+	/*
+	 * Check if this child was a startup process.
+	 */
+	if (StartupPMChild && pid == StartupPMChild->pid)
+	{
+		(void) cleanup_startup_child(StartupPMChild, exitstatus, pid);
+		return;
+	}
+
+	/*
+	 * Was it the bgwriter?  Normal exit can be ignored; we'll start a new
+	 * one at the next iteration of the postmaster's main loop, if necessary.
+	 * Any other exit condition is treated as a crash.
+	 */
+	if (BgWriterPMChild && pid == BgWriterPMChild->pid)
+	{
+		(void) cleanup_bgwriter_child(BgWriterPMChild, exitstatus, pid);
+		return;
+	}
+
+	/*
+	 * Was it the checkpointer?
+	 */
+	if (CheckpointerPMChild && pid == CheckpointerPMChild->pid)
+	{
+		(void) cleanup_checkpointer_child(CheckpointerPMChild, exitstatus,
+										  pid);
+		return;
+	}
+
+	/*
+	 * Was it the wal writer?  Normal exit can be ignored; we'll start a new
+	 * one at the next iteration of the postmaster's main loop, if necessary.
+	 * Any other exit condition is treated as a crash.
+	 */
+	if (WalWriterPMChild && pid == WalWriterPMChild->pid)
+	{
+		ReleasePostmasterChildSlot(WalWriterPMChild);
+		WalWriterPMChild = NULL;
+		if (!EXIT_STATUS_0(exitstatus))
+			HandleChildCrash(pid, exitstatus,
+							 _("WAL writer process"));
+		return;
+	}
+
+	/*
+	 * Was it the wal receiver?  If exit status is zero (normal) or one
+	 * (FATAL exit), we assume everything is all right just like normal
+	 * backends.  (If we need a new wal receiver, we'll start one at the next
+	 * iteration of the postmaster's main loop.)
+	 */
+	if (WalReceiverPMChild && pid == WalReceiverPMChild->pid)
+	{
+		(void) cleanup_wal_receiver_child(WalReceiverPMChild, exitstatus,
+										  pid);
+		return;
+	}
+
+	/*
+	 * Was it the wal summarizer? Normal exit can be ignored; we'll start a
+	 * new one at the next iteration of the postmaster's main loop, if
+	 * necessary.  Any other exit condition is treated as a crash.
+	 */
+	if (WalSummarizerPMChild && pid == WalSummarizerPMChild->pid)
+	{
+		ReleasePostmasterChildSlot(WalSummarizerPMChild);
+		WalSummarizerPMChild = NULL;
+		if (!EXIT_STATUS_0(exitstatus))
+			HandleChildCrash(pid, exitstatus,
+							 _("WAL summarizer process"));
+		return;
+	}
+
+	/*
+	 * Was it the autovacuum launcher?  Normal exit can be ignored; we'll
+	 * start a new one at the next iteration of the postmaster's main loop, if
+	 * necessary.  Any other exit condition is treated as a crash.
+	 */
+	if (AutoVacLauncherPMChild && pid == AutoVacLauncherPMChild->pid)
+	{
+		ReleasePostmasterChildSlot(AutoVacLauncherPMChild);
+		AutoVacLauncherPMChild = NULL;
+		if (!EXIT_STATUS_0(exitstatus))
+			HandleChildCrash(pid, exitstatus,
+							 _("autovacuum launcher process"));
+		return;
+	}
+
+	/*
+	 * Was it the archiver?  If exit status is zero (normal) or one (FATAL
+	 * exit), we assume everything is all right just like normal backends and
+	 * just try to start a new one on the next cycle of the postmaster's main
+	 * loop, to retry archiving remaining files.
+	 */
+	if (PgArchPMChild && pid == PgArchPMChild->pid)
+	{
+		ReleasePostmasterChildSlot(PgArchPMChild);
+		PgArchPMChild = NULL;
+		if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
+			HandleChildCrash(pid, exitstatus,
+							 _("archiver process"));
+		return;
+	}
+
+	/* Was it the system logger?  If so, try to start a new one */
+	if (SysLoggerPMChild && pid == SysLoggerPMChild->pid)
+	{
+		syslogger_thread_handoff_pending = false;
+		ReleasePostmasterChildSlot(SysLoggerPMChild);
+		SysLoggerPMChild = NULL;
+
+		/* for safety's sake, launch new logger *first* */
+		if (Logging_collector)
+			StartSysLogger();
+
+		if (!EXIT_STATUS_0(exitstatus))
+			LogChildExit(LOG, _("system logger process"),
+						 pid, exitstatus);
+		return;
+	}
+
+	/*
+	 * Was it the slot sync worker? Normal exit or FATAL exit can be ignored
+	 * (FATAL can be caused by libpqwalreceiver on receiving shutdown request
+	 * by the startup process during promotion); we'll start a new one at the
+	 * next iteration of the postmaster's main loop, if necessary. Any other
+	 * exit condition is treated as a crash.
+	 */
+	if (SlotSyncWorkerPMChild && pid == SlotSyncWorkerPMChild->pid)
+	{
+		(void) cleanup_slot_sync_worker_child(SlotSyncWorkerPMChild,
+											  exitstatus, pid);
+		return;
+	}
+
+	/* Was it an IO worker? */
+	if (maybe_reap_io_worker(pid))
+	{
+		if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
+			HandleChildCrash(pid, exitstatus, _("io worker"));
+
+		/*
+		 * A worker that exited with an error might have brought the pool size
+		 * below io_min_workers, or allowed the queue to grow to the point
+		 * where another worker called for growth.
+		 *
+		 * In the common case that a worker timed out due to idleness, no
+		 * replacement needs to be started.  maybe_start_io_workers() will
+		 * figure that out.
+		 */
+		maybe_start_io_workers();
+		return;
+	}
+
+	/*
+	 * Was it a backend or a background worker?
+	 */
+	pmchild = FindPostmasterChildByPid(pid);
+	if (pmchild)
+	{
+		CleanupBackend(pmchild, exitstatus);
+		return;
+	}
+
+	/*
+	 * We don't know anything about this child process.  That's highly
+	 * unexpected in process mode, as we do track all the child processes that
+	 * we fork.
+	 */
+	if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
+		HandleChildCrash(pid, exitstatus, _("untracked child process"));
+	else
+		LogChildExit(LOG, _("untracked child process"), pid, exitstatus);
+}
+
+/*
+ * In multithreaded mode, backend threads share the postmaster's process-child
+ * table.  Backend-owned popen()/system() children are therefore visible to the
+ * postmaster's SIGCHLD handler, but must be reaped by their owning thread.
+ * Poll only registered process-backed PMChild PIDs so pclose() can still wait
+ * for its own shell child.
+ */
+static bool
+process_pm_threaded_child_exit(void)
+{
+	dlist_iter	iter;
+
+	dlist_foreach(iter, &ActiveChildList)
+	{
+		PMChild    *pmchild = dlist_container(PMChild, elem, iter.cur);
+		int			exitstatus;
+		pid_t		pid;
+		pid_t		waited_pid;
+
+		if (!PostmasterChildIsProcess(pmchild) || pmchild->pid <= 0)
+			continue;
+
+		pid = pmchild->pid;
+		waited_pid = waitpid(pid, &exitstatus, WNOHANG);
+		if (waited_pid == 0)
+			continue;
+		if (waited_pid < 0)
+		{
+			if (errno != ECHILD)
+				ereport(LOG,
+						(errmsg("could not wait for child process %d: %m",
+								pid)));
+			continue;
+		}
+		Assert(waited_pid == pid);
+		process_pm_child_exit_by_pid(pid, exitstatus);
+		return true;
+	}
+
+	return false;
+}
+
+/*
+ * Cleanup after a child process dies.
+ */
+static void
 process_pm_child_exit(void)
 {
 	int			pid;			/* process id of dead child process */
@@ -2372,187 +2611,16 @@ process_pm_child_exit(void)
 	ereport(DEBUG4,
 			(errmsg_internal("reaping dead processes")));
 
-	while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0)
+	if (multithreaded)
 	{
-		PMChild    *pmchild;
-
-		/*
-		 * Check if this child was a startup process.
-		 */
-		if (StartupPMChild && pid == StartupPMChild->pid)
-		{
-			(void) cleanup_startup_child(StartupPMChild, exitstatus, pid);
-			continue;
-		}
-
-		/*
-		 * Was it the bgwriter?  Normal exit can be ignored; we'll start a new
-		 * one at the next iteration of the postmaster's main loop, if
-		 * necessary.  Any other exit condition is treated as a crash.
-		 */
-		if (BgWriterPMChild && pid == BgWriterPMChild->pid)
-		{
-			(void) cleanup_bgwriter_child(BgWriterPMChild, exitstatus, pid);
-			continue;
-		}
-
-		/*
-		 * Was it the checkpointer?
-		 */
-		if (CheckpointerPMChild && pid == CheckpointerPMChild->pid)
-		{
-			(void) cleanup_checkpointer_child(CheckpointerPMChild, exitstatus,
-											  pid);
-			continue;
-		}
-
-		/*
-		 * Was it the wal writer?  Normal exit can be ignored; we'll start a
-		 * new one at the next iteration of the postmaster's main loop, if
-		 * necessary.  Any other exit condition is treated as a crash.
-		 */
-		if (WalWriterPMChild && pid == WalWriterPMChild->pid)
-		{
-			ReleasePostmasterChildSlot(WalWriterPMChild);
-			WalWriterPMChild = NULL;
-			if (!EXIT_STATUS_0(exitstatus))
-				HandleChildCrash(pid, exitstatus,
-								 _("WAL writer process"));
-			continue;
-		}
-
-		/*
-		 * Was it the wal receiver?  If exit status is zero (normal) or one
-		 * (FATAL exit), we assume everything is all right just like normal
-		 * backends.  (If we need a new wal receiver, we'll start one at the
-		 * next iteration of the postmaster's main loop.)
-		 */
-		if (WalReceiverPMChild && pid == WalReceiverPMChild->pid)
-		{
-			(void) cleanup_wal_receiver_child(WalReceiverPMChild, exitstatus,
-											  pid);
-			continue;
-		}
-
-		/*
-		 * Was it the wal summarizer? Normal exit can be ignored; we'll start
-		 * a new one at the next iteration of the postmaster's main loop, if
-		 * necessary.  Any other exit condition is treated as a crash.
-		 */
-		if (WalSummarizerPMChild && pid == WalSummarizerPMChild->pid)
-		{
-			ReleasePostmasterChildSlot(WalSummarizerPMChild);
-			WalSummarizerPMChild = NULL;
-			if (!EXIT_STATUS_0(exitstatus))
-				HandleChildCrash(pid, exitstatus,
-								 _("WAL summarizer process"));
-			continue;
-		}
-
-		/*
-		 * Was it the autovacuum launcher?	Normal exit can be ignored; we'll
-		 * start a new one at the next iteration of the postmaster's main
-		 * loop, if necessary.  Any other exit condition is treated as a
-		 * crash.
-		 */
-		if (AutoVacLauncherPMChild && pid == AutoVacLauncherPMChild->pid)
-		{
-			ReleasePostmasterChildSlot(AutoVacLauncherPMChild);
-			AutoVacLauncherPMChild = NULL;
-			if (!EXIT_STATUS_0(exitstatus))
-				HandleChildCrash(pid, exitstatus,
-								 _("autovacuum launcher process"));
-			continue;
-		}
-
-		/*
-		 * Was it the archiver?  If exit status is zero (normal) or one (FATAL
-		 * exit), we assume everything is all right just like normal backends
-		 * and just try to start a new one on the next cycle of the
-		 * postmaster's main loop, to retry archiving remaining files.
-		 */
-		if (PgArchPMChild && pid == PgArchPMChild->pid)
-		{
-			ReleasePostmasterChildSlot(PgArchPMChild);
-			PgArchPMChild = NULL;
-			if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-				HandleChildCrash(pid, exitstatus,
-								 _("archiver process"));
-			continue;
-		}
-
-		/* Was it the system logger?  If so, try to start a new one */
-		if (SysLoggerPMChild && pid == SysLoggerPMChild->pid)
-		{
-			syslogger_thread_handoff_pending = false;
-			ReleasePostmasterChildSlot(SysLoggerPMChild);
-			SysLoggerPMChild = NULL;
-
-			/* for safety's sake, launch new logger *first* */
-			if (Logging_collector)
-				StartSysLogger();
-
-			if (!EXIT_STATUS_0(exitstatus))
-				LogChildExit(LOG, _("system logger process"),
-							 pid, exitstatus);
-			continue;
-		}
-
-		/*
-		 * Was it the slot sync worker? Normal exit or FATAL exit can be
-		 * ignored (FATAL can be caused by libpqwalreceiver on receiving
-		 * shutdown request by the startup process during promotion); we'll
-		 * start a new one at the next iteration of the postmaster's main
-		 * loop, if necessary. Any other exit condition is treated as a crash.
-		 */
-		if (SlotSyncWorkerPMChild && pid == SlotSyncWorkerPMChild->pid)
-		{
-			(void) cleanup_slot_sync_worker_child(SlotSyncWorkerPMChild,
-												  exitstatus, pid);
-			continue;
-		}
-
-		/* Was it an IO worker? */
-		if (maybe_reap_io_worker(pid))
-		{
-			if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-				HandleChildCrash(pid, exitstatus, _("io worker"));
-
-			/*
-			 * A worker that exited with an error might have brought the pool
-			 * size below io_min_workers, or allowed the queue to grow to the
-			 * point where another worker called for growth.
-			 *
-			 * In the common case that a worker timed out due to idleness, no
-			 * replacement needs to be started.  maybe_start_io_workers() will
-			 * figure that out.
-			 */
-			maybe_start_io_workers();
-
-			continue;
-		}
-
-		/*
-		 * Was it a backend or a background worker?
-		 */
-		pmchild = FindPostmasterChildByPid(pid);
-		if (pmchild)
-		{
-			CleanupBackend(pmchild, exitstatus);
-		}
-
-		/*
-		 * We don't know anything about this child process.  That's highly
-		 * unexpected, as we do track all the child processes that we fork.
-		 */
-		else
-		{
-			if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
-				HandleChildCrash(pid, exitstatus, _("untracked child process"));
-			else
-				LogChildExit(LOG, _("untracked child process"), pid, exitstatus);
-		}
-	}							/* loop over pending child-death reports */
+		while (process_pm_threaded_child_exit())
+			;
+	}
+	else
+	{
+		while ((pid = waitpid(-1, &exitstatus, WNOHANG)) > 0)
+			process_pm_child_exit_by_pid(pid, exitstatus);
+	}
 
 	/*
 	 * After cleaning out the SIGCHLD queue, see if we have any state changes
@@ -3867,6 +3935,11 @@ thread_child_signal_interrupt(PMChild *pmchild, int signal,
 			if (pmchild->bkend_type == B_IO_WORKER)
 			{
 				*interrupt = PG_BACKEND_INTERRUPT_SHUTDOWN_REQUEST;
+				return true;
+			}
+			if (pmchild->bkend_type == B_WAL_SENDER)
+			{
+				*interrupt = PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE;
 				return true;
 			}
 			if (pmchild->bkend_type == B_LOGGER)

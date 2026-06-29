@@ -441,6 +441,13 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
 
 				slot->pss_signalFlags[reason] = true;
 				SpinLockRelease(&slot->pss_mutex);
+				if (!PgBackendSendInterruptById(backend_id,
+												PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
+												0, 0))
+				{
+					errno = ESRCH;
+					return -1;
+				}
 				WakeProcSignalSlot(procNumber);
 				return 0;
 			}
@@ -486,6 +493,13 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
 
 					slot->pss_signalFlags[reason] = true;
 					SpinLockRelease(&slot->pss_mutex);
+					if (!PgBackendSendInterruptById(backend_id,
+													PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
+													0, 0))
+					{
+						errno = ESRCH;
+						return -1;
+					}
 					WakeProcSignalSlot(i);
 					return 0;
 				}
@@ -684,6 +698,12 @@ EmitProcSignalBarrier(ProcSignalBarrierType type)
 void
 WaitForProcSignalBarrier(uint64 generation)
 {
+	bool		threaded_waiter =
+		CurrentPgRuntime != NULL &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime);
+	long		sleep_ms = threaded_waiter ? 100 : 5000;
+	int			log_timeout_count = threaded_waiter ? 50 : 1;
+
 	Assert(generation <= pg_atomic_read_u64(&ProcSignal->psh_barrierGeneration));
 
 	elog(DEBUG1,
@@ -695,6 +715,7 @@ WaitForProcSignalBarrier(uint64 generation)
 	{
 		ProcSignalSlot *slot = &ProcSignal->psh_slot[i];
 		uint64		oldval;
+		int			timeout_count = 0;
 
 		/*
 		 * It's important that we check only pss_barrierGeneration here and
@@ -718,11 +739,15 @@ WaitForProcSignalBarrier(uint64 generation)
 				break;
 
 			if (ConditionVariableTimedSleep(&slot->pss_barrierCV,
-											5000,
+											sleep_ms,
 											WAIT_EVENT_PROC_SIGNAL_BARRIER))
-				ereport(LOG,
-						(errmsg("still waiting for backend with PID %d to accept ProcSignalBarrier",
-								(int) pg_atomic_read_u32(&slot->pss_pid))));
+			{
+				timeout_count++;
+				if (timeout_count % log_timeout_count == 0)
+					ereport(LOG,
+							(errmsg("still waiting for backend with PID %d to accept ProcSignalBarrier",
+									(int) pg_atomic_read_u32(&slot->pss_pid))));
+			}
 			PgCurrentBackendApplyInterrupts();
 			CHECK_FOR_INTERRUPTS();
 			oldval = pg_atomic_read_u64(&slot->pss_barrierGeneration);
@@ -1014,39 +1039,56 @@ SendCancelRequest(int backendPID, const uint8 *cancel_key, int cancel_key_len)
 	 * matching wrong process is miniscule, however, so we can live with that.
 	 * PIDs are reused too, so sending the signal based on PID is inherently
 	 * racy anyway, although OS's avoid reusing PIDs too soon.
+	 *
+	 * In thread-per-session mode, frontend-visible backend identifiers are
+	 * logical backend IDs carried in BackendKeyData.  ProcSignal slots remain
+	 * registered under the postmaster's process PID and carry the logical
+	 * backend ID separately, so match through the same helper used by normal
+	 * backend signaling.
 	 */
 	for (int i = 0; i < NumProcSignalSlots; i++)
 	{
 		ProcSignalSlot *slot = &ProcSignal->psh_slot[i];
+		PgBackendId backend_id;
+		bool		use_backend_interrupts;
 		bool		match;
 
-		if (pg_atomic_read_u32(&slot->pss_pid) != backendPID)
-			continue;
-
-		/* Acquire the spinlock and re-check */
 		SpinLockAcquire(&slot->pss_mutex);
-		if (pg_atomic_read_u32(&slot->pss_pid) != backendPID)
+		if (!ProcSignalSlotMatchesTarget(slot, backendPID, true))
 		{
 			SpinLockRelease(&slot->pss_mutex);
 			continue;
 		}
-		else
+
+		backend_id = slot->pss_backendId;
+		use_backend_interrupts =
+			ProcSignalSlotUsesBackendInterrupts(slot, backendPID);
+		match = slot->pss_cancel_key_len == cancel_key_len &&
+			timingsafe_bcmp(slot->pss_cancel_key, cancel_key, cancel_key_len) == 0;
+
+		SpinLockRelease(&slot->pss_mutex);
+
+		if (match)
 		{
-			match = slot->pss_cancel_key_len == cancel_key_len &&
-				timingsafe_bcmp(slot->pss_cancel_key, cancel_key, cancel_key_len) == 0;
+			/* Found a match; signal that backend to cancel current op */
+			ereport(DEBUG2,
+					(errmsg_internal("processing cancel request: sending cancel to backend %d",
+									 backendPID)));
 
-			SpinLockRelease(&slot->pss_mutex);
-
-			if (match)
+			if (use_backend_interrupts)
 			{
-				/* Found a match; signal that backend to cancel current op */
-				ereport(DEBUG2,
-						(errmsg_internal("processing cancel request: sending SIGINT to process %d",
-										 backendPID)));
-
+				if (!PgBackendSendInterruptById(backend_id,
+												PG_BACKEND_INTERRUPT_QUERY_CANCEL,
+												0, 0))
+					ereport(LOG,
+							(errmsg("PID %d in cancel request did not match any process",
+									backendPID)));
+			}
+			else
+			{
 				/*
 				 * If we have setsid(), signal the backend's whole process
-				 * group
+				 * group.
 				 */
 #ifdef HAVE_SETSID
 				kill(-backendPID, SIGINT);
@@ -1054,15 +1096,16 @@ SendCancelRequest(int backendPID, const uint8 *cancel_key, int cancel_key_len)
 				kill(backendPID, SIGINT);
 #endif
 			}
-			else
-			{
-				/* Right PID, wrong key: no way, Jose */
-				ereport(LOG,
-						(errmsg("wrong key in cancel request for process %d",
-								backendPID)));
-			}
-			return;
 		}
+		else
+		{
+			/* Right PID, wrong key: no way, Jose */
+			ereport(LOG,
+					(errmsg("wrong key in cancel request for process %d",
+							backendPID)));
+		}
+
+		return;
 	}
 
 	/* No matching backend */

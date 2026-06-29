@@ -33,6 +33,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/backend_runtime.h"
 #include "utils/memutils.h"
+#include "utils/timestamp.h"
 
 
 /*
@@ -43,8 +44,35 @@ static PG_GLOBAL_RUNTIME bool atexit_callback_setup = false;
 
 /* local functions */
 pg_noreturn static void PgBackendExitProcess(int code);
+pg_noreturn static void PgBackendExitCompleteWithContinuation(int code,
+															  PgBackendExitContinuation exit_backend,
+															  bool thread_carrier);
+static PgBackendExitContinuation PgBackendCurrentExitContinuation(void);
 static PgBackendExitState *CurrentBackendExitState(void);
 static void PgBackendRememberRetainedTopMemoryContext(void);
+static const char *PgBackendLifecycleCleanupModel(void);
+static uint64 PgBackendLifecycleCleanupElapsed(TimestampTz start,
+											   TimestampTz end);
+static void PgLogBackendLifecycleCleanupTiming(int code,
+											   bool thread_carrier,
+											   int lifecycle_pid,
+											   uint32 lifecycle_backend_id,
+											   TimestampTz cleanup_start,
+											   TimestampTz shmem_start,
+											   TimestampTz shmem_end,
+											   TimestampTz callbacks_start,
+											   TimestampTz callbacks_end,
+											   TimestampTz connection_start,
+											   TimestampTz connection_end,
+											   TimestampTz session_start,
+											   TimestampTz session_end,
+											   TimestampTz bridge_start,
+											   TimestampTz bridge_end,
+											   TimestampTz backend_start,
+											   TimestampTz backend_end,
+											   TimestampTz execution_start,
+											   TimestampTz execution_end,
+											   TimestampTz cleanup_end);
 
 
 /* ----------------------------------------------------------------
@@ -160,6 +188,8 @@ void
 PgBackendExit(int code)
 {
 	int			current_pid = (int) getpid();
+	PgBackendExitContinuation exit_backend;
+	bool		thread_carrier;
 
 	/* not safe if forked by system(), etc. */
 	if (MyProcPid != 0 && MyProcPid != current_pid)
@@ -167,12 +197,17 @@ PgBackendExit(int code)
 	if (MyProcPid == 0)
 		MyProcPid = current_pid;
 
+	exit_backend = PgBackendCurrentExitContinuation();
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+
 	PgBackendRememberRetainedTopMemoryContext();
 
 	/* Clean up everything that must be cleaned up */
 	PgBackendExitCleanup(code);
 
-	PgBackendExitComplete(code);
+	PgBackendExitCompleteWithContinuation(code, exit_backend, thread_carrier);
 }
 
 /*
@@ -186,6 +221,20 @@ PgBackendExit(int code)
 void
 PgBackendExitComplete(int code)
 {
+	PgBackendExitContinuation exit_backend;
+	bool		thread_carrier;
+
+	exit_backend = PgBackendCurrentExitContinuation();
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+
+	PgBackendExitCompleteWithContinuation(code, exit_backend, thread_carrier);
+}
+
+static PgBackendExitContinuation
+PgBackendCurrentExitContinuation(void)
+{
 	PgRuntime  *runtime = CurrentPgRuntime;
 
 	if ((runtime == NULL || runtime->exit_backend == NULL) &&
@@ -194,9 +243,20 @@ PgBackendExitComplete(int code)
 		CurrentPgCarrier->runtime->exit_backend != NULL)
 		runtime = CurrentPgCarrier->runtime;
 
-	if (runtime != NULL && runtime->exit_backend != NULL)
+	if (runtime != NULL)
+		return runtime->exit_backend;
+
+	return NULL;
+}
+
+static void
+PgBackendExitCompleteWithContinuation(int code,
+									  PgBackendExitContinuation exit_backend,
+									  bool thread_carrier)
+{
+	if (exit_backend != NULL)
 	{
-		runtime->exit_backend(code);
+		exit_backend(code);
 
 		/*
 		 * A runtime may unwind to a scheduler or exit the process, but it
@@ -205,7 +265,9 @@ PgBackendExitComplete(int code)
 		elog(PANIC, "backend exit continuation returned");
 	}
 
-	if (CurrentPgCarrier != NULL && CurrentPgCarrier->kind == PG_CARRIER_THREAD)
+	if (thread_carrier ||
+		(CurrentPgCarrier != NULL &&
+		 CurrentPgCarrier->kind == PG_CARRIER_THREAD))
 		elog(PANIC, "thread carrier reached process backend exit");
 
 	PgBackendExitProcess(code);
@@ -286,9 +348,40 @@ PgBackendExitCleanup(int code)
 {
 	PgBackendExitState *exit_state = CurrentBackendExitState();
 	PgBackendExitCallback *callback;
+	bool		thread_carrier;
+	bool		log_lifecycle_timing;
+	int			lifecycle_pid = 0;
+	uint32		lifecycle_backend_id = 0;
+	TimestampTz cleanup_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz shmem_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz shmem_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz callbacks_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz callbacks_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz connection_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz connection_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz session_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz session_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz bridge_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz bridge_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz backend_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz backend_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz execution_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz execution_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz cleanup_end = TIMESTAMP_MINUS_INFINITY;
 
 	if (exit_state->proc_exit_done)
 		return;
+
+	log_lifecycle_timing =
+		log_threaded_lifecycle_timing &&
+		IsExternalConnectionBackend(MyBackendType);
+	if (log_lifecycle_timing)
+	{
+		lifecycle_pid = PgCurrentBackendSignalPid();
+		if (CurrentPgBackend != NULL)
+			lifecycle_backend_id = (uint32) CurrentPgBackend->id;
+		cleanup_start = GetCurrentTimestamp();
+	}
 
 	/*
 	 * Once we set this flag, we are committed to exit.  Any ereport() will
@@ -330,7 +423,11 @@ PgBackendExitCleanup(int code)
 	debug_query_string = NULL;
 
 	/* do our shared memory exits first */
+	if (log_lifecycle_timing)
+		shmem_start = GetCurrentTimestamp();
 	shmem_exit(code);
+	if (log_lifecycle_timing)
+		shmem_end = GetCurrentTimestamp();
 
 	elog(DEBUG3, "proc_exit(%d): %d callbacks to make",
 		 code, exit_state->on_proc_exit_index);
@@ -344,29 +441,154 @@ PgBackendExitCleanup(int code)
 	 * previously-completed callbacks).  So, an infinite loop should not be
 	 * possible.
 	 */
+	if (log_lifecycle_timing)
+		callbacks_start = GetCurrentTimestamp();
 	while (--exit_state->on_proc_exit_index >= 0)
 	{
 		callback = &exit_state->on_proc_exit_list[exit_state->on_proc_exit_index];
 		callback->function(code, callback->arg);
 	}
+	if (log_lifecycle_timing)
+		callbacks_end = GetCurrentTimestamp();
 
 	exit_state->on_proc_exit_index = 0;
 
 	/*
 	 * on_proc_exit callbacks, notably socket_close(), own live connection
-	 * shutdown.  Reset the retained connection object here as a final
-	 * closed-state backstop for early-exit and non-socket paths, and rely on
-	 * PgConnectionResetClosedState() being idempotent when socket_close()
-	 * already ran.
+	 * shutdown in process mode.  Only threaded carriers need to reset runtime
+	 * objects for reuse after those callbacks have run; a process backend exits
+	 * after this cleanup and leaves remaining private memory to the OS.
 	 */
-	if (CurrentPgConnection != NULL)
-		PgConnectionResetClosedState(CurrentPgConnection);
-	PgSessionResetClosedState(CurrentPgSession);
+	thread_carrier =
+		CurrentPgCarrier != NULL &&
+		CurrentPgCarrier->kind == PG_CARRIER_THREAD;
+	if (thread_carrier)
+	{
+		if (CurrentPgConnection != NULL)
+		{
+			if (log_lifecycle_timing)
+				connection_start = GetCurrentTimestamp();
+			PgConnectionResetClosedState(CurrentPgConnection);
+			if (log_lifecycle_timing)
+				connection_end = GetCurrentTimestamp();
+		}
+		if (log_lifecycle_timing)
+			session_start = GetCurrentTimestamp();
+		PgSessionResetClosedState(CurrentPgSession);
+		if (log_lifecycle_timing)
+			session_end = GetCurrentTimestamp();
+	}
+	if (log_lifecycle_timing)
+		bridge_start = GetCurrentTimestamp();
 	PgRuntimeReportBridgeFallbackStats();
-	PgBackendResetClosedState(CurrentPgBackend);
-	PgExecutionResetClosedState(CurrentPgExecution);
+	if (log_lifecycle_timing)
+		bridge_end = GetCurrentTimestamp();
+	if (thread_carrier)
+	{
+		if (log_lifecycle_timing)
+			backend_start = GetCurrentTimestamp();
+		PgBackendResetClosedState(CurrentPgBackend);
+		if (log_lifecycle_timing)
+			backend_end = GetCurrentTimestamp();
+		if (log_lifecycle_timing)
+			execution_start = GetCurrentTimestamp();
+		PgExecutionResetClosedState(CurrentPgExecution);
+		if (log_lifecycle_timing)
+			execution_end = GetCurrentTimestamp();
+	}
+
+	if (log_lifecycle_timing)
+	{
+		cleanup_end = GetCurrentTimestamp();
+		PgLogBackendLifecycleCleanupTiming(code, thread_carrier,
+										   lifecycle_pid,
+										   lifecycle_backend_id,
+										   cleanup_start, shmem_start,
+										   shmem_end, callbacks_start,
+										   callbacks_end, connection_start,
+										   connection_end, session_start,
+										   session_end, bridge_start,
+										   bridge_end, backend_start,
+										   backend_end, execution_start,
+										   execution_end, cleanup_end);
+	}
 
 	exit_state->proc_exit_done = true;
+}
+
+static const char *
+PgBackendLifecycleCleanupModel(void)
+{
+	if (PgRuntimeIsPooledProtocol(CurrentPgRuntime))
+		return "pooled";
+	if (PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		return "threaded";
+	return "process";
+}
+
+static uint64
+PgBackendLifecycleCleanupElapsed(TimestampTz start, TimestampTz end)
+{
+	if (start == TIMESTAMP_MINUS_INFINITY ||
+		end == TIMESTAMP_MINUS_INFINITY ||
+		end < start)
+		return 0;
+
+	return TimestampDifferenceMicroseconds(start, end);
+}
+
+static void
+PgLogBackendLifecycleCleanupTiming(int code,
+								   bool thread_carrier,
+								   int lifecycle_pid,
+								   uint32 lifecycle_backend_id,
+								   TimestampTz cleanup_start,
+								   TimestampTz shmem_start,
+								   TimestampTz shmem_end,
+								   TimestampTz callbacks_start,
+								   TimestampTz callbacks_end,
+								   TimestampTz connection_start,
+								   TimestampTz connection_end,
+								   TimestampTz session_start,
+								   TimestampTz session_end,
+								   TimestampTz bridge_start,
+								   TimestampTz bridge_end,
+								   TimestampTz backend_start,
+								   TimestampTz backend_end,
+								   TimestampTz execution_start,
+								   TimestampTz execution_end,
+								   TimestampTz cleanup_end)
+{
+	if (!log_threaded_lifecycle_timing)
+		return;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_lifecycle_cleanup pid=%d backend_id=%u model=%s code=%d thread_carrier=%d "
+							 "total_us=%llu shmem_us=%llu callbacks_us=%llu connection_reset_us=%llu "
+							 "session_reset_us=%llu bridge_stats_us=%llu backend_reset_us=%llu execution_reset_us=%llu",
+							 lifecycle_pid,
+							 (unsigned int) lifecycle_backend_id,
+							 PgBackendLifecycleCleanupModel(),
+							 code,
+							 thread_carrier ? 1 : 0,
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(cleanup_start,
+																				 cleanup_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(shmem_start,
+																				 shmem_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(callbacks_start,
+																				 callbacks_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(connection_start,
+																				 connection_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(session_start,
+																				 session_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(bridge_start,
+																				 bridge_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(backend_start,
+																				 backend_end),
+							 (unsigned long long) PgBackendLifecycleCleanupElapsed(execution_start,
+																				 execution_end))));
 }
 
 /* ------------------

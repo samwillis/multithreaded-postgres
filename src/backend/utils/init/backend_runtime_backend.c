@@ -31,6 +31,7 @@
 #include "replication/reorderbuffer.h"
 #include "replication/logicalworker.h"
 #include "replication/slotsync.h"
+#include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "storage/bufmgr.h"
 #include "storage/buf_internals.h"
@@ -71,7 +72,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_BACKEND PgBackend early_backend_fallback = {
 		.mode = InitProcessing
 	},
 	.replication = {
-		.sync_rep_wait_mode = -1,
+		.sync_rep_wait_mode = SYNC_REP_WAIT_FLUSH,
 		.walreceiver_recv_file = -1,
 		.walreceiver_primary_has_standby_xmin = true
 	},
@@ -598,11 +599,13 @@ static void
 PgBackendAdoptEarlyMemoryManagerState(PgBackend *backend)
 {
 	Assert(backend != NULL);
-	Assert(early_backend_memory_manager.context_freelists[0].num_free == 0);
-	Assert(early_backend_memory_manager.context_freelists[0].first_free == NULL);
-	Assert(early_backend_memory_manager.context_freelists[1].num_free == 0);
-	Assert(early_backend_memory_manager.context_freelists[1].first_free == NULL);
 
+	/*
+	 * Early bootstrap can populate the per-backend AllocSet freelists before a
+	 * PgBackend has been installed.  Copying the struct below transfers that
+	 * early state to the real backend bucket; reinitializing the fallback
+	 * completes the move.
+	 */
 	backend->memory_manager = early_backend_memory_manager;
 	PgBackendInitializeMemoryManagerState(&early_backend_memory_manager);
 }
@@ -959,7 +962,7 @@ PgBackendInitializeReplicationState(PgBackendReplicationState *replication)
 	Assert(replication != NULL);
 
 	MemSet(replication, 0, sizeof(*replication));
-	replication->sync_rep_wait_mode = -1;
+	replication->sync_rep_wait_mode = SYNC_REP_WAIT_FLUSH;
 	replication->walreceiver_recv_file = -1;
 	replication->walreceiver_primary_has_standby_xmin = true;
 }
@@ -1013,7 +1016,15 @@ PgBackendAdoptEarlyLogicalReplicationState(PgBackend *backend)
 	Assert(early_backend_logical_replication.on_commit_wakeup_workers_subids ==
 		   NIL);
 	Assert(early_backend_logical_replication.stream_fd == NULL);
+	Assert(early_backend_logical_replication.feedback_reply_message == NULL);
+	Assert(early_backend_logical_replication.feedback_send_time == 0);
+	Assert(early_backend_logical_replication.feedback_last_recvpos ==
+		   InvalidXLogRecPtr);
+	Assert(early_backend_logical_replication.feedback_last_writepos ==
+		   InvalidXLogRecPtr);
+	Assert(early_backend_logical_replication.status_request_message == NULL);
 	Assert(early_backend_logical_replication.table_states_not_ready == NIL);
+	Assert(early_backend_logical_replication.table_sync_last_start_times == NULL);
 	Assert(early_backend_logical_replication.copybuf == NULL);
 	Assert(early_backend_logical_replication.seqinfos == NIL);
 	Assert(early_backend_logical_replication.slotsync_observed_primary_conninfo
@@ -1081,6 +1092,8 @@ PgBackendAdoptEarlyRecoveryState(PgBackend *backend)
 	Assert(backend != NULL);
 	Assert(early_backend_recovery.recovery_lock_hash == NULL);
 	Assert(early_backend_recovery.recovery_lock_xid_hash == NULL);
+	Assert(early_backend_recovery.startup_observed_primary_conninfo == NULL);
+	Assert(early_backend_recovery.startup_observed_primary_slotname == NULL);
 
 	backend->recovery = early_backend_recovery;
 	PgBackendInitializeRecoveryState(&early_backend_recovery);
@@ -1665,6 +1678,19 @@ PgBackendWakeWaitCompletionById(PgBackendId backend_id, uint32 ready_events)
 #endif
 }
 
+static void
+PgRuntimeProtocolSchedulerPublishAtomicCounts(PgProtocolSchedulerState *scheduler)
+{
+	Assert(scheduler != NULL);
+
+	pg_atomic_write_u32(&scheduler->runnable_count_atomic,
+						scheduler->runnable_count);
+	pg_atomic_write_u32(&scheduler->parked_protocol_count_atomic,
+						scheduler->parked_protocol_count);
+	pg_atomic_write_u32(&scheduler->idle_carrier_count_atomic,
+						scheduler->idle_carrier_count);
+}
+
 void
 PgRuntimeInitializeProtocolScheduler(PgProtocolSchedulerState *scheduler)
 {
@@ -1672,6 +1698,9 @@ PgRuntimeInitializeProtocolScheduler(PgProtocolSchedulerState *scheduler)
 
 	MemSet(scheduler, 0, sizeof(*scheduler));
 	SpinLockInit(&scheduler->lock);
+	pg_atomic_init_u32(&scheduler->runnable_count_atomic, 0);
+	pg_atomic_init_u32(&scheduler->parked_protocol_count_atomic, 0);
+	pg_atomic_init_u32(&scheduler->idle_carrier_count_atomic, 0);
 	dlist_init(&scheduler->runnable_queue);
 	dlist_init(&scheduler->parked_protocol_queue);
 	scheduler->carrier_limit = PgRuntimePooledProtocolCarrierLimit();
@@ -1718,6 +1747,7 @@ PgRuntimeProtocolSchedulerRegisterCarrier(PgRuntime *runtime, PgCarrier *carrier
 	else
 		scheduler->active_carrier_count++;
 	scheduler->carrier_register_count++;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return true;
@@ -1755,6 +1785,7 @@ PgRuntimeProtocolSchedulerUnregisterCarrier(PgRuntime *runtime, PgCarrier *carri
 	}
 	carrier->protocol_scheduler_registered = false;
 	carrier->protocol_scheduler_idle = false;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return true;
@@ -1777,6 +1808,7 @@ PgRuntimeProtocolSchedulerCarrierBecameActive(PgCarrier *carrier)
 		scheduler->idle_carrier_count--;
 		scheduler->active_carrier_count++;
 		carrier->protocol_scheduler_idle = false;
+		PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	}
 	SpinLockRelease(&scheduler->lock);
 }
@@ -1799,6 +1831,7 @@ PgRuntimeProtocolSchedulerCarrierBecameIdle(PgCarrier *carrier)
 		scheduler->idle_carrier_count++;
 		scheduler->carrier_release_count++;
 		carrier->protocol_scheduler_idle = true;
+		PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	}
 	SpinLockRelease(&scheduler->lock);
 }
@@ -1839,6 +1872,7 @@ PgRuntimeProtocolSchedulerParkBackend(PgRuntime *runtime, PgBackend *backend)
 		PG_PROTOCOL_SCHEDULER_QUEUE_PARKED_PROTOCOL_READ;
 	scheduler->parked_protocol_count++;
 	scheduler->parked_protocol_enqueue_count++;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return true;
@@ -1872,6 +1906,7 @@ PgRuntimeProtocolSchedulerMarkRunnable(PgRuntime *runtime, PgBackend *backend)
 		Assert(scheduler->parked_protocol_count > 0);
 		dlist_delete(&park_state->scheduler_node);
 		scheduler->parked_protocol_count--;
+		PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	}
 	else if (park_state->scheduler_queue_state ==
 			 PG_PROTOCOL_SCHEDULER_QUEUE_POLLING)
@@ -1894,8 +1929,10 @@ PgRuntimeProtocolSchedulerMarkRunnable(PgRuntime *runtime, PgBackend *backend)
 					&park_state->scheduler_node);
 	park_state->scheduler_queue_state =
 		PG_PROTOCOL_SCHEDULER_QUEUE_RUNNABLE;
+	park_state->scheduler_runnable_at = GetCurrentTimestamp();
 	scheduler->runnable_count++;
 	scheduler->runnable_enqueue_count++;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return true;
@@ -1928,12 +1965,14 @@ PgRuntimeProtocolSchedulerLeaseBackend(PgRuntime *runtime, PgBackend *backend)
 			Assert(scheduler->parked_protocol_count > 0);
 			dlist_delete(&park_state->scheduler_node);
 			scheduler->parked_protocol_count--;
+			PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 			break;
 
 		case PG_PROTOCOL_SCHEDULER_QUEUE_RUNNABLE:
 			Assert(scheduler->runnable_count > 0);
 			dlist_delete(&park_state->scheduler_node);
 			scheduler->runnable_count--;
+			PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 			break;
 
 		case PG_PROTOCOL_SCHEDULER_QUEUE_NONE:
@@ -1978,6 +2017,7 @@ PgRuntimeProtocolSchedulerLeaseParkedBackend(PgRuntime *runtime)
 	backend->protocol_park.scheduler_queue_state =
 		PG_PROTOCOL_SCHEDULER_QUEUE_POLLING;
 	scheduler->parked_protocol_count--;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return backend;
@@ -2010,6 +2050,7 @@ PgRuntimeProtocolSchedulerReparkBackend(PgRuntime *runtime, PgBackend *backend)
 	park_state->scheduler_queue_state =
 		PG_PROTOCOL_SCHEDULER_QUEUE_PARKED_PROTOCOL_READ;
 	scheduler->parked_protocol_count++;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return true;
@@ -2040,6 +2081,7 @@ PgRuntimeProtocolSchedulerReparkBackendIfPolling(PgRuntime *runtime,
 		park_state->scheduler_queue_state =
 			PG_PROTOCOL_SCHEDULER_QUEUE_PARKED_PROTOCOL_READ;
 		scheduler->parked_protocol_count++;
+		PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	}
 
 	SpinLockRelease(&scheduler->lock);
@@ -2074,6 +2116,7 @@ PgRuntimeProtocolSchedulerPopRunnable(PgRuntime *runtime)
 	backend->protocol_park.scheduler_queue_state =
 		PG_PROTOCOL_SCHEDULER_QUEUE_LEASED;
 	scheduler->runnable_count--;
+	PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 	SpinLockRelease(&scheduler->lock);
 
 	return backend;
@@ -2117,6 +2160,13 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 {
 	PgRuntime  *runtime;
 	PgBackend  *backend;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz pop_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz attach_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz accounting_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz runnable_at = TIMESTAMP_MINUS_INFINITY;
+	uint64		queue_wait_us = 0;
+	bool		log_timing;
 
 	Assert(carrier != NULL);
 	Assert(carrier == CurrentPgCarrier);
@@ -2131,9 +2181,18 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 	if (runtime == NULL)
 		return NULL;
 
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(runtime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	backend = PgRuntimeProtocolSchedulerPopRunnable(runtime);
 	if (backend == NULL)
 		return NULL;
+	if (log_timing)
+		runnable_at = backend->protocol_park.scheduler_runnable_at;
+	if (log_timing)
+		pop_end = GetCurrentTimestamp();
 
 	if (backend->runtime != runtime ||
 		backend->carrier != NULL ||
@@ -2154,11 +2213,42 @@ PgCarrierLeaseRunnableProtocolBackend(PgCarrier *carrier)
 			 backend->protocol_park.state,
 			 backend->protocol_park.scheduler_queue_state);
 
-	PgCarrierAttachBackend(carrier, backend, backend->session,
-						   backend->connection, backend->execution);
+	if (carrier == backend->protocol_park.parked_carrier)
+		PgCarrierAttachBackendPreserveSessionGUCs(carrier, backend,
+												  backend->session,
+												  backend->connection,
+												  backend->execution);
+	else
+		PgCarrierAttachBackend(carrier, backend, backend->session,
+							   backend->connection, backend->execution);
+	if (log_timing)
+		attach_end = GetCurrentTimestamp();
 	SpinLockAcquire(&runtime->protocol_scheduler.lock);
 	runtime->protocol_scheduler.carrier_lease_count++;
 	SpinLockRelease(&runtime->protocol_scheduler.lock);
+	if (log_timing)
+	{
+		accounting_end = GetCurrentTimestamp();
+		queue_wait_us = runnable_at != TIMESTAMP_MINUS_INFINITY ?
+			TimestampDifferenceMicroseconds(runnable_at, pop_end) : 0;
+		ereport(LOG_SERVER_ONLY,
+				(errhidestmt(true),
+				 errhidecontext(true),
+				 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=pooled event=lease_runnable "
+								 "total_us=%llu pop_us=%llu attach_us=%llu accounting_us=%llu queue_wait_us=%llu wake_events=%u",
+								 PgBackendGetSignalPid(backend),
+								 (unsigned int) backend->id,
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 accounting_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 pop_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(pop_end,
+																					 attach_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(attach_end,
+																					 accounting_end),
+								 (unsigned long long) queue_wait_us,
+								 backend->protocol_park.wake_events)));
+	}
 	return backend;
 }
 
@@ -2187,6 +2277,7 @@ PgRuntimeProtocolSchedulerRemoveBackend(PgRuntime *runtime, PgBackend *backend)
 			Assert(scheduler->parked_protocol_count > 0);
 			dlist_delete(&park_state->scheduler_node);
 			scheduler->parked_protocol_count--;
+			PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 			break;
 
 		case PG_PROTOCOL_SCHEDULER_QUEUE_POLLING:
@@ -2196,6 +2287,7 @@ PgRuntimeProtocolSchedulerRemoveBackend(PgRuntime *runtime, PgBackend *backend)
 			Assert(scheduler->runnable_count > 0);
 			dlist_delete(&park_state->scheduler_node);
 			scheduler->runnable_count--;
+			PgRuntimeProtocolSchedulerPublishAtomicCounts(scheduler);
 			break;
 
 		case PG_PROTOCOL_SCHEDULER_QUEUE_LEASED:
@@ -2404,6 +2496,10 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 {
 	PgBackendProtocolParkState *park_state;
 	PgConnection *connection;
+	TimestampTz start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz detach_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz enqueue_end = TIMESTAMP_MINUS_INFINITY;
+	bool		log_timing;
 
 	Assert(carrier != NULL);
 	Assert(backend != NULL);
@@ -2419,10 +2515,17 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 	if (!PgConnectionCanParkBeforeMessage(connection))
 		elog(PANIC, "cannot commit protocol read park during active message read");
 
+	log_timing = log_threaded_lifecycle_timing &&
+		PgRuntimeIsPooledProtocol(carrier->runtime);
+	if (log_timing)
+		start = GetCurrentTimestamp();
+
 	park_state->state = PG_PROTOCOL_PARK_COMMITTED;
 	park_state->parked_carrier = carrier;
 	park_state->committed_at = GetCurrentTimestamp();
 	PgCarrierDetachBackend(carrier, backend);
+	if (log_timing)
+		detach_end = GetCurrentTimestamp();
 	if (!PgRuntimeProtocolSchedulerParkBackend(carrier->runtime, backend))
 		elog(PANIC, "could not enqueue committed protocol read park: backend_runtime_match=%d park_state=%d queue_state=%d carrier=%p backend_carrier=%p",
 			 backend->runtime == carrier->runtime,
@@ -2430,6 +2533,23 @@ PgCarrierCommitProtocolReadPark(PgCarrier *carrier, PgBackend *backend)
 			 park_state->scheduler_queue_state,
 			 carrier,
 			 backend->carrier);
+	if (log_timing)
+	{
+		enqueue_end = GetCurrentTimestamp();
+		ereport(LOG_SERVER_ONLY,
+				(errhidestmt(true),
+				 errhidecontext(true),
+				 errmsg_internal("threaded_protocol_park pid=%d backend_id=%u model=pooled event=park_enqueue "
+								 "total_us=%llu detach_us=%llu queue_us=%llu",
+								 PgBackendGetSignalPid(backend),
+								 (unsigned int) backend->id,
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 enqueue_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(start,
+																					 detach_end),
+								 (unsigned long long) TimestampDifferenceMicroseconds(detach_end,
+																					 enqueue_end))));
+	}
 }
 
 bool
@@ -2551,6 +2671,7 @@ PgBackendResumeProtocolReadPark(PgBackend *backend)
 	park_state->state = PG_PROTOCOL_PARK_NONE;
 	MemSet(&park_state->spec, 0, sizeof(park_state->spec));
 	park_state->committed_at = 0;
+	park_state->scheduler_runnable_at = 0;
 	park_state->wake_reasons = PG_PROTOCOL_PARK_WAKE_NONE;
 	park_state->wake_events = 0;
 	park_state->wake_generation = 0;
@@ -2800,6 +2921,7 @@ PgBackendEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgBackendExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension_modules->private_states =
 		lappend(extension_modules->private_states, private_state);

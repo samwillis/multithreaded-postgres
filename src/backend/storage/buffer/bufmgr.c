@@ -257,7 +257,7 @@ static inline int32 GetPrivateRefCountFor(PgBackendBufferState *state,
 static void ForgetPrivateRefCountEntryFor(PgBackendBufferState *state,
 										  PrivateRefCountEntry *ref);
 static void InitPrivateRefCountAccess(PgBackendBufferState *state);
-static bool PrivateRefCountStateIsIdle(PgBackendBufferState *state);
+static bool PrivateRefCountResidentStateIsIdle(PgBackendBufferState *state);
 static pg_attribute_always_inline ResourceOwner *PgBufferResourceOwnerFastRef(void);
 static pg_attribute_always_inline BufferUsage *PgBufferUsageFastRef(void);
 
@@ -4325,7 +4325,7 @@ ReleaseBufferManagerIdleMemory(void)
 
 	if (state->buffer_context == NULL)
 		return;
-	if (!PrivateRefCountStateIsIdle(state))
+	if (!PrivateRefCountResidentStateIsIdle(state))
 		return;
 
 	MemoryContextDelete(state->buffer_context);
@@ -4398,10 +4398,11 @@ InitPrivateRefCountAccess(PgBackendBufferState *state)
 }
 
 static bool
-PrivateRefCountStateIsIdle(PgBackendBufferState *state)
+PrivateRefCountResidentStateIsIdle(PgBackendBufferState *state)
 {
 	Buffer	   *array_keys;
 	PrivateRefCountEntry *array;
+	PrivateRefCountEntry *res;
 
 	Assert(state != NULL);
 
@@ -4418,11 +4419,52 @@ PrivateRefCountStateIsIdle(PgBackendBufferState *state)
 	{
 		if (array_keys[i] != InvalidBuffer ||
 			array[i].buffer != InvalidBuffer ||
-			array[i].data.refcount != 0)
+			array[i].data.refcount != 0 ||
+			array[i].data.lockmode != BUFFER_LOCK_UNLOCK)
 			return false;
 	}
 
+	if (state->private_ref_count_hash != NULL)
+	{
+		refcount_hash *hash = (refcount_hash *) state->private_ref_count_hash;
+		refcount_iterator iter;
+
+		refcount_start_iterate(hash, &iter);
+		while ((res = refcount_iterate(hash, &iter)) != NULL)
+		{
+			if (res->buffer != InvalidBuffer ||
+				res->data.refcount != 0 ||
+				res->data.lockmode != BUFFER_LOCK_UNLOCK)
+				return false;
+		}
+	}
+
 	return true;
+}
+
+bool
+BufferManagerPrivateRefCountStateIsReusable(PgBackendBufferState *state)
+{
+	Assert(state != NULL);
+
+	if (state->private_ref_count_released_while_idle)
+		return state->pin_count_wait_buf == NULL &&
+			state->n_local_pinned_buffers == 0 &&
+			state->private_ref_count_array_keys == NULL &&
+			state->private_ref_count_array == NULL &&
+			state->private_ref_count_hash == NULL &&
+			state->private_ref_count_overflowed == 0 &&
+			state->reserved_ref_count_slot == -1;
+
+	if (state->private_ref_count_array_keys == NULL &&
+		state->private_ref_count_array == NULL)
+		return state->pin_count_wait_buf == NULL &&
+			state->n_local_pinned_buffers == 0 &&
+			state->private_ref_count_hash == NULL &&
+			state->private_ref_count_overflowed == 0 &&
+			state->reserved_ref_count_slot == -1;
+
+	return PrivateRefCountResidentStateIsIdle(state);
 }
 
 /*

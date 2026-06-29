@@ -840,6 +840,10 @@ extern void *lookup_external_function(void *filehandle, const char *funcname);
 extern void load_file(const char *filename, bool restricted);
 extern void check_loaded_modules_backend_model(PgBackendModel
 											   required_backend_model);
+extern void initialize_loaded_modules_for_threaded_session(void);
+extern bool dynamic_library_threaded_session_init_in_progress(void);
+extern bool LockDynamicFileManagerForThreadedReplay(void);
+extern void UnlockDynamicFileManagerForThreadedReplay(bool locked);
 extern DynamicFileList *get_first_loaded_module(void);
 extern DynamicFileList *get_next_loaded_module(DynamicFileList *dfptr);
 extern void get_loaded_module_details(DynamicFileList *dfptr,

@@ -256,12 +256,15 @@ typedef struct PgProtocolSchedulerState
 	dlist_head	runnable_queue;
 	dlist_head	parked_protocol_queue;
 	uint32		runnable_count;
+	pg_atomic_uint32 runnable_count_atomic;
 	uint32		parked_protocol_count;
+	pg_atomic_uint32 parked_protocol_count_atomic;
 	uint64		runnable_enqueue_count;
 	uint64		parked_protocol_enqueue_count;
 	uint32		carrier_limit;
 	uint32		registered_carrier_count;
 	uint32		idle_carrier_count;
+	pg_atomic_uint32 idle_carrier_count_atomic;
 	uint32		active_carrier_count;
 	uint64		carrier_register_count;
 	uint64		carrier_reject_count;
@@ -322,6 +325,7 @@ typedef struct PgBackendProtocolParkState
 	uint64		deferred_notify_park_generation;
 	uint32		deferred_notify_reasons;
 	TimestampTz committed_at;
+	TimestampTz scheduler_runnable_at;
 	bool		last_park_duration_valid;
 	long		last_park_duration_ms;
 	bool		hibernated;
@@ -359,6 +363,8 @@ typedef enum PgBackendInterruptType
 	PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG,
 	PG_BACKEND_INTERRUPT_LOG_ROTATE,
 	PG_BACKEND_INTERRUPT_STARTUP_PROMOTE,
+	PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE,
+	PG_BACKEND_INTERRUPT_PROC_SIGNAL_FLAGS,
 	PG_BACKEND_INTERRUPT_COUNT
 } PgBackendInterruptType;
 
@@ -510,8 +516,12 @@ typedef struct PgBackendWalSenderState
 	StringInfoData tmpbuf;
 	TimestampTz last_processing;
 	TimestampTz last_reply_timestamp;
+	XLogRecPtr	standby_reply_prev_write_ptr;
+	XLogRecPtr	standby_reply_prev_flush_ptr;
+	XLogRecPtr	standby_reply_prev_apply_ptr;
 	bool		waiting_for_ping_response;
 	TimestampTz shutdown_request_timestamp;
+	XLogRecPtr	shutdown_stopping_flush_ptr;
 	bool		shutdown_stream_done_queued;
 	bool		streaming_done_sending;
 	bool		streaming_done_receiving;
@@ -520,6 +530,10 @@ typedef struct PgBackendWalSenderState
 	volatile sig_atomic_t got_stopping;
 	volatile sig_atomic_t replication_active;
 	LogicalDecodingContext *logical_decoding_ctx;
+	bool		logical_decoding_cleanup_registered;
+	TimestampTz logical_lag_send_time;
+	XLogRecPtr	recent_flush_ptr;
+	XLogRecPtr	logical_flush_ptr;
 	MemoryContext replication_cmd_context;
 	LagTracker *lag_tracker;
 } PgBackendWalSenderState;
@@ -595,7 +609,15 @@ typedef struct PgBackendLogicalReplicationState
 	XLogRecPtr	skip_xact_finish_lsn;
 	BufFile    *stream_fd;
 	XLogRecPtr	last_flushpos;
+	StringInfo	feedback_reply_message;
+	TimestampTz feedback_send_time;
+	XLogRecPtr	feedback_last_recvpos;
+	XLogRecPtr	feedback_last_writepos;
+	StringInfo	status_request_message;
 	List	   *table_states_not_ready;
+	HTAB	   *table_sync_last_start_times;
+	bool		syncing_relations_has_subtables;
+	bool		syncing_relations_has_subsequences_non_ready;
 	StringInfo	copybuf;
 	List	   *seqinfos;
 	bool		xlog_logical_info;
@@ -625,6 +647,7 @@ typedef struct PgBackendXLogWriteResult
 
 typedef struct PgBackendXLogState
 {
+	bool		in_recovery;
 	bool		local_recovery_in_progress;
 	int			local_xlog_insert_allowed;
 	XLogRecPtr	proc_last_rec_ptr;
@@ -659,8 +682,12 @@ typedef struct PgBackendRecoveryState
 	volatile sig_atomic_t startup_in_restore_command;
 	TimestampTz startup_progress_phase_start_time;
 	volatile sig_atomic_t startup_progress_timer_expired;
+	int			standby_state;
 	bool		local_hot_standby_active;
 	bool		local_promote_is_triggered;
+	char	   *startup_observed_primary_conninfo;
+	char	   *startup_observed_primary_slotname;
+	bool		startup_observed_wal_receiver_create_temp_slot;
 	HTAB	   *recovery_lock_hash;
 	HTAB	   *recovery_lock_xid_hash;
 	volatile sig_atomic_t got_standby_deadlock_timeout;
@@ -684,6 +711,7 @@ typedef struct PgBackendMaintenanceWorkerState
 	MemoryContext walsummarizer_context;
 	volatile sig_atomic_t pgarch_ready_to_stop;
 	bool		ckpt_active;
+	bool		checkpointer_shutdown_xlog_complete;
 	pg_time_t	ckpt_start_time;
 	XLogRecPtr	ckpt_start_recptr;
 	double		ckpt_cached_elapsed;
@@ -1689,6 +1717,9 @@ typedef struct PgSessionLogicalReplicationState
 	bool		pgoutput_publications_valid;
 	HTAB	   *pgoutput_relation_sync_cache;
 	int			syncing_relations_state;
+	bool		replication_origin_cleanup_registered;
+	bool		pgoutput_publication_callback_registered;
+	bool		pgoutput_relation_callbacks_registered;
 } PgSessionLogicalReplicationState;
 
 typedef struct PgSessionGeneralGUCState
@@ -1864,6 +1895,7 @@ typedef struct PgExtensionPrivateState
 {
 	const char *key;
 	void	   *state;
+	Size		size;
 	PgExtensionPrivateStateCleanup cleanup;
 } PgExtensionPrivateState;
 
@@ -1875,6 +1907,9 @@ typedef PgExtensionPrivateState PgSessionExtensionPrivateState;
 typedef struct PgSessionExtensionModuleState
 {
 	void	   *plpgsql_state;
+	void	   *plpython_interp_globals;
+	void	   *plpython_execution_contexts;
+	List	   *plpython_explicit_subtransactions;
 	void	   *plpython_procedure_cache;
 	MemoryContext plpython_memory_context;
 	bool		plpython_reset_registered;
@@ -2024,6 +2059,7 @@ typedef struct PgSessionBackupState
 	StringInfo	tablespace_map;
 	MemoryContext backup_context;
 	uint8		session_backup_state;
+	bool		abort_backup_handler_registered;
 } PgSessionBackupState;
 
 #define PG_SESSION_MAX_CACHED_REGEX 32
@@ -2248,6 +2284,15 @@ typedef struct ConnectionTiming
 
 	/* Time at which authentication was finished */
 	TimestampTz auth_end;
+
+	/* Phase 16B measurement-only backend bootstrap timings. */
+	TimestampTz lifecycle_bootstrap_start;
+	TimestampTz lifecycle_signal_setup_end;
+	TimestampTz lifecycle_baseinit_start;
+	TimestampTz lifecycle_baseinit_end;
+	TimestampTz lifecycle_initpostgres_start;
+	TimestampTz lifecycle_initpostgres_end;
+	TimestampTz lifecycle_bootstrap_end;
 } ConnectionTiming;
 
 typedef struct PgConnectionInterruptState
@@ -2307,6 +2352,22 @@ typedef struct PgSessionLoopState
 	bool		step_error_boundary_active;
 	bool		doing_command_read;
 	bool		transaction_started;
+	uint64		hot_loop_count;
+	uint64		hot_park_count;
+	uint64		hot_ready_us;
+	uint64		hot_read_us;
+	uint64		hot_execute_us;
+	uint64		hot_total_us;
+	uint64		hot_query_count;
+	uint64		hot_parse_count;
+	uint64		hot_bind_count;
+	uint64		hot_execute_count;
+	uint64		hot_describe_count;
+	uint64		hot_sync_count;
+	uint64		hot_flush_count;
+	uint64		hot_close_count;
+	uint64		hot_terminate_count;
+	uint64		hot_other_count;
 } PgSessionLoopState;
 
 typedef struct PgSessionTcopState
@@ -2355,6 +2416,7 @@ struct PgCarrier
 	char	   *stack_base_ptr;
 	int			threaded_guc_mutex_depth;
 	int			threaded_reloptions_mutex_depth;
+	int			threaded_dynamic_file_manager_mutex_depth;
 	bool		protocol_scheduler_registered;
 	bool		protocol_scheduler_idle;
 };
@@ -2477,6 +2539,7 @@ struct PgSession
 	PgSessionLocaleState locale;
 	MemoryContext dynamic_library_context;
 	List	   *dynamic_library_inits;
+	bool		dynamic_library_session_init_in_progress;
 };
 
 struct PgConnection
@@ -2544,6 +2607,38 @@ typedef struct PgThreadBackendRuntimeState
 	PgCarrier	carrier;
 	PgThreadBackendLogicalState logical;
 } PgThreadBackendRuntimeState;
+
+typedef enum PgReusableSessionValidationReason
+{
+	PG_REUSABLE_SESSION_VALID = 0,
+	PG_REUSABLE_SESSION_INVALID_NULL_OBJECT,
+	PG_REUSABLE_SESSION_INVALID_TRANSACTION_ACTIVE,
+	PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED,
+	PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE,
+	PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+	PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+	PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+	PG_REUSABLE_SESSION_INVALID_PREPARED_STATEMENTS,
+	PG_REUSABLE_SESSION_INVALID_PORTALS,
+	PG_REUSABLE_SESSION_INVALID_LISTEN,
+	PG_REUSABLE_SESSION_INVALID_TEMP_NAMESPACE,
+	PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE,
+	PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS,
+	PG_REUSABLE_SESSION_INVALID_RESOURCE_OWNER,
+	PG_REUSABLE_SESSION_INVALID_MEMORY_CONTEXTS,
+	PG_REUSABLE_SESSION_INVALID_ACTIVE_TIMEOUTS,
+	PG_REUSABLE_SESSION_INVALID_LOCKS,
+	PG_REUSABLE_SESSION_INVALID_BUFFER_PINS,
+	PG_REUSABLE_SESSION_INVALID_TEMP_FILES,
+	PG_REUSABLE_SESSION_INVALID_GUC_STATE,
+	PG_REUSABLE_SESSION_INVALID_PLAN_CACHE,
+	PG_REUSABLE_SESSION_INVALID_SNAPSHOTS,
+	PG_REUSABLE_SESSION_INVALID_INVALIDATIONS,
+	PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+	PG_REUSABLE_SESSION_INVALID_XLOG_INSERT_STATE,
+	PG_REUSABLE_SESSION_INVALID_ASYNC_ACTIONS,
+	PG_REUSABLE_SESSION_INVALID_REASON_COUNT
+} PgReusableSessionValidationReason;
 
 extern void PgRuntimeResetAfterFork(void);
 
@@ -2658,6 +2753,7 @@ extern bool *PgCurrentGUCReportingEnabledRef(void);
 extern int *PgCurrentGUCNestLevelRef(void);
 extern int *PgCurrentThreadedGUCMutexDepthRef(void);
 extern int *PgCurrentThreadedRelOptionsMutexDepthRef(void);
+extern int *PgCurrentThreadedDynamicFileManagerMutexDepthRef(void);
 extern void **PgCurrentBackendThreadStartRef(void);
 extern volatile sig_atomic_t *PgCurrentWaitEventWaitingRef(void);
 extern int *PgCurrentWaitEventSignalFdRef(void);
@@ -2751,12 +2847,15 @@ extern int *PgCurrentWalReceiverTimeoutRef(void);
 extern int *PgCurrentLogicalDecodingWorkMemRef(void);
 extern int *PgCurrentDebugLogicalReplicationStreamingRef(void);
 extern struct ReplicationState **PgCurrentReplicationOriginSessionStateRef(void);
+extern bool *PgCurrentReplicationOriginCleanupRegisteredRef(void);
 extern MemoryContext *PgCurrentLogicalRepRelMapContextRef(void);
 extern HTAB **PgCurrentLogicalRepRelMapRef(void);
 extern MemoryContext *PgCurrentLogicalRepPartMapContextRef(void);
 extern HTAB **PgCurrentLogicalRepPartMapRef(void);
 extern bool *PgCurrentPgOutputPublicationsValidRef(void);
 extern HTAB **PgCurrentPgOutputRelationSyncCacheRef(void);
+extern bool *PgCurrentPgOutputPublicationCallbackRegisteredRef(void);
+extern bool *PgCurrentPgOutputRelationCallbacksRegisteredRef(void);
 extern int *PgCurrentLogicalRepSyncingRelationsStateRef(void);
 extern bool *PgCurrentAllowAlterSystemRef(void);
 extern bool *PgCurrentRowSecurityRef(void);
@@ -3186,6 +3285,11 @@ extern void PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
 								   PgSession *session,
 								   PgConnection *connection,
 								   PgExecution *execution);
+extern void PgCarrierAttachBackendPreserveSessionGUCs(PgCarrier *carrier,
+													  PgBackend *backend,
+													  PgSession *session,
+													  PgConnection *connection,
+													  PgExecution *execution);
 extern void PgCarrierDetachBackend(PgCarrier *carrier, PgBackend *backend);
 extern void PgRuntimeReportBridgeFallbackStats(void);
 extern bool PgCurrentSessionOwnsPointer(const void *ptr);
@@ -3193,6 +3297,7 @@ extern bool PgCurrentOrEarlySessionOwnsPointer(const void *ptr);
 extern void PgBackendResetClosedState(PgBackend *backend);
 extern MemoryContext PgSessionGetDynamicLibraryMemoryContext(PgSession *session);
 extern List **PgCurrentSessionDynamicLibraryInitsRef(void);
+extern bool *PgCurrentSessionDynamicLibrarySessionInitInProgressRef(void);
 extern PgRuntimeExtensionModuleState *PgCurrentRuntimeExtensionModuleState(void);
 extern MemoryContext PgCurrentRuntimeExtensionModuleMemoryContext(void);
 extern void *PgRuntimeGetExtensionPrivateState(const char *key);
@@ -3207,6 +3312,9 @@ extern PgSessionExtensionModuleState *PgCurrentSessionExtensionModuleState(void)
 extern void *PgSessionGetExtensionPrivateState(const char *key);
 extern void *PgSessionEnsureExtensionPrivateState(const char *key, Size size,
 												 PgSessionExtensionPrivateStateCleanup cleanup);
+extern void **PgCurrentPLpythonInterpGlobalsRef(void);
+extern void **PgCurrentPLpythonExecutionContextsRef(void);
+extern List **PgCurrentPLpythonExplicitSubtransactionsRef(void);
 extern void **PgCurrentPLpythonProcedureCacheRef(void);
 extern MemoryContext *PgCurrentPLpythonMemoryContextRef(void);
 extern bool *PgCurrentPLpythonResetRegisteredRef(void);
@@ -3383,6 +3491,16 @@ extern bool PgRuntimeIsPooledProtocol(PgRuntime *runtime);
 extern bool PgRuntimePooledProtocolRequested(void);
 extern int	PgRuntimePooledProtocolCarrierLimit(void);
 extern uint32 PgRuntimePooledProtocolIdleCarrierCount(void);
+extern uint32 PgRuntimePooledProtocolRunnableCount(void);
+extern uint32 PgRuntimePooledProtocolParkedCount(void);
+extern bool PgRuntimeThreadedSessionPoolShellRequested(void);
+extern int	PgRuntimeThreadedSessionPoolCarrierLimit(void);
+extern PgReusableSessionValidationReason PgValidateReusableSessionState(PgBackend *backend,
+																		PgSession *session,
+																		PgConnection *connection,
+																		PgExecution *execution,
+																		bool check_transaction_state);
+extern const char *PgReusableSessionValidationReasonName(PgReusableSessionValidationReason reason);
 extern PgBackendLaunchModel PgRuntimeGetBackendLaunchModel(BackendType backend_type);
 extern bool PgRuntimeShouldThreadBackend(BackendType backend_type);
 extern PgBackendModel PgRuntimeGetExtensionBackendModel(void);
@@ -3399,6 +3517,7 @@ extern void PgRuntimeDeleteOwnedMemoryContext(MemoryContext *context);
 extern void PgBackendInitializeInterrupts(PgBackend *backend);
 extern void PgBackendAdoptEarlyState(PgBackend *backend);
 extern void PgSessionAdoptEarlyState(PgSession *session);
+extern bool PgSessionStringIsStaticGUCDefault(const char *strval);
 extern void PgConnectionAdoptEarlyState(PgConnection *connection,
 										 struct Port *preserved_port);
 extern void PgConnectionResetClosedState(PgConnection *connection);
@@ -3427,7 +3546,7 @@ extern PgBackend *PgRuntimeProtocolSchedulerLeaseParkedBackend(PgRuntime *runtim
 extern bool PgRuntimeProtocolSchedulerReparkBackend(PgRuntime *runtime,
 													PgBackend *backend);
 extern bool PgRuntimeProtocolSchedulerReparkBackendIfPolling(PgRuntime *runtime,
-															 PgBackend *backend);
+															PgBackend *backend);
 extern PgBackend *PgRuntimeProtocolSchedulerPopRunnable(PgRuntime *runtime);
 extern int	PgRuntimeProtocolSchedulerCollectParked(PgRuntime *runtime,
 													PgBackend **backends,
@@ -3681,6 +3800,9 @@ pg_noreturn extern void PgSessionRun(PgSession *session);
 #define PgCurrentThreadedRelOptionsMutexDepthRef() \
 	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentThreadedRelOptionsMutexDepthRef, \
 										 threaded_reloptions_mutex_depth)
+#define PgCurrentThreadedDynamicFileManagerMutexDepthRef() \
+	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentThreadedDynamicFileManagerMutexDepthRef, \
+										 threaded_dynamic_file_manager_mutex_depth)
 #define PgCurrentWaitEventWaitingRef() \
 	PG_RUNTIME_CURRENT_CARRIER_FIELD_REF(PgCurrentWaitEventWaitingRef, \
 										 wait_event_waiting)

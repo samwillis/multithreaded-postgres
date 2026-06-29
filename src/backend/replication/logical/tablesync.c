@@ -146,7 +146,7 @@ wait_for_table_state_change(Oid relid, char expected_state)
 		LogicalRepWorker *worker;
 		XLogRecPtr	statelsn;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		InvalidateCatalogSnapshot();
 		state = GetSubscriptionRelState(MyLogicalRepWorker->subid,
@@ -194,7 +194,7 @@ wait_for_worker_state_change(char expected_state)
 	{
 		LogicalRepWorker *worker;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		/*
 		 * Done if already in correct state.  (We assume this fetch is atomic
@@ -370,11 +370,12 @@ ProcessSyncingTablesForApply(XLogRecPtr current_lsn)
 		Oid			relid;
 		TimestampTz last_start_time;
 	};
-	static HTAB *last_start_times = NULL;
 	ListCell   *lc;
 	bool		started_tx;
 	bool		should_exit = false;
 	Relation	rel = NULL;
+	HTAB	  **last_start_times =
+		&PgCurrentLogicalReplicationState()->table_sync_last_start_times;
 
 	Assert(!IsTransactionState());
 
@@ -386,24 +387,24 @@ ProcessSyncingTablesForApply(XLogRecPtr current_lsn)
 	 * immediate restarts.  We don't need it if there are no tables that need
 	 * syncing.
 	 */
-	if (table_states_not_ready != NIL && !last_start_times)
+	if (table_states_not_ready != NIL && !*last_start_times)
 	{
 		HASHCTL		ctl;
 
 		ctl.keysize = sizeof(Oid);
 		ctl.entrysize = sizeof(struct tablesync_start_time_mapping);
-		last_start_times = hash_create("Logical replication table sync worker start times",
-									   256, &ctl, HASH_ELEM | HASH_BLOBS);
+		*last_start_times = hash_create("Logical replication table sync worker start times",
+										 256, &ctl, HASH_ELEM | HASH_BLOBS);
 	}
 
 	/*
 	 * Clean up the hash table when we're done with all tables (just to
 	 * release the bit of memory).
 	 */
-	else if (table_states_not_ready == NIL && last_start_times)
+	else if (table_states_not_ready == NIL && *last_start_times)
 	{
-		hash_destroy(last_start_times);
-		last_start_times = NULL;
+		hash_destroy(*last_start_times);
+		*last_start_times = NULL;
 	}
 
 	/*
@@ -559,7 +560,7 @@ ProcessSyncingTablesForApply(XLogRecPtr current_lsn)
 				/* Now safe to release the LWLock */
 				LWLockRelease(LogicalRepWorkerLock);
 
-				hentry = hash_search(last_start_times, &rstate->relid,
+				hentry = hash_search(*last_start_times, &rstate->relid,
 									 HASH_ENTER, &found);
 				if (!found)
 					hentry->last_start_time = 0;
@@ -669,7 +670,7 @@ copy_read_data(void *outbuf, int minread, int maxread)
 			/* Try read the data. */
 			len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 
 			if (len == 0)
 				break;
@@ -1081,6 +1082,7 @@ copy_table(Relation rel)
 	List	   *attnamelist;
 	ParseState *pstate;
 	List	   *options = NIL;
+	MemoryContext oldctx;
 	bool		gencol_published = false;
 
 	/* Get the publisher relation info. */
@@ -1197,7 +1199,20 @@ copy_table(Relation rel)
 						lrel.nspname, lrel.relname, res->err)));
 	walrcv_clear_result(res);
 
+	oldctx = MemoryContextSwitchTo(ApplyContext);
 	copybuf = makeStringInfo();
+	MemoryContextSwitchTo(oldctx);
+
+	/*
+	 * copy_read_data() stores walreceiver-owned buffers in copybuf->data.  Keep
+	 * copybuf itself as the cursor state, but make sure the StringInfo wrapper
+	 * never owns the data pointer that backend closed-state reset will see.
+	 */
+	pfree(copybuf->data);
+	copybuf->data = NULL;
+	copybuf->len = 0;
+	copybuf->maxlen = 0;
+	copybuf->cursor = 0;
 
 	pstate = make_parsestate(NULL);
 	(void) addRangeTableEntryForRelation(pstate, rel, AccessShareLock,
@@ -1209,6 +1224,9 @@ copy_table(Relation rel)
 	/* Do the copy */
 	(void) CopyFrom(cstate);
 	EndCopyFrom(cstate);
+
+	pfree(copybuf);
+	copybuf = NULL;
 
 	logicalrep_rel_close(relmapentry, NoLock);
 }

@@ -689,6 +689,64 @@ GetLockMethodLocalHash(void)
 }
 #endif
 
+bool
+LockManagerStateIsReusable(PgBackendLockState *locks)
+{
+	int		   *fast_path_counts;
+	int			i;
+
+	if (locks == NULL)
+		return false;
+
+	if (locks->num_held_lwlocks != 0 ||
+		locks->relation_extension_lock_held ||
+		locks->strong_lock_in_progress != NULL ||
+		locks->awaited_lock != NULL ||
+		locks->awaited_owner != NULL ||
+		locks->deadlock_timeout_pending ||
+		locks->condition_variable_sleep_target != NULL ||
+		locks->speculative_insertion_token != 0 ||
+		locks->deadlock_visited_procs != NULL ||
+		locks->deadlock_n_visited_procs != 0 ||
+		locks->deadlock_topo_procs != NULL ||
+		locks->deadlock_before_constraints != NULL ||
+		locks->deadlock_after_constraints != NULL ||
+		locks->deadlock_wait_orders != NULL ||
+		locks->deadlock_n_wait_orders != 0 ||
+		locks->deadlock_wait_order_procs != NULL ||
+		locks->deadlock_cur_constraints != NULL ||
+		locks->deadlock_n_cur_constraints != 0 ||
+		locks->deadlock_max_cur_constraints != 0 ||
+		locks->deadlock_possible_constraints != NULL ||
+		locks->deadlock_n_possible_constraints != 0 ||
+		locks->deadlock_max_possible_constraints != 0 ||
+		locks->deadlock_details != NULL ||
+		locks->deadlock_n_details != 0 ||
+		locks->blocking_autovacuum_proc != NULL ||
+		locks->deadlock_workspace_owned ||
+		locks->local_predicate_lock_hash != NULL ||
+		locks->my_serializable_xact != NULL ||
+		locks->my_xact_did_write ||
+		locks->saved_serializable_xact != NULL)
+		return false;
+
+	if (locks->lock_method_local_hash != NULL &&
+		hash_get_num_entries(locks->lock_method_local_hash) != 0)
+		return false;
+
+	fast_path_counts = (int *) locks->fast_path_local_use_counts;
+	if (fast_path_counts != NULL)
+	{
+		for (i = 0; i < FP_LOCK_GROUPS_PER_BACKEND_MAX; i++)
+		{
+			if (fast_path_counts[i] != 0)
+				return false;
+		}
+	}
+
+	return true;
+}
+
 /*
  * LockHasWaiters -- look up 'locktag' and check if releasing this
  *		lock would wake up other processes waiting for it.

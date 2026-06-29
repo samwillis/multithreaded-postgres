@@ -22,18 +22,20 @@
 #include "storage/itemptr.h"
 #include "storage/lwlock.h"
 #include "utils/array.h"
+#include "utils/backend_runtime.h"
 #include "utils/memutils.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_tidstore",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 PG_FUNCTION_INFO_V1(test_create);
 PG_FUNCTION_INFO_V1(do_set_block_offsets);
 PG_FUNCTION_INFO_V1(check_set_block_offsets);
 PG_FUNCTION_INFO_V1(test_is_full);
 PG_FUNCTION_INFO_V1(test_destroy);
-
-static TidStore *tidstore = NULL;
-static size_t tidstore_empty_size;
 
 /* array for verification of some tests */
 typedef struct ItemArray
@@ -45,7 +47,57 @@ typedef struct ItemArray
 	int			num_tids;
 } ItemArray;
 
-static ItemArray items;
+typedef struct TestTidStoreSessionState
+{
+	TidStore   *tidstore;
+	size_t		tidstore_empty_size;
+	ItemArray	items;
+} TestTidStoreSessionState;
+
+#define TEST_TIDSTORE_SESSION_STATE_KEY "test_tidstore.session"
+
+static void test_tidstore_session_state_cleanup(void *arg);
+static TestTidStoreSessionState *test_tidstore_session_state(void);
+
+static void
+test_tidstore_clear_state(TestTidStoreSessionState *state)
+{
+	if (state->tidstore != NULL)
+	{
+		TidStoreDestroy(state->tidstore);
+		state->tidstore = NULL;
+	}
+
+	if (state->items.insert_tids != NULL)
+		pfree(state->items.insert_tids);
+	if (state->items.lookup_tids != NULL)
+		pfree(state->items.lookup_tids);
+	if (state->items.iter_tids != NULL)
+		pfree(state->items.iter_tids);
+
+	state->tidstore_empty_size = 0;
+	MemSet(&state->items, 0, sizeof(state->items));
+}
+
+static void
+test_tidstore_session_state_cleanup(void *arg)
+{
+	test_tidstore_clear_state((TestTidStoreSessionState *) arg);
+}
+
+static TestTidStoreSessionState *
+test_tidstore_session_state(void)
+{
+	return (TestTidStoreSessionState *)
+		PgSessionEnsureExtensionPrivateState(TEST_TIDSTORE_SESSION_STATE_KEY,
+											 sizeof(TestTidStoreSessionState),
+											 test_tidstore_session_state_cleanup);
+}
+
+#define tidstore (test_tidstore_session_state()->tidstore)
+#define tidstore_empty_size \
+	(test_tidstore_session_state()->tidstore_empty_size)
+#define items (test_tidstore_session_state()->items)
 
 /* comparator routine for ItemPointer */
 static int
@@ -98,6 +150,7 @@ Datum
 test_create(PG_FUNCTION_ARGS)
 {
 	bool		shared = PG_GETARG_BOOL(0);
+	MemoryContext alloc_ctx;
 	MemoryContext old_ctx;
 
 	/* doesn't really matter, since it's just a hint */
@@ -107,10 +160,14 @@ test_create(PG_FUNCTION_ARGS)
 	Assert(tidstore == NULL);
 
 	/*
-	 * Create the TidStore on TopMemoryContext so that the same process use it
-	 * for subsequent tests.
+	 * Create the TidStore in session-owned long-lived memory so subsequent
+	 * calls in this test session can use it without sharing state with other
+	 * threaded sessions.
 	 */
-	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
+	alloc_ctx = CurrentPgSession != NULL ?
+		PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession) :
+		TopMemoryContext;
+	old_ctx = MemoryContextSwitchTo(alloc_ctx);
 
 	if (shared)
 	{
@@ -347,12 +404,7 @@ test_destroy(PG_FUNCTION_ARGS)
 {
 	check_tidstore_available();
 
-	TidStoreDestroy(tidstore);
-	tidstore = NULL;
-	items.num_tids = 0;
-	pfree(items.insert_tids);
-	pfree(items.lookup_tids);
-	pfree(items.iter_tids);
+	test_tidstore_clear_state(test_tidstore_session_state());
 
 	PG_RETURN_VOID();
 }

@@ -16,28 +16,64 @@ our (
 	$klist, $kdb5_util, $kadmin_local, $krb5kdc,
 	$krb5_conf, $kdc_conf, $krb5_cache, $krb5_log,
 	$kdc_log, $kdc_port, $kdc_datadir, $kdc_pidfile,
-	$keytab);
+	$keytab, $kdb_module_dir);
 
 INIT
 {
-	if ($^O eq 'darwin' && -d "/opt/homebrew")
+	if (defined $ENV{PG_TEST_KRB5_BIN_DIR})
+	{
+		if (-d $ENV{PG_TEST_KRB5_BIN_DIR})
+		{
+			$krb5_bin_dir = $ENV{PG_TEST_KRB5_BIN_DIR};
+		}
+		else
+		{
+			BAIL_OUT("PG_TEST_KRB5_BIN_DIR does not name a directory");
+		}
+	}
+	if (defined $ENV{PG_TEST_KRB5_SBIN_DIR})
+	{
+		if (-d $ENV{PG_TEST_KRB5_SBIN_DIR})
+		{
+			$krb5_sbin_dir = $ENV{PG_TEST_KRB5_SBIN_DIR};
+		}
+		else
+		{
+			BAIL_OUT("PG_TEST_KRB5_SBIN_DIR does not name a directory");
+		}
+	}
+	if (defined $ENV{PG_TEST_KRB5_KDB_MODULE_DIR})
+	{
+		if (-d $ENV{PG_TEST_KRB5_KDB_MODULE_DIR})
+		{
+			$kdb_module_dir = $ENV{PG_TEST_KRB5_KDB_MODULE_DIR};
+		}
+		else
+		{
+			BAIL_OUT("PG_TEST_KRB5_KDB_MODULE_DIR does not name a directory");
+		}
+	}
+
+	if (!$krb5_bin_dir && $^O eq 'darwin' && -d "/opt/homebrew")
 	{
 		# typical paths for Homebrew on ARM
 		$krb5_bin_dir = '/opt/homebrew/opt/krb5/bin';
-		$krb5_sbin_dir = '/opt/homebrew/opt/krb5/sbin';
+		$krb5_sbin_dir = '/opt/homebrew/opt/krb5/sbin'
+		  unless $krb5_sbin_dir;
 	}
-	elsif ($^O eq 'darwin')
+	elsif (!$krb5_bin_dir && $^O eq 'darwin')
 	{
 		# typical paths for Homebrew on Intel
 		$krb5_bin_dir = '/usr/local/opt/krb5/bin';
-		$krb5_sbin_dir = '/usr/local/opt/krb5/sbin';
+		$krb5_sbin_dir = '/usr/local/opt/krb5/sbin'
+		  unless $krb5_sbin_dir;
 	}
-	elsif ($^O eq 'freebsd')
+	elsif (!$krb5_bin_dir && $^O eq 'freebsd')
 	{
 		$krb5_bin_dir = '/usr/local/bin';
-		$krb5_sbin_dir = '/usr/local/sbin';
+		$krb5_sbin_dir = '/usr/local/sbin' unless $krb5_sbin_dir;
 	}
-	elsif ($^O eq 'linux')
+	elsif (!$krb5_sbin_dir && $^O eq 'linux')
 	{
 		$krb5_sbin_dir = '/usr/sbin';
 	}
@@ -180,6 +216,16 @@ $realm = {
     acl_file = $kdc_datadir/kadm5.acl
     key_stash_file = $kdc_datadir/_k5.$realm
 }!);
+	if ($kdb_module_dir)
+	{
+		append_to_file(
+			$kdc_conf,
+			qq!
+
+[dbmodules]
+    db_module_dir = $kdb_module_dir
+!);
+	}
 
 	mkdir $kdc_datadir
 	  or BAIL_OUT("could not create directory \"$kdc_datadir\"");

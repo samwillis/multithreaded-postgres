@@ -167,6 +167,7 @@ typedef struct ShmemCallbacks
 #define SHMEM_CALLBACKS_ALLOW_AFTER_STARTUP		0x00000001
 
 extern void RegisterShmemCallbacks(const ShmemCallbacks *callbacks);
+extern void ProcessDeferredAfterStartupShmemCallbacks(void);
 extern bool ShmemAddrIsValid(const void *addr);
 
 /*

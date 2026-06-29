@@ -564,7 +564,7 @@ retry:
 	}
 
 	bgw.bgw_restart_time = BGW_NEVER_RESTART;
-	bgw.bgw_notify_pid = MyProcPid;
+	bgw.bgw_notify_pid = PgCurrentBackendSignalPid();
 	bgw.bgw_main_arg = Int32GetDatum(slot);
 
 	if (!RegisterDynamicBackgroundWorker(&bgw, &bgw_handle))
@@ -644,7 +644,7 @@ logicalrep_worker_stop_internal(LogicalRepWorker *worker, int signo)
 	if (worker->threaded)
 		(void) SendBackendInterrupt(worker->signal_pid,
 									logicalrep_worker_signal_to_interrupt(signo),
-									MyProcPid, getuid());
+									PgCurrentBackendSignalPid(), getuid());
 	else
 		kill(worker->proc->pid, signo);
 

@@ -126,6 +126,12 @@
 	(&PgCurrentSessionTextSearchState()->last_used_config)
 #define PgCurrentPLpgSQLSessionStateRef() \
 	(&PgCurrentSessionExtensionModuleState()->plpgsql_state)
+#define PgCurrentPLpythonInterpGlobalsRef() \
+	(&PgCurrentSessionExtensionModuleState()->plpython_interp_globals)
+#define PgCurrentPLpythonExecutionContextsRef() \
+	(&PgCurrentSessionExtensionModuleState()->plpython_execution_contexts)
+#define PgCurrentPLpythonExplicitSubtransactionsRef() \
+	(&PgCurrentSessionExtensionModuleState()->plpython_explicit_subtransactions)
 #define PgCurrentPLpythonProcedureCacheRef() \
 	(&PgCurrentSessionExtensionModuleState()->plpython_procedure_cache)
 #define PgCurrentPLpythonMemoryContextRef() \

@@ -295,6 +295,14 @@ init_ps_display(const char *fixed_part)
 	if (!IsUnderPostmaster)
 		return;
 
+	/*
+	 * Thread-backed sessions share one process title and the argv clobber buffer
+	 * behind it, so concurrent per-session updates would race and produce a
+	 * misleading process title anyway.
+	 */
+	if (multithreaded)
+		return;
+
 	/* no ps display if you didn't call save_ps_display_args() */
 	if (!save_argv)
 		return;
@@ -364,6 +372,9 @@ update_ps_display_precheck(void)
 
 	/* no ps display for stand-alone backend */
 	if (!IsUnderPostmaster)
+		return false;
+
+	if (multithreaded)
 		return false;
 
 #ifdef PS_USE_CLOBBER_ARGV

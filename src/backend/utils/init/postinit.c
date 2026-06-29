@@ -55,6 +55,7 @@
 #include "storage/procnumber.h"
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
+#include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "storage/sync.h"
 #include "tcop/backend_startup.h"
@@ -62,6 +63,7 @@
 #include "utils/acl.h"
 #include "utils/backend_runtime.h"
 #include "utils/builtins.h"
+#include "fmgr.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/guc_hooks.h"
@@ -721,12 +723,11 @@ BaseInit(void)
 	InitTemporaryFileAccess();
 
 	/*
-	 * Initialize local buffers for WAL record construction in process mode.
-	 * Threaded logical sessions initialize this scratch lazily on first WAL
-	 * insert so read-only idle sessions do not retain it.
+	 * Initialize local buffers for WAL record construction.  XLogBeginInsert()
+	 * may be reached inside a critical section, where memory allocation is not
+	 * allowed, so this cannot be left to the lazy first-use path.
 	 */
-	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime))
-		InitXLogInsert();
+	InitXLogInsert();
 
 	/* Initialize lock manager's local structs */
 	InitLockManagerAccess();
@@ -803,6 +804,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * Once I have done this, I am visible to other backends!
 	 */
 	InitProcessPhase2();
+	initialize_loaded_modules_for_threaded_session();
+	if (!bootstrap && threaded_backend)
+		ProcessDeferredAfterStartupShmemCallbacks();
 
 	/* Initialize status reporting */
 	pgstat_beinit();

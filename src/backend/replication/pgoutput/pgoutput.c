@@ -40,7 +40,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "pgoutput",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 static void pgoutput_startup(LogicalDecodingContext *ctx,
@@ -86,6 +87,8 @@ static void pgoutput_stream_prepare_txn(LogicalDecodingContext *ctx,
 										ReorderBufferTXN *txn, XLogRecPtr prepare_lsn);
 
 #define publications_valid (*PgCurrentPgOutputPublicationsValidRef())
+#define publication_callback_registered \
+	(*PgCurrentPgOutputPublicationCallbackRegisteredRef())
 
 static List *LoadPublications(List *pubnames);
 static void publication_invalidation_cb(Datum arg, SysCacheIdentifier cacheid,
@@ -220,6 +223,8 @@ typedef struct PGOutputTxnData
 
 /* Map used to remember which relation schemas we sent. */
 #define RelationSyncCache (*PgCurrentPgOutputRelationSyncCacheRef())
+#define relation_callbacks_registered \
+	(*PgCurrentPgOutputRelationCallbacksRegisteredRef())
 
 static void init_rel_sync_cache(MemoryContext cachectx);
 static void cleanup_rel_sync_cache(TransactionId xid, bool is_commit);
@@ -454,7 +459,6 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 				 bool is_init)
 {
 	PGOutputData *data = palloc0_object(PGOutputData);
-	static bool publication_callback_registered = false;
 	MemoryContextCallback *mcallback;
 
 	/* Create our memory context for private allocations. */
@@ -1977,7 +1981,6 @@ static void
 init_rel_sync_cache(MemoryContext cachectx)
 {
 	HASHCTL		ctl;
-	static bool relation_callbacks_registered = false;
 
 	/* Nothing to do if hash table already exists */
 	if (RelationSyncCache != NULL)

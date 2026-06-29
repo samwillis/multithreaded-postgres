@@ -16,11 +16,33 @@
 
 #include "libpq/libpq.h"
 #include "libpq/libpq-be.h"
+#include "utils/backend_runtime.h"
 #include "utils/guc.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "ssl_passphrase_callback",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
-static char *ssl_passphrase = NULL;
+#define SSL_PASSPHRASE_SESSION_STATE_KEY "ssl_passphrase_callback.session"
+
+typedef struct SslPassphraseSessionState
+{
+	char	   *ssl_passphrase;
+} SslPassphraseSessionState;
+
+static SslPassphraseSessionState *
+ssl_passphrase_session_state(void)
+{
+	return (SslPassphraseSessionState *)
+		PgSessionEnsureExtensionPrivateState(
+			SSL_PASSPHRASE_SESSION_STATE_KEY,
+			sizeof(SslPassphraseSessionState),
+			NULL);
+}
+
+#define ssl_passphrase (ssl_passphrase_session_state()->ssl_passphrase)
 
 /* callback function */
 static int	rot13_passphrase(char *buf, int size, int rwflag, void *userdata);

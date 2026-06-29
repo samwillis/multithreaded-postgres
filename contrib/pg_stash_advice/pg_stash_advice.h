@@ -77,6 +77,7 @@ typedef struct pgsa_shared_state
 
 typedef struct PgStashAdviceBackendState
 {
+	bool		cleanup_registered;
 	pgsa_shared_state *state;
 	dsa_area   *dsa_area;
 	dshash_table *stash_dshash;
@@ -150,11 +151,17 @@ typedef struct PgStashAdviceSessionState
 static inline PgStashAdviceSessionState *
 pg_stash_advice_session_state(void)
 {
-	return (PgStashAdviceSessionState *)
+	PgStashAdviceSessionState *state;
+
+	state = (PgStashAdviceSessionState *)
 		PgSessionEnsureExtensionPrivateState(
 			PG_STASH_ADVICE_SESSION_STATE_KEY,
 			sizeof(PgStashAdviceSessionState),
 			NULL);
+	if (state->stash_name == NULL)
+		state->stash_name = "";
+
+	return state;
 }
 
 #define pg_stash_advice_stash_name \

@@ -2546,7 +2546,7 @@ lmm_fail:
 		return false;
 	}
 
-	guc_free(*newval);
+	guc_free_string(*newval);
 	*newval = result;
 
 	guc_free(rawstring);

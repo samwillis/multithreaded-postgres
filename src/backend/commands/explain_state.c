@@ -36,6 +36,7 @@
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/explain_state.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 
@@ -56,6 +57,16 @@ static PG_GLOBAL_RUNTIME int ExplainExtensionNamesAllocated = 0;
 static PG_GLOBAL_RUNTIME ExplainExtensionOption *ExplainExtensionOptionArray = NULL;
 static PG_GLOBAL_RUNTIME int ExplainExtensionOptionsAssigned = 0;
 static PG_GLOBAL_RUNTIME int ExplainExtensionOptionsAllocated = 0;
+
+static MemoryContext
+ExplainExtensionRegistryMemoryContext(void)
+{
+	if (CurrentPgRuntime != NULL &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		return PgCurrentRuntimeExtensionModuleMemoryContext();
+
+	return TopMemoryContext;
+}
 
 /*
  * Create a new ExplainState struct initialized with default options.
@@ -241,7 +252,7 @@ GetExplainExtensionId(const char *extension_name)
 	{
 		ExplainExtensionNamesAllocated = 16;
 		ExplainExtensionNameArray = (const char **)
-			MemoryContextAlloc(TopMemoryContext,
+			MemoryContextAlloc(ExplainExtensionRegistryMemoryContext(),
 							   ExplainExtensionNamesAllocated
 							   * sizeof(char *));
 	}
@@ -357,7 +368,7 @@ RegisterExtensionExplainOption(const char *option_name,
 	{
 		ExplainExtensionOptionsAllocated = 16;
 		ExplainExtensionOptionArray = (ExplainExtensionOption *)
-			MemoryContextAlloc(TopMemoryContext,
+			MemoryContextAlloc(ExplainExtensionRegistryMemoryContext(),
 							   ExplainExtensionOptionsAllocated
 							   * sizeof(ExplainExtensionOption));
 	}

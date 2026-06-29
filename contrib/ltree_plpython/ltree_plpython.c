@@ -7,7 +7,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "ltree_plpython",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /* Linkage to functions in plpython module */

@@ -138,10 +138,13 @@
 #include "port/pg_numa.h"
 #include "storage/lwlock.h"
 #include "storage/pg_shmem.h"
+#include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/shmem_internal.h"
 #include "storage/spin.h"
+#include "utils/backend_runtime.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 #include "utils/tuplestore.h"
 
 /*
@@ -273,7 +276,14 @@ typedef struct
 /* To get reliable results for NUMA inquiry we need to "touch pages" once */
 static PG_GLOBAL_RUNTIME bool firstNumaTouch = true;
 
+#define DEFERRED_AFTER_STARTUP_SHMEM_CALLBACKS_KEY \
+	"core.deferred_after_startup_shmem_callbacks"
+
 static void CallShmemCallbacksAfterStartup(const ShmemCallbacks *callbacks);
+static void CallShmemCallbacksAfterStartupSerialized(const ShmemCallbacks *callbacks);
+static void CleanupDeferredAfterStartupShmemCallbacks(void *state);
+static List **DeferredAfterStartupShmemCallbacksRef(bool create);
+static bool QueueAfterStartupShmemCallbacksUntilPGPROC(const ShmemCallbacks *callbacks);
 static void InitShmemIndexEntry(ShmemRequest *request);
 static bool AttachShmemIndexEntry(ShmemRequest *request, bool missing_ok);
 
@@ -881,7 +891,10 @@ RegisterShmemCallbacks(const ShmemCallbacks *callbacks)
 		if ((callbacks->flags & SHMEM_CALLBACKS_ALLOW_AFTER_STARTUP) == 0)
 			elog(ERROR, "cannot request shared memory at this time");
 
-		CallShmemCallbacksAfterStartup(callbacks);
+		if (QueueAfterStartupShmemCallbacksUntilPGPROC(callbacks))
+			return;
+
+		CallShmemCallbacksAfterStartupSerialized(callbacks);
 	}
 	else
 	{
@@ -889,6 +902,101 @@ RegisterShmemCallbacks(const ShmemCallbacks *callbacks)
 		registered_shmem_callbacks = lappend(registered_shmem_callbacks,
 											 (void *) callbacks);
 	}
+}
+
+/*
+ * Threaded child sessions replay dynamic library _PG_init() before they have
+ * joined the ProcArray.  Some after-startup shmem callbacks inspect MyProc, so
+ * defer only those callbacks until InitProcessPhase2() has completed.
+ */
+static bool
+QueueAfterStartupShmemCallbacksUntilPGPROC(const ShmemCallbacks *callbacks)
+{
+	List	  **deferred_callbacks;
+	MemoryContext oldcontext;
+
+	if (MyProc != NULL ||
+		CurrentPgSession == NULL ||
+		CurrentPgRuntime == NULL ||
+		!PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		return false;
+
+	deferred_callbacks = DeferredAfterStartupShmemCallbacksRef(true);
+	oldcontext = MemoryContextSwitchTo(GetMemoryChunkContext(deferred_callbacks));
+	*deferred_callbacks = lappend(*deferred_callbacks, (void *) callbacks);
+	MemoryContextSwitchTo(oldcontext);
+
+	return true;
+}
+
+static void
+CleanupDeferredAfterStartupShmemCallbacks(void *state)
+{
+	List	  **deferred_callbacks = (List **) state;
+
+	list_free(*deferred_callbacks);
+	*deferred_callbacks = NIL;
+}
+
+static List **
+DeferredAfterStartupShmemCallbacksRef(bool create)
+{
+	if (create)
+		return (List **) PgSessionEnsureExtensionPrivateState(
+			DEFERRED_AFTER_STARTUP_SHMEM_CALLBACKS_KEY,
+			sizeof(List *),
+			CleanupDeferredAfterStartupShmemCallbacks);
+
+	return (List **) PgSessionGetExtensionPrivateState(
+		DEFERRED_AFTER_STARTUP_SHMEM_CALLBACKS_KEY);
+}
+
+void
+ProcessDeferredAfterStartupShmemCallbacks(void)
+{
+	List	  **deferred_callbacks_ref;
+	List	   *deferred_callbacks;
+
+	if (IsBootstrapProcessingMode() ||
+		!IsUnderPostmaster ||
+		CurrentPgRuntime == NULL ||
+		!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
+		CurrentPgSession == NULL)
+		return;
+
+	deferred_callbacks_ref = DeferredAfterStartupShmemCallbacksRef(false);
+	if (deferred_callbacks_ref == NULL || *deferred_callbacks_ref == NIL)
+		return;
+
+	Assert(MyProc != NULL);
+
+	deferred_callbacks = *deferred_callbacks_ref;
+	*deferred_callbacks_ref = NIL;
+	foreach_ptr(const ShmemCallbacks, callbacks, deferred_callbacks)
+		CallShmemCallbacksAfterStartupSerialized(callbacks);
+	list_free(deferred_callbacks);
+}
+
+static void
+CallShmemCallbacksAfterStartupSerialized(const ShmemCallbacks *callbacks)
+{
+	bool		locked;
+
+	/*
+	 * The after-startup callback path uses process-global scratch state.
+	 * In threaded mode, serialize execution with dynamic library session
+	 * replay, which is where these callbacks are normally registered.
+	 */
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
+	{
+		CallShmemCallbacksAfterStartup(callbacks);
+	}
+	PG_FINALLY();
+	{
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
 }
 
 /*

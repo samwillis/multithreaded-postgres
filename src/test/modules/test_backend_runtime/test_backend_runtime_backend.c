@@ -1134,6 +1134,11 @@ test_backend_reset_closed_state(PG_FUNCTION_ARGS)
 	recovery->startup_progress_timer_expired = true;
 	recovery->local_hot_standby_active = true;
 	recovery->local_promote_is_triggered = true;
+	recovery->startup_observed_primary_conninfo =
+		pstrdup("test primary conninfo");
+	recovery->startup_observed_primary_slotname =
+		pstrdup("test primary slotname");
+	recovery->startup_observed_wal_receiver_create_temp_slot = true;
 	recovery->recovery_lock_hash =
 		hash_create("test recovery lock hash", 8, &hash_ctl,
 					HASH_ELEM | HASH_BLOBS);
@@ -1496,6 +1501,9 @@ test_backend_reset_closed_state(PG_FUNCTION_ARGS)
 	ok = ok && !recovery->startup_progress_timer_expired;
 	ok = ok && !recovery->local_hot_standby_active;
 	ok = ok && !recovery->local_promote_is_triggered;
+	ok = ok && recovery->startup_observed_primary_conninfo == NULL;
+	ok = ok && recovery->startup_observed_primary_slotname == NULL;
+	ok = ok && !recovery->startup_observed_wal_receiver_create_temp_slot;
 	ok = ok && recovery->recovery_lock_hash == NULL;
 	ok = ok && recovery->recovery_lock_xid_hash == NULL;
 	ok = ok && !recovery->got_standby_deadlock_timeout;

@@ -2128,6 +2128,9 @@ PlanCacheRelCallback(Datum arg, Oid relid)
 {
 	dlist_iter	iter;
 
+	if (IsBootstrapProcessingMode())
+		return;
+
 	dlist_foreach(iter, &saved_plan_list)
 	{
 		CachedPlanSource *plansource = dlist_container(CachedPlanSource,
@@ -2211,6 +2214,9 @@ static void
 PlanCacheObjectCallback(Datum arg, SysCacheIdentifier cacheid, uint32 hashvalue)
 {
 	dlist_iter	iter;
+
+	if (IsBootstrapProcessingMode())
+		return;
 
 	dlist_foreach(iter, &saved_plan_list)
 	{
@@ -2329,6 +2335,9 @@ void
 ResetPlanCache(void)
 {
 	dlist_iter	iter;
+
+	if (IsBootstrapProcessingMode())
+		return;
 
 	dlist_foreach(iter, &saved_plan_list)
 	{

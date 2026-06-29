@@ -110,9 +110,12 @@ static const struct exclude_list_item skip[] = {
 	{"pg_filenode.map", false},
 	{"pg_internal.init", true},
 	{"PG_VERSION", false},
-#ifdef EXEC_BACKEND
+
+	/*
+	 * Serialized nondefault GUC state is process/runtime scratch, not a
+	 * relation file.  Threaded non-EXEC_BACKEND servers write it too.
+	 */
 	{"config_exec_params", true},
-#endif
 	{NULL, false}
 };
 

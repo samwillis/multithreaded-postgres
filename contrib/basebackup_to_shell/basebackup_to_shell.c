@@ -101,10 +101,29 @@ basebackup_to_shell_runtime_state(void)
 			NULL);
 }
 
-#define basebackup_to_shell_command \
-	(basebackup_to_shell_session_state()->command)
+static char **
+basebackup_to_shell_command_ref(void)
+{
+	BasebackupToShellSessionState *state = basebackup_to_shell_session_state();
+
+	if (state->command == NULL)
+		state->command = "";
+	return &state->command;
+}
+
+static char **
+basebackup_to_shell_required_role_ref(void)
+{
+	BasebackupToShellSessionState *state = basebackup_to_shell_session_state();
+
+	if (state->required_role == NULL)
+		state->required_role = "";
+	return &state->required_role;
+}
+
+#define basebackup_to_shell_command (*basebackup_to_shell_command_ref())
 #define basebackup_to_shell_required_role \
-	(basebackup_to_shell_session_state()->required_role)
+	(*basebackup_to_shell_required_role_ref())
 #define shell_target_registered \
 	(basebackup_to_shell_runtime_state()->target_registered)
 
@@ -114,7 +133,7 @@ _PG_init(void)
 	DefineCustomStringVariable("basebackup_to_shell.command",
 							   "Shell command to be executed for each backup file.",
 							   NULL,
-							   &basebackup_to_shell_command,
+							   basebackup_to_shell_command_ref(),
 							   "",
 							   PGC_SIGHUP,
 							   0,
@@ -123,7 +142,7 @@ _PG_init(void)
 	DefineCustomStringVariable("basebackup_to_shell.required_role",
 							   "Backup user must be a member of this role to use shell backup target.",
 							   NULL,
-							   &basebackup_to_shell_required_role,
+							   basebackup_to_shell_required_role_ref(),
 							   "",
 							   PGC_SIGHUP,
 							   0,
@@ -146,12 +165,16 @@ _PG_init(void)
 static void *
 shell_check_detail(char *target, char *target_detail)
 {
-	if (basebackup_to_shell_required_role[0] != '\0')
+	const char *required_role;
+
+	required_role = GetConfigOption("basebackup_to_shell.required_role",
+									false, false);
+	if (required_role != NULL && required_role[0] != '\0')
 	{
 		Oid			roleid;
 
 		StartTransactionCommand();
-		roleid = get_role_oid(basebackup_to_shell_required_role, true);
+		roleid = get_role_oid(required_role, true);
 		if (!has_privs_of_role(GetUserId(), roleid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -172,6 +195,7 @@ static bbsink *
 shell_get_sink(bbsink *next_sink, void *detail_arg)
 {
 	bbsink_shell *sink;
+	const char *shell_command;
 	bool		has_detail_escape = false;
 	char	   *c;
 
@@ -185,7 +209,9 @@ shell_get_sink(bbsink *next_sink, void *detail_arg)
 	*((const bbsink_ops **) &sink->base.bbs_ops) = &bbsink_shell_ops;
 	sink->base.bbs_next = next_sink;
 	sink->target_detail = detail_arg;
-	sink->shell_command = pstrdup(basebackup_to_shell_command);
+	shell_command = GetConfigOption("basebackup_to_shell.command",
+									false, false);
+	sink->shell_command = pstrdup(shell_command != NULL ? shell_command : "");
 
 	/* Reject an empty shell command. */
 	if (sink->shell_command[0] == '\0')

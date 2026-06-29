@@ -51,6 +51,18 @@ CREATE FUNCTION test_backend_runtime_custom_guc_init_count()
 	   'test_backend_runtime_custom_guc_init_count'
 	LANGUAGE C;
 
+CREATE FUNCTION test_backend_runtime_guc_reset_baseline_matches()
+	RETURNS pg_catalog.bool
+	AS 'MODULE_PATHNAME',
+	   'test_backend_runtime_guc_reset_baseline_matches'
+	LANGUAGE C;
+
+CREATE FUNCTION test_backend_runtime_buffer_refcount_state_is_reusable()
+	RETURNS pg_catalog.bool
+	AS 'MODULE_PATHNAME',
+	   'test_backend_runtime_buffer_refcount_state_is_reusable'
+	LANGUAGE C;
+
 CREATE FUNCTION test_backend_runtime_emit_fatal()
 	RETURNS pg_catalog.void
 	AS 'MODULE_PATHNAME',
@@ -91,4 +103,10 @@ CREATE FUNCTION test_backend_runtime_wait_on_lwlock()
 	RETURNS pg_catalog.bool
 	AS 'MODULE_PATHNAME',
 	   'test_backend_runtime_wait_on_lwlock'
+	LANGUAGE C;
+
+CREATE FUNCTION test_backend_runtime_reusable_session_validator_reasons()
+	RETURNS pg_catalog.bool
+	AS 'MODULE_PATHNAME',
+	   'test_backend_runtime_reusable_session_validator_reasons'
 	LANGUAGE C;

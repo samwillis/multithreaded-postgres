@@ -31,6 +31,7 @@ OBJS = \
 	queryenvironment.o \
 	rls.o \
 	sampling.o \
+	shellcmd.o \
 	stack_depth.o \
 	superuser.o \
 	timeout.o \

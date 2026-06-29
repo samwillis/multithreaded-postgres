@@ -548,7 +548,8 @@ process_pgfdw_appname(const char *appname)
 				appendStringInfoString(&buf, application_name);
 				break;
 			case 'c':
-				appendStringInfo(&buf, "%" PRIx64 ".%x", MyStartTime, MyProcPid);
+				appendStringInfo(&buf, "%" PRIx64 ".%x",
+								 MyStartTime, PgCurrentBackendSignalPid());
 				break;
 			case 'C':
 				appendStringInfoString(&buf, cluster_name);
@@ -565,7 +566,7 @@ process_pgfdw_appname(const char *appname)
 				}
 				break;
 			case 'p':
-				appendStringInfo(&buf, "%d", MyProcPid);
+				appendStringInfo(&buf, "%d", PgCurrentBackendSignalPid());
 				break;
 			case 'u':
 				if (MyProcPort)

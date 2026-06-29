@@ -491,7 +491,7 @@ sepgsql_fmgr_hook(FmgrHookEventType event,
  * label management.
  */
 void
-sepgsql_init_client_label(void)
+sepgsql_init_client_label(bool install_hooks)
 {
 	/*
 	 * Set up dummy client label.
@@ -518,16 +518,19 @@ sepgsql_init_client_label(void)
 		freecon(raw_label);
 	}
 
-	/* Client authentication hook */
-	next_client_auth_hook = ClientAuthentication_hook;
-	ClientAuthentication_hook = sepgsql_client_auth;
+	if (install_hooks)
+	{
+		/* Client authentication hook */
+		next_client_auth_hook = ClientAuthentication_hook;
+		ClientAuthentication_hook = sepgsql_client_auth;
 
-	/* Trusted procedure hooks */
-	next_needs_fmgr_hook = needs_fmgr_hook;
-	needs_fmgr_hook = sepgsql_needs_fmgr_hook;
+		/* Trusted procedure hooks */
+		next_needs_fmgr_hook = needs_fmgr_hook;
+		needs_fmgr_hook = sepgsql_needs_fmgr_hook;
 
-	next_fmgr_hook = fmgr_hook;
-	fmgr_hook = sepgsql_fmgr_hook;
+		next_fmgr_hook = fmgr_hook;
+		fmgr_hook = sepgsql_fmgr_hook;
+	}
 
 	/* Transaction/Sub-transaction callbacks */
 	RegisterXactCallback(sepgsql_xact_callback, NULL);

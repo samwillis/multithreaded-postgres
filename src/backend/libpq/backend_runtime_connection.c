@@ -444,6 +444,13 @@ PgConnectionInitializeStartupState(PgConnectionStartupState *startup)
 
 	MemSet(startup, 0, sizeof(*startup));
 	startup->timing.ready_for_use = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_bootstrap_start = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_signal_setup_end = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_baseinit_start = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_baseinit_end = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_initpostgres_start = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_initpostgres_end = TIMESTAMP_MINUS_INFINITY;
+	startup->timing.lifecycle_bootstrap_end = TIMESTAMP_MINUS_INFINITY;
 }
 
 PG_RUNTIME_DEFINE_ADOPT_EARLY_WITH_INIT(PgConnectionAdoptEarlyStartupState,

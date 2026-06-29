@@ -190,6 +190,8 @@ PG_GLOBAL_RUNTIME double CheckPointCompletionTarget = 0.9;
 
 #define checkpointer_context \
 	(PgCurrentMaintenanceWorkerState()->checkpointer_context)
+#define checkpointer_shutdown_xlog_complete \
+	(PgCurrentMaintenanceWorkerState()->checkpointer_shutdown_xlog_complete)
 
 /* Prototypes for private functions */
 
@@ -199,6 +201,7 @@ static bool IsCheckpointOnSchedule(double progress);
 static bool FastCheckpointRequested(void);
 static bool CompactCheckpointerRequestQueue(void);
 static void UpdateSharedMemoryConfig(void);
+static void CheckpointerBeforeShmemExit(int code, Datum arg);
 
 /* Signal handlers */
 static void ReqShutdownXLOG(SIGNAL_ARGS);
@@ -264,7 +267,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 	 * signal checkpointer to exit after all processes that could emit stats
 	 * have been shut down.
 	 */
-	before_shmem_exit(pgstat_before_server_shutdown, 0);
+	before_shmem_exit(CheckpointerBeforeShmemExit, 0);
 
 	/*
 	 * Create a memory context that we will do all our work in.  We do this so
@@ -639,6 +642,7 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 		ShutdownXLOG(0, 0);
 		pgstat_report_checkpointer();
 		pgstat_report_wal(true);
+		checkpointer_shutdown_xlog_complete = true;
 
 		/*
 		 * Tell postmaster that we're done.
@@ -689,9 +693,7 @@ ProcessCheckpointerInterrupts(void)
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 
 		/*
 		 * Checkpointer is the last process to shut down, so we ask it to hold
@@ -834,9 +836,7 @@ CheckpointWriteDelay(int flags, double progress)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			if (CurrentPgRuntime == NULL ||
-				CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-				ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 			/* update shmem copies of config variables */
 			UpdateSharedMemoryConfig();
 		}
@@ -969,6 +969,22 @@ ReqShutdownXLOG(SIGNAL_ARGS)
 	RaiseInterrupt(PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG);
 	CheckpointerShutdownXLOGPending = true;
 	SetLatch(MyLatch);
+}
+
+/*
+ * Preserve pgstat's "one writer at server shutdown" contract across threaded
+ * startup handoff.  A code-0 checkpointer exit writes the permanent stats file
+ * only after ShutdownXLOG() completed; otherwise treat it like an irregular
+ * exit so pending stats are flushed without making the on-disk stats look like
+ * a clean server shutdown artifact.
+ */
+static void
+CheckpointerBeforeShmemExit(int code, Datum arg)
+{
+	if (code == 0 && !checkpointer_shutdown_xlog_complete)
+		code = 1;
+
+	pgstat_before_server_shutdown(code, arg);
 }
 
 
@@ -1166,8 +1182,19 @@ RequestCheckpoint(int flags)
 	 */
 	if (flags & CHECKPOINT_WAIT)
 	{
+		bool		threaded_waiter =
+			CurrentPgRuntime != NULL &&
+			PgRuntimeIsThreadBacked(CurrentPgRuntime);
 		int			new_started,
 					new_failed;
+
+		/*
+		 * During recovery handoff, a thread-backed startup process can be
+		 * waiting for a process-backed checkpointer.  The process-directed
+		 * latch wake may not prod the exact postmaster thread that owns the
+		 * waiting latch, so poll occasionally instead of relying solely on
+		 * the condition-variable broadcast.
+		 */
 
 		/* Wait for a new checkpoint to start. */
 		ConditionVariablePrepareToSleep(&CheckpointerShmem->start_cv);
@@ -1180,8 +1207,13 @@ RequestCheckpoint(int flags)
 			if (new_started != old_started)
 				break;
 
-			ConditionVariableSleep(&CheckpointerShmem->start_cv,
-								   WAIT_EVENT_CHECKPOINT_START);
+			if (threaded_waiter)
+				(void) ConditionVariableTimedSleep(&CheckpointerShmem->start_cv,
+												   100,
+												   WAIT_EVENT_CHECKPOINT_START);
+			else
+				ConditionVariableSleep(&CheckpointerShmem->start_cv,
+									   WAIT_EVENT_CHECKPOINT_START);
 		}
 		ConditionVariableCancelSleep();
 
@@ -1201,8 +1233,13 @@ RequestCheckpoint(int flags)
 			if (new_done - new_started >= 0)
 				break;
 
-			ConditionVariableSleep(&CheckpointerShmem->done_cv,
-								   WAIT_EVENT_CHECKPOINT_DONE);
+			if (threaded_waiter)
+				(void) ConditionVariableTimedSleep(&CheckpointerShmem->done_cv,
+												   100,
+												   WAIT_EVENT_CHECKPOINT_DONE);
+			else
+				ConditionVariableSleep(&CheckpointerShmem->done_cv,
+									   WAIT_EVENT_CHECKPOINT_DONE);
 		}
 		ConditionVariableCancelSleep();
 

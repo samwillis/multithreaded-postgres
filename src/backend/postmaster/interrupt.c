@@ -22,6 +22,7 @@
 #include "commands/repack.h"
 #include "miscadmin.h"
 #include "postmaster/interrupt.h"
+#include "replication/walsender.h"
 #include "replication/logicalworker.h"
 #include "replication/slotsync.h"
 #include "storage/ipc.h"
@@ -333,11 +334,29 @@ PgCurrentBackendApplyInterrupts(void)
 
 	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_CHECKPOINTER_SHUTDOWN_XLOG))
 		CheckpointerShutdownXLOGPending = true;
+
+	if (pending & PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_WALSND_LAST_CYCLE))
+		HandleWalSndLastCycle();
 }
 
 /*
  * Simple interrupt handler for main loops of background processes.
  */
+void
+ProcessConfigReloadForCurrentWorker(void)
+{
+	/*
+	 * In thread-backed mode, the postmaster parses config files and writes the
+	 * non-default snapshot before signaling children.  Worker threads replay
+	 * that snapshot into their session-owned GUC buckets instead of parsing
+	 * the same files inside the shared address space.
+	 */
+	if (PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		read_nondefault_variables();
+	else
+		ProcessConfigFile(PGC_SIGHUP);
+}
+
 void
 ProcessMainLoopInterrupts(void)
 {
@@ -352,15 +371,7 @@ ProcessMainLoopInterrupts(void)
 	if (ConfigReloadPending)
 	{
 		ConfigReloadPending = false;
-
-		/*
-		 * Thread-backed workers share GUC storage with the postmaster, which
-		 * owns parsing and applying config files for the shared address space.
-		 * They only need to observe the updated shared values.
-		 */
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 	}
 
 	if (ShutdownRequestPending)

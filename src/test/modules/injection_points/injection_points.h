@@ -18,7 +18,7 @@
 typedef enum InjectionPointConditionType
 {
 	INJ_CONDITION_ALWAYS = 0,	/* always run */
-	INJ_CONDITION_PID,			/* PID restriction */
+	INJ_CONDITION_PID,			/* backend signal ID restriction */
 } InjectionPointConditionType;
 
 typedef struct InjectionPointCondition
@@ -26,7 +26,7 @@ typedef struct InjectionPointCondition
 	/* Type of the condition */
 	InjectionPointConditionType type;
 
-	/* ID of the process where the injection point is allowed to run */
+	/* SQL-visible signal ID of the backend where the point may run */
 	int			pid;
 } InjectionPointCondition;
 

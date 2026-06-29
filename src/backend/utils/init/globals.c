@@ -86,7 +86,12 @@ PG_GLOBAL_RUNTIME int pooled_protocol_hibernate_after_ms = 5000;
 PG_GLOBAL_RUNTIME int pooled_protocol_idle_memory_compaction =
 	POOLED_PROTOCOL_IDLE_MEMORY_COMPACTION_TRIM;
 PG_GLOBAL_RUNTIME bool threaded_lazy_relcache_init_file = true;
+PG_GLOBAL_RUNTIME int threaded_session_pool = THREADED_SESSION_POOL_OFF;
+PG_GLOBAL_RUNTIME int threaded_session_pool_max = 0;
 PG_GLOBAL_RUNTIME bool log_protocol_park_memory = false;
+PG_GLOBAL_RUNTIME bool log_threaded_lifecycle_timing = false;
+PG_GLOBAL_RUNTIME bool log_threaded_hot_loop_timing = false;
+PG_GLOBAL_RUNTIME bool debug_threaded_session_pool_force_validation_failure = false;
 
 /* configurable SLRU buffer sizes */
 PG_GLOBAL_RUNTIME int commit_timestamp_buffers = 0;

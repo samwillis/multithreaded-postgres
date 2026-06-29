@@ -90,6 +90,12 @@ PgCurrentRuntimeExtensionModuleState(void)
 	return &CurrentPgRuntime->extension_modules;
 }
 
+int *
+PgCurrentThreadedDynamicFileManagerMutexDepthRef(void)
+{
+	return &PgCurrentCarrierState()->threaded_dynamic_file_manager_mutex_depth;
+}
+
 static PgRuntimeExtensionPrivateState *
 PgRuntimeFindExtensionPrivateState(PgRuntimeExtensionModuleState *extension_modules,
 								   const char *key)
@@ -139,6 +145,7 @@ PgRuntimeEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgRuntimeExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension_modules->private_states =
 		lappend(extension_modules->private_states, private_state);
@@ -211,6 +218,7 @@ PgExecutionEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgExecutionExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension->private_states = lappend(extension->private_states, private_state);
 	MemoryContextSwitchTo(old_context);

@@ -12,6 +12,13 @@
  */
 #include "test_backend_runtime.h"
 
+PG_FUNCTION_INFO_V1(test_session_guc_reset_baseline_matches);
+Datum
+test_session_guc_reset_baseline_matches(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(GUCStateMatchesResetBaseline());
+}
+
 PG_FUNCTION_INFO_V1(test_runtime_server_guc_state_is_runtime_local);
 Datum
 test_runtime_server_guc_state_is_runtime_local(PG_FUNCTION_ARGS)

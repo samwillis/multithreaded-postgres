@@ -66,7 +66,35 @@ INIT
 	# definition files.  On success, $setup is set to 1. On failure,
 	# it's set to 0, and an error message is set in $setup_error.
 	$setup = 1;
-	if ($^O eq 'darwin')
+	if (defined $ENV{PG_TEST_OPENLDAP_SLAPD}
+		|| defined $ENV{PG_TEST_OPENLDAP_SCHEMA_DIR})
+	{
+		if (!defined $ENV{PG_TEST_OPENLDAP_SLAPD}
+			|| !defined $ENV{PG_TEST_OPENLDAP_SCHEMA_DIR})
+		{
+			$setup_error =
+			  "PG_TEST_OPENLDAP_SLAPD and PG_TEST_OPENLDAP_SCHEMA_DIR must be set together";
+			$setup = 0;
+		}
+		elsif (!-x $ENV{PG_TEST_OPENLDAP_SLAPD})
+		{
+			$setup_error =
+			  "PG_TEST_OPENLDAP_SLAPD does not name an executable slapd binary";
+			$setup = 0;
+		}
+		elsif (!-d $ENV{PG_TEST_OPENLDAP_SCHEMA_DIR})
+		{
+			$setup_error =
+			  "PG_TEST_OPENLDAP_SCHEMA_DIR does not name an OpenLDAP schema directory";
+			$setup = 0;
+		}
+		else
+		{
+			$slapd = $ENV{PG_TEST_OPENLDAP_SLAPD};
+			$ldap_schema_dir = $ENV{PG_TEST_OPENLDAP_SCHEMA_DIR};
+		}
+	}
+	elsif ($^O eq 'darwin')
 	{
 		if (-d '/opt/homebrew/opt/openldap')
 		{

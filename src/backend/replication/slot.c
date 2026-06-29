@@ -55,6 +55,7 @@
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "storage/procsignal.h"
 #include "storage/subsystems.h"
 #include "utils/builtins.h"
 #include "utils/guc_hooks.h"
@@ -690,7 +691,7 @@ retry:
 		s->active_proc = active_proc = MyProcNumber;
 		ReplicationSlotSetInactiveSince(s, 0, true);
 	}
-	active_pid = GetPGProcByNumber(active_proc)->pid;
+	active_pid = PGProcSignalPid(GetPGProcByNumber(active_proc));
 	LWLockRelease(ReplicationSlotControlLock);
 
 	/*
@@ -1585,7 +1586,8 @@ restart:
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_IN_USE),
 					 errmsg("replication slot \"%s\" is active for PID %d",
-							slotname, GetPGProcByNumber(active_proc)->pid)));
+							slotname,
+							PGProcSignalPid(GetPGProcByNumber(active_proc)))));
 
 		/*
 		 * To avoid duplicating ReplicationSlotDropAcquired() and to avoid
@@ -2070,7 +2072,7 @@ InvalidatePossiblyObsoleteSlot(uint32 possible_causes,
 		}
 		else
 		{
-			active_pid = GetPGProcByNumber(active_proc)->pid;
+			active_pid = PGProcSignalPid(GetPGProcByNumber(active_proc));
 			Assert(active_pid != 0);
 		}
 
@@ -2123,6 +2125,11 @@ InvalidatePossiblyObsoleteSlot(uint32 possible_causes,
 					(void) SignalRecoveryConflict(GetPGProcByNumber(active_proc),
 												  active_pid,
 												  RECOVERY_CONFLICT_LOGICALSLOT);
+				else if (GetPGProcByNumber(active_proc)->pid == PostmasterPid &&
+						 GetPGProcByNumber(active_proc)->backendId != 0)
+					(void) SendBackendInterrupt(active_pid,
+												PG_BACKEND_INTERRUPT_PROC_DIE,
+												MyProcPid, getuid());
 				else
 					(void) kill(active_pid, SIGTERM);
 
@@ -3268,7 +3275,7 @@ WaitForStandbyConfirmation(XLogRecPtr wait_for_lsn)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 		}
 
 		/* Exit if done waiting for every slot. */

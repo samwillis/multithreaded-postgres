@@ -579,10 +579,11 @@ PgRuntimeSetCurrentWork(PgRuntime *runtime, PgCarrier *carrier,
 	PgRuntimeRefreshCurrentWork(rebind_session_gucs);
 }
 
-void
-PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
-					   PgSession *session, PgConnection *connection,
-					   PgExecution *execution)
+static void
+PgCarrierAttachBackendInternal(PgCarrier *carrier, PgBackend *backend,
+							   PgSession *session, PgConnection *connection,
+							   PgExecution *execution,
+							   bool rebind_session_gucs)
 {
 	PgRuntime  *runtime;
 
@@ -629,7 +630,7 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
 	PgRuntimeProtocolSchedulerCarrierBecameActive(carrier);
 
 	PgRuntimeSetCurrentWork(runtime, carrier, backend, session, connection,
-							execution, true);
+							execution, rebind_session_gucs);
 	if (PgRuntimeIsPooledProtocol(runtime) &&
 		backend->my_proc != NULL &&
 		backend->core.latch == &backend->my_proc->procLatch)
@@ -642,6 +643,30 @@ PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
 	}
 	if (PgRuntimeIsPooledProtocol(runtime))
 		RestoreBufferManagerIdleMemory();
+}
+
+void
+PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
+					   PgSession *session, PgConnection *connection,
+					   PgExecution *execution)
+{
+	PgCarrierAttachBackendInternal(carrier, backend, session, connection,
+								   execution, true);
+}
+
+void
+PgCarrierAttachBackendPreserveSessionGUCs(PgCarrier *carrier,
+										  PgBackend *backend,
+										  PgSession *session,
+										  PgConnection *connection,
+										  PgExecution *execution)
+{
+	Assert(carrier != NULL);
+	Assert(backend != NULL);
+	Assert(carrier == backend->protocol_park.parked_carrier);
+
+	PgCarrierAttachBackendInternal(carrier, backend, session, connection,
+								   execution, false);
 }
 
 void
@@ -705,6 +730,14 @@ PgCarrierInitializeRuntimeObject(PgCarrier *carrier)
 void
 PgRuntimeResetAfterFork(void)
 {
+	/*
+	 * The forked child still owns inherited postmaster descriptors that
+	 * ClosePostmasterPorts() and InitializeWaitEventSupport() will close before
+	 * BaseInit() installs the process runtime.  Preserve just the fd.c accounting
+	 * for those descriptors while resetting the rest of the runtime bridge.
+	 */
+	int			inherited_num_external_fds = *PgCurrentNumExternalFDsRef();
+
 	PgBackendResetDsmStateAfterFork();
 
 	PgRuntimeFlushCurrentHotCells();
@@ -728,6 +761,7 @@ PgRuntimeResetAfterFork(void)
 	PgExecutionInitializeRuntimeObject(&process_execution, NULL, NULL, NULL);
 
 	PgBackendResetEarlyFallbackAfterFork((int) getpid());
+	*PgCurrentNumExternalFDsRef() = inherited_num_external_fds;
 }
 
 void
@@ -775,7 +809,6 @@ InitializePgProcessRuntime(void)
 	process_runtime.kind = PG_RUNTIME_PROCESS;
 	process_runtime.current_carrier = &process_carrier;
 	process_runtime.extension_backend_model = PG_BACKEND_MODEL_PROCESS;
-	PgRuntimeAdoptEarlyServerGUCState(&process_runtime);
 	PgRuntimeAdoptEarlyExtensionModuleState(&process_runtime);
 
 	process_carrier.kind = PG_CARRIER_PROCESS;
@@ -811,6 +844,7 @@ InitializePgProcessRuntime(void)
 	PgRuntimeSetCurrentWork(&process_runtime, &process_carrier,
 							&process_backend, &process_session,
 							&process_connection, &process_execution, true);
+	PgRuntimeAdoptEarlyServerGUCState(&process_runtime);
 
 	if (MyProc != NULL && MyProc->backendId == 0)
 		MyProc->backendId = process_backend.id;
@@ -921,22 +955,18 @@ static void
 PgRuntimeConfigureThreadedAllocator(bool pooled_protocol)
 {
 #if defined(__GLIBC__)
-	int			arena_max = pooled_protocol ? 1 : 4;
-
 	/*
 	 * Pooled protocol mode targets many mostly-idle logical sessions in one
-	 * postmaster child.  Glibc's default arena growth preserves allocator
-	 * throughput for pinned hot paths, but retains substantial private memory
-	 * in pooled idle-connection profiles and in thread-per-session connection
-	 * churn.  Keep pooled mode modest by default, use a less aggressive cap
-	 * for pinned-thread mode, and let an operator-provided MALLOC_ARENA_MAX
-	 * win.
+	 * postmaster child.  Glibc's default arena growth can retain substantial
+	 * private memory in pooled idle-connection profiles, but low arena caps
+	 * heavily penalize allocator-heavy hot paths.  Leave pinned threaded mode
+	 * on glibc's default policy, keep pooled mode capped high enough for
+	 * carrier concurrency, and let an operator-provided MALLOC_ARENA_MAX win.
 	 */
-	if (getenv("MALLOC_ARENA_MAX") == NULL)
-		(void) mallopt(M_ARENA_MAX, arena_max);
-
 	if (pooled_protocol)
 	{
+		if (getenv("MALLOC_ARENA_MAX") == NULL)
+			(void) mallopt(M_ARENA_MAX, 128);
 		if (getenv("MALLOC_TRIM_THRESHOLD_") == NULL)
 			(void) mallopt(M_TRIM_THRESHOLD, 128 * 1024);
 		if (getenv("MALLOC_TOP_PAD_") == NULL)
@@ -1248,22 +1278,58 @@ PgRuntimePooledProtocolCarrierLimit(void)
 	return pooled_protocol_carriers;
 }
 
+bool
+PgRuntimeThreadedSessionPoolShellRequested(void)
+{
+	return multithreaded &&
+		threaded_session_pool == THREADED_SESSION_POOL_SHELL &&
+		threaded_session_pool_max > 0 &&
+		!PgRuntimePooledProtocolRequested();
+}
+
+int
+PgRuntimeThreadedSessionPoolCarrierLimit(void)
+{
+	return threaded_session_pool_max;
+}
+
 uint32
 PgRuntimePooledProtocolIdleCarrierCount(void)
 {
 	PgProtocolSchedulerState *scheduler;
-	uint32		idle_carriers;
 
 	if (!thread_runtime_initialized ||
 		thread_runtime.kind != PG_RUNTIME_POOLED_PROTOCOL)
 		return 0;
 
 	scheduler = &thread_runtime.protocol_scheduler;
-	SpinLockAcquire(&scheduler->lock);
-	idle_carriers = scheduler->idle_carrier_count;
-	SpinLockRelease(&scheduler->lock);
+	return pg_atomic_read_u32(&scheduler->idle_carrier_count_atomic);
+}
 
-	return idle_carriers;
+uint32
+PgRuntimePooledProtocolRunnableCount(void)
+{
+	PgProtocolSchedulerState *scheduler;
+
+	if (!thread_runtime_initialized ||
+		thread_runtime.kind != PG_RUNTIME_POOLED_PROTOCOL)
+		return 0;
+
+	scheduler = &thread_runtime.protocol_scheduler;
+	return pg_atomic_read_u32(&scheduler->runnable_count_atomic);
+}
+
+uint32
+PgRuntimePooledProtocolParkedCount(void)
+{
+	PgProtocolSchedulerState *scheduler;
+
+	if (!thread_runtime_initialized ||
+		thread_runtime.kind != PG_RUNTIME_POOLED_PROTOCOL)
+		return 0;
+
+	scheduler = &thread_runtime.protocol_scheduler;
+	return pg_atomic_read_u32(&scheduler->parked_protocol_count_atomic);
 }
 
 PgBackendLaunchModel
@@ -1290,6 +1356,7 @@ PgRuntimeShouldThreadBackend(BackendType backend_type)
 		backend_type == B_ARCHIVER ||
 		backend_type == B_AUTOVAC_LAUNCHER ||
 		backend_type == B_AUTOVAC_WORKER ||
+		backend_type == B_DEAD_END_BACKEND ||
 		backend_type == B_BG_WRITER ||
 		backend_type == B_CHECKPOINTER ||
 		backend_type == B_LOGGER ||

@@ -394,8 +394,7 @@ SysLoggerMain(const void *startup_data, size_t startup_data_len)
 		{
 			ConfigReloadPending = false;
 
-			if (!threaded_logger)
-				ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 
 			/*
 			 * Check if the log directory or filename pattern changed in

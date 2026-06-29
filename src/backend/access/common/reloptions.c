@@ -659,6 +659,8 @@ ThreadedRelOptionsUnlock(bool locked)
 
 	if (!multithreaded)
 		return;
+	if (!locked && ThreadedRelOptionsMutexDepth == 0)
+		return;
 
 	Assert(ThreadedRelOptionsMutexDepth > 0);
 	ThreadedRelOptionsMutexDepth--;
@@ -667,7 +669,8 @@ ThreadedRelOptionsUnlock(bool locked)
 		return;
 
 	rc = pthread_mutex_unlock(&ThreadedRelOptionsMutex);
-	RESUME_INTERRUPTS();
+	if (InterruptHoldoffCount > 0)
+		RESUME_INTERRUPTS();
 	if (rc != 0)
 	{
 		errno = rc;
@@ -852,6 +855,45 @@ add_reloption_kind(void)
 
 	ThreadedRelOptionsUnlock(locked);
 	return result;
+}
+
+/*
+ * reloption_kind_has_option
+ *		Test whether a custom reloption kind still has a registered option.
+ */
+bool
+reloption_kind_has_option(relopt_kind kind, const char *name)
+{
+	bool		locked;
+	bool		found = false;
+	int			i;
+
+	locked = ThreadedRelOptionsLock();
+
+	PG_TRY();
+	{
+		if (need_initialization)
+			initialize_reloptions();
+
+		for (i = 0; relOpts[i]; i++)
+		{
+			if ((relOpts[i]->kinds & kind) != 0 &&
+				strcmp(relOpts[i]->name, name) == 0)
+			{
+				found = true;
+				break;
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		ThreadedRelOptionsUnlock(locked);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	ThreadedRelOptionsUnlock(locked);
+	return found;
 }
 
 /*

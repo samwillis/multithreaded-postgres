@@ -16,6 +16,7 @@ backend_sources += files(
   'queryenvironment.c',
   'rls.c',
   'sampling.c',
+  'shellcmd.c',
   'stack_depth.c',
   'superuser.c',
   'timeout.c',

@@ -11,6 +11,7 @@ use Time::HiRes qw(usleep);
 use constant PARK_STATE => 0;
 use constant QUEUE_STATE => 1;
 use constant PARKED_PROTOCOL_COUNT => 14;
+use constant PARKED_PROTOCOL_ENQUEUE_COUNT => 16;
 use constant CARRIER_ATTACHED => 17;
 use constant SESSION_PRESENT => 18;
 use constant CONNECTION_PRESENT => 19;
@@ -69,7 +70,8 @@ sub wait_for_protocol_parked
 
 			return 0 unless @fields >= 27;
 			return $fields[PARK_STATE] eq 'committed'
-			  && $fields[QUEUE_STATE] eq 'parked_protocol_read'
+			  && ($fields[QUEUE_STATE] eq 'parked_protocol_read'
+				|| $fields[QUEUE_STATE] eq 'polling')
 			  && $fields[CARRIER_ATTACHED] == 0
 			  && $fields[SESSION_PRESENT] == 1
 			  && $fields[CONNECTION_PRESENT] == 1
@@ -133,9 +135,9 @@ for my $i (1 .. 3)
 
 my @fields = wait_for_protocol_field(
 	$pids[0],
-	PARKED_PROTOCOL_COUNT,
+	PARKED_PROTOCOL_ENQUEUE_COUNT,
 	sub { return shift >= scalar @sessions; },
-	'pooled postmaster-death test parks more sessions than carriers');
+	'pooled postmaster-death test records more parked sessions than carriers');
 
 is($fields[CARRIER_LIMIT], '2',
 	'pooled postmaster-death snapshot exposes carrier limit');

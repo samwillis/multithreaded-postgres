@@ -19,6 +19,7 @@ my $branch_install = File::Spec->catdir($repo_root, 'tmp_install');
 my $client_install = $vanilla_install;
 my $out_dir = File::Spec->catdir('/tmp',
 	sprintf('mtpg_pgbench_matrix_%s', strftime('%Y%m%d_%H%M%S', localtime)));
+my $socket_root = '/tmp';
 my $duration = 35;
 my $warmup = 5;
 my $clients = 8;
@@ -33,15 +34,24 @@ my $workloads =
 my $lanes = 'vanilla,branch_process,branch_threaded,branch_pool';
 my $reuse = 0;
 my $restart_per_workload = 0;
+my $interleave_lanes = 0;
 my $sample_server_resources = 0;
 my $sample_memory_detail = 0;
 my $resource_sample_interval_ms = 100;
 my $resource_baseline_samples = 3;
 my $log_protocol_park_memory = 0;
+my $log_threaded_lifecycle_timing = 0;
 my $help = 0;
 my $socket_seq = 0;
 my $default_max_files_per_process = 1000;
 my @branch_extra_config;
+my @branch_server_env;
+my @branch_threaded_server_env;
+my @branch_pooled_server_env;
+my $client_cpuset;
+my $branch_server_cpuset;
+my $branch_threaded_server_cpuset;
+my $branch_pooled_server_cpuset;
 
 my @protocol_park_memory_fields = qw(
   pid backend_id generation
@@ -127,6 +137,21 @@ my @protocol_park_relcache_memory_summary_fields = qw(
   private_context_used_bytes
 );
 
+my @protocol_park_timing_fields = qw(
+  pid backend_id model event result reason outcome
+  total_us timeout_ms wait_us release_us memory_log_us commit_us detach_us
+  queue_us lease_us immediate_us scan_us poll_us mark_us repark_us pop_us
+  attach_us accounting_us queue_wait_us nbackends registered_sockets nready
+  wait_timeout_ms wake_events
+);
+
+my @protocol_park_timing_summary_fields = qw(
+  total_us timeout_ms wait_us release_us memory_log_us commit_us detach_us
+  queue_us lease_us immediate_us scan_us poll_us mark_us repark_us pop_us
+  attach_us accounting_us queue_wait_us nbackends registered_sockets nready
+  wait_timeout_ms wake_events
+);
+
 GetOptions(
 	'vanilla-install=s' => \$vanilla_install,
 	'branch-install=s'  => \$branch_install,
@@ -145,12 +170,22 @@ GetOptions(
 	'lanes=s'           => \$lanes,
 	'reuse'             => \$reuse,
 	'restart-per-workload' => \$restart_per_workload,
+	'interleave-lanes'  => \$interleave_lanes,
 	'branch-config=s@' => \@branch_extra_config,
+	'branch-server-env=s@' => \@branch_server_env,
+	'branch-threaded-server-env=s@' => \@branch_threaded_server_env,
+	'branch-pooled-server-env=s@' => \@branch_pooled_server_env,
+	'client-cpuset=s' => \$client_cpuset,
+	'branch-server-cpuset=s' => \$branch_server_cpuset,
+	'branch-threaded-server-cpuset=s' => \$branch_threaded_server_cpuset,
+	'branch-pooled-server-cpuset=s' => \$branch_pooled_server_cpuset,
+	'socket-root=s' => \$socket_root,
 	'sample-server-resources!' => \$sample_server_resources,
 	'sample-memory-detail!' => \$sample_memory_detail,
 	'resource-sample-interval-ms=i' => \$resource_sample_interval_ms,
 	'resource-baseline-samples=i' => \$resource_baseline_samples,
 	'log-protocol-park-memory!' => \$log_protocol_park_memory,
+	'log-threaded-lifecycle-timing!' => \$log_threaded_lifecycle_timing,
 	'help'              => \$help,
 ) or die usage();
 
@@ -168,6 +203,8 @@ die "--scale must be positive\n" if $scale <= 0;
 die "--max-connections must exceed --clients\n"
   if $max_connections <= $clients;
 die "--runs must be positive\n" if $runs <= 0;
+die "--interleave-lanes requires --restart-per-workload\n"
+  if $interleave_lanes && !$restart_per_workload;
 die "--resource-sample-interval-ms must be positive\n"
   if $resource_sample_interval_ms <= 0;
 die "--resource-baseline-samples must be non-negative\n"
@@ -186,6 +223,21 @@ for my $size (@pool_sizes)
 my @requested_workloads = grep { length($_) } split /,/, $workloads;
 my @requested_lanes = grep { length($_) } split /,/, $lanes;
 my @branch_diagnostic_config;
+
+validate_server_env_options('--branch-server-env', \@branch_server_env);
+validate_server_env_options('--branch-threaded-server-env',
+	\@branch_threaded_server_env);
+validate_server_env_options('--branch-pooled-server-env',
+	\@branch_pooled_server_env);
+validate_cpuset_option('--client-cpuset', $client_cpuset);
+validate_cpuset_option('--branch-server-cpuset', $branch_server_cpuset);
+validate_cpuset_option('--branch-threaded-server-cpuset',
+	$branch_threaded_server_cpuset);
+validate_cpuset_option('--branch-pooled-server-cpuset',
+	$branch_pooled_server_cpuset);
+die "--socket-root must be an absolute path, got: $socket_root\n"
+  unless File::Spec->file_name_is_absolute($socket_root);
+make_path($socket_root);
 
 my %workload_specs = (
 	builtin_select_simple => {
@@ -307,6 +359,8 @@ for my $lane (@requested_lanes)
 			name => 'vanilla',
 			install => $vanilla_install,
 			config => [],
+			server_env => [],
+			server_cpuset => undef,
 			branch => 0,
 		};
 	}
@@ -316,6 +370,8 @@ for my $lane (@requested_lanes)
 			name => 'branch_process',
 			install => $branch_install,
 			config => [ @branch_extra_config, @branch_diagnostic_config ],
+			server_env => [ @branch_server_env ],
+			server_cpuset => $branch_server_cpuset,
 			branch => 1,
 		};
 	}
@@ -330,6 +386,12 @@ for my $lane (@requested_lanes)
 				@branch_extra_config,
 				@branch_diagnostic_config,
 			],
+			server_env => [
+				@branch_server_env,
+				@branch_threaded_server_env,
+			],
+			server_cpuset => selected_cpuset($branch_server_cpuset,
+				$branch_threaded_server_cpuset),
 			branch => 1,
 		};
 	}
@@ -346,6 +408,37 @@ for my $lane (@requested_lanes)
 					@branch_extra_config,
 					@branch_diagnostic_config,
 				],
+				server_env => [
+					@branch_server_env,
+					@branch_pooled_server_env,
+				],
+				server_cpuset => selected_cpuset($branch_server_cpuset,
+					$branch_pooled_server_cpuset),
+				branch => 1,
+			};
+		}
+	}
+	elsif ($lane eq 'branch_shell')
+	{
+		for my $size (@pool_sizes)
+		{
+			push @lane_specs, {
+				name => "branch_shell_$size",
+				install => $branch_install,
+				config => [
+					'multithreaded = on',
+					'pooled_protocol_carriers = 0',
+					'threaded_session_pool = shell',
+					"threaded_session_pool_max = $size",
+					@branch_extra_config,
+					@branch_diagnostic_config,
+				],
+				server_env => [
+					@branch_server_env,
+					@branch_pooled_server_env,
+				],
+				server_cpuset => selected_cpuset($branch_server_cpuset,
+					$branch_pooled_server_cpuset),
 				branch => 1,
 			};
 		}
@@ -510,20 +603,50 @@ print $protocol_park_relcache_memory_fh
 	@protocol_park_relcache_memory_fields),
   "\n";
 
+my $protocol_park_timing_path =
+  File::Spec->catfile($out_dir, 'protocol_park_timing.tsv');
+open my $protocol_park_timing_fh, '>', $protocol_park_timing_path
+  or die "could not write $protocol_park_timing_path: $!";
+print $protocol_park_timing_fh
+  join("\t", 'lane', 'workload', 'run', 'sample_index',
+	@protocol_park_timing_fields),
+  "\n";
+
 my %results;
 if ($restart_per_workload)
 {
-	for my $lane (@lane_specs)
+	if ($interleave_lanes)
 	{
 		for my $workload (@requested_workloads)
 		{
-			run_lane($lane, [ $workload ], $script_dir, $tps_fh,
-				$samples_fh, $resources_fh, $resource_samples_fh,
-				$resource_baselines_fh, $protocol_park_memory_fh,
-				$protocol_park_guc_memory_fh,
-				$protocol_park_context_memory_fh,
-				$protocol_park_catcache_memory_fh,
-				$protocol_park_relcache_memory_fh, \%results, $workload);
+			for my $lane (@lane_specs)
+			{
+				run_lane($lane, [ $workload ], $script_dir, $tps_fh,
+					$samples_fh, $resources_fh, $resource_samples_fh,
+					$resource_baselines_fh, $protocol_park_memory_fh,
+					$protocol_park_guc_memory_fh,
+					$protocol_park_context_memory_fh,
+					$protocol_park_catcache_memory_fh,
+					$protocol_park_relcache_memory_fh,
+					$protocol_park_timing_fh, \%results, $workload);
+			}
+		}
+	}
+	else
+	{
+		for my $lane (@lane_specs)
+		{
+			for my $workload (@requested_workloads)
+			{
+				run_lane($lane, [ $workload ], $script_dir, $tps_fh,
+					$samples_fh, $resources_fh, $resource_samples_fh,
+					$resource_baselines_fh, $protocol_park_memory_fh,
+					$protocol_park_guc_memory_fh,
+					$protocol_park_context_memory_fh,
+					$protocol_park_catcache_memory_fh,
+					$protocol_park_relcache_memory_fh,
+					$protocol_park_timing_fh, \%results, $workload);
+			}
 		}
 	}
 }
@@ -537,7 +660,8 @@ else
 			$protocol_park_guc_memory_fh,
 			$protocol_park_context_memory_fh,
 			$protocol_park_catcache_memory_fh,
-			$protocol_park_relcache_memory_fh, \%results, undef);
+			$protocol_park_relcache_memory_fh, $protocol_park_timing_fh,
+			\%results, undef);
 	}
 }
 
@@ -556,6 +680,7 @@ close $protocol_park_guc_memory_fh;
 close $protocol_park_context_memory_fh;
 close $protocol_park_catcache_memory_fh;
 close $protocol_park_relcache_memory_fh;
+close $protocol_park_timing_fh;
 
 write_ratios($out_dir, \@requested_workloads, \@lane_specs, \%results);
 write_resource_efficiency($out_dir, \@requested_workloads, \@lane_specs,
@@ -571,6 +696,7 @@ write_protocol_park_catcache_memory_summary($out_dir,
 	$protocol_park_catcache_memory_path);
 write_protocol_park_relcache_memory_summary($out_dir,
 	$protocol_park_relcache_memory_path);
+write_protocol_park_timing_summary($out_dir, $protocol_park_timing_path);
 write_memory_detail_summaries($out_dir);
 write_summary($out_dir, \@requested_workloads, \@lane_specs, \%results);
 
@@ -589,6 +715,7 @@ print "wrote $protocol_park_guc_memory_path\n";
 print "wrote $protocol_park_context_memory_path\n";
 print "wrote $protocol_park_catcache_memory_path\n";
 print "wrote $protocol_park_relcache_memory_path\n";
+print "wrote $protocol_park_timing_path\n";
 print "wrote ", File::Spec->catfile($out_dir, 'ratios.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'resource_efficiency.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'memory_footprint.tsv'), "\n";
@@ -597,6 +724,7 @@ print "wrote ", File::Spec->catfile($out_dir, 'protocol_park_guc_memory_summary.
 print "wrote ", File::Spec->catfile($out_dir, 'protocol_park_context_memory_summary.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'protocol_park_catcache_memory_summary.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'protocol_park_relcache_memory_summary.tsv'), "\n";
+print "wrote ", File::Spec->catfile($out_dir, 'protocol_park_timing_summary.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'server_process_rollup_summary.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'server_memory_map_category_summary.tsv'), "\n";
 print "wrote ", File::Spec->catfile($out_dir, 'server_memory_map_path_top.tsv'), "\n";
@@ -613,6 +741,7 @@ Runs the multithreaded branch pgbench comparison matrix:
   branch_process
   branch_threaded
   branch_pool_<N> for each --pool-sizes value
+  branch_shell_<N> for each --pool-sizes value
 
 Key options:
   --vanilla-install=DIR   vanilla PostgreSQL install tree
@@ -626,11 +755,37 @@ Key options:
   --scale=N               pgbench initialization scale, default 10
   --pool-sizes=LIST       comma-separated pooled carrier counts, default 4,8,16
   --runs=N                measured repetitions per lane/workload, default 1
-  --lanes=LIST            vanilla,branch_process,branch_threaded,branch_pool
+  --lanes=LIST            vanilla,branch_process,branch_threaded,branch_pool,
+                          branch_shell
   --workloads=LIST        workload names to run
   --restart-per-workload  restart each lane for each workload
+  --interleave-lanes      with --restart-per-workload, run every requested lane
+                          for one workload before moving to the next workload
   --branch-config=LINE    append a postgresql.conf line to branch lanes;
                            may be specified more than once
+  --branch-server-env=NAME=VALUE
+                           add an environment variable to every branch server
+                           start; may be specified more than once
+  --branch-threaded-server-env=NAME=VALUE
+                           add an environment variable only to branch_threaded
+                           server starts; may be specified more than once
+  --branch-pooled-server-env=NAME=VALUE
+                           add an environment variable only to branch_pool and
+                           branch_shell server starts; may be specified more
+                           than once
+  --client-cpuset=LIST
+                           run measured pgbench clients with taskset -c LIST
+  --branch-server-cpuset=LIST
+                           run every branch server with taskset -c LIST
+  --branch-threaded-server-cpuset=LIST
+                           run branch_threaded servers with taskset -c LIST
+                           instead of --branch-server-cpuset
+  --branch-pooled-server-cpuset=LIST
+                           run branch_pool and branch_shell servers with
+                           taskset -c LIST instead of --branch-server-cpuset
+  --socket-root=DIR
+                           create temporary Unix socket directories below DIR,
+                           default /tmp
   --sample-server-resources
                            sample server process/thread counts while measuring
   --sample-memory-detail
@@ -645,6 +800,9 @@ Key options:
   --log-protocol-park-memory
                            enable branch server log attribution at committed
                            protocol-read parks and write protocol_park_memory.tsv
+  --log-threaded-lifecycle-timing
+                           enable branch lifecycle timing logs and write
+                           protocol_park_timing.tsv
 
 Additional non-default workloads useful for pooled connection-shape profiles:
   select1_sleep_1ms_prepared
@@ -692,12 +850,15 @@ Output:
   protocol_park_context_memory.tsv
                            bounded per-backend memory-context tree rows
                            emitted at committed protocol-read parks
+  protocol_park_timing.tsv parsed parked-session scheduler timing rows
   protocol_park_memory_summary.tsv
                            median per-park memory attribution by lane/workload
   protocol_park_guc_memory_summary.tsv
                            median per-park GUC memory attribution by lane/workload
   protocol_park_context_memory_summary.tsv
                            median per-context retained/used memory by path
+  protocol_park_timing_summary.tsv
+                           median and p95 scheduler timing by event/outcome
   ratios.tsv              per-lane ratios against vanilla, or the first selected lane
   resource_efficiency.tsv derived TPS/thread and memory/client metrics
   memory_footprint.tsv    baseline-adjusted memory footprint estimates
@@ -890,14 +1051,14 @@ sub run_lane
 		$protocol_park_memory_fh, $protocol_park_guc_memory_fh,
 		$protocol_park_context_memory_fh,
 		$protocol_park_catcache_memory_fh,
-		$protocol_park_relcache_memory_fh, $results,
+		$protocol_park_relcache_memory_fh, $protocol_park_timing_fh, $results,
 		$lane_dir_suffix) = @_;
 
 	my $lane_dir_name = defined $lane_dir_suffix ?
 		"$lane->{name}_$lane_dir_suffix" : $lane->{name};
 	my $lane_dir = File::Spec->catdir($out_dir, $lane_dir_name);
 	my $data_dir = File::Spec->catdir($lane_dir, 'data');
-	my $socket_dir = File::Spec->catdir('/tmp',
+	my $socket_dir = File::Spec->catdir($socket_root,
 		sprintf('mtpg_sock_%d_%d', $$, ++$socket_seq));
 	my $server_log = File::Spec->catfile($lane_dir, 'server.log');
 	my $port = pick_free_port();
@@ -920,11 +1081,8 @@ sub run_lane
 
 	my $started = 0;
 	eval {
-		run_cmd([
-				$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
-				'-o', "-k $socket_dir",
-				'-w', 'start'
-			],
+		run_cmd(server_start_cmd($lane, $pg_ctl_bin, $data_dir,
+				$server_log, $socket_dir),
 			"$lane->{name} start");
 		$started = 1;
 
@@ -941,22 +1099,23 @@ sub run_lane
 			],
 			"$lane->{name} extra setup");
 
-		if ($log_protocol_park_memory && $lane->{branch})
+		if (($log_protocol_park_memory || $log_threaded_lifecycle_timing) &&
+			$lane->{branch})
 		{
 			run_cmd([
 					$pg_ctl_bin, '-D', $data_dir, '-m', 'fast',
 					'-w', 'stop'
 				],
-				"$lane->{name} stop before protocol park logging");
+				"$lane->{name} stop before diagnostic logging");
 			$started = 0;
+			append_postmaster_config($data_dir, 'log_protocol_park_memory = on')
+			  if $log_protocol_park_memory;
 			append_postmaster_config($data_dir,
-				'log_protocol_park_memory = on');
-			run_cmd([
-					$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
-					'-o', "-k $socket_dir",
-					'-w', 'start'
-				],
-				"$lane->{name} restart with protocol park logging");
+				'log_threaded_lifecycle_timing = on')
+			  if $log_threaded_lifecycle_timing;
+			run_cmd(server_start_cmd($lane, $pg_ctl_bin, $data_dir,
+					$server_log, $socket_dir),
+				"$lane->{name} restart with diagnostic logging");
 			$started = 1;
 		}
 
@@ -989,7 +1148,8 @@ sub run_lane
 					$protocol_park_guc_memory_fh,
 					$protocol_park_context_memory_fh,
 					$protocol_park_catcache_memory_fh,
-					$protocol_park_relcache_memory_fh);
+					$protocol_park_relcache_memory_fh,
+					$protocol_park_timing_fh);
 
 				push @samples, {
 					tps => $sample_tps,
@@ -1038,6 +1198,59 @@ sub run_lane
 	remove_tree($socket_dir) if -e $socket_dir;
 
 	die $err if $err;
+}
+
+sub validate_server_env_options
+{
+	my ($option, $entries) = @_;
+
+	for my $entry (@$entries)
+	{
+		die "$option must use NAME=VALUE, got: $entry\n"
+		  unless $entry =~ /^[A-Za-z_][A-Za-z0-9_]*=/;
+	}
+}
+
+sub validate_cpuset_option
+{
+	my ($option, $cpuset) = @_;
+
+	return unless defined $cpuset;
+	die "$option must use taskset CPU list syntax, got: $cpuset\n"
+	  unless $cpuset =~ /^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$/;
+}
+
+sub selected_cpuset
+{
+	my ($base, $specific) = @_;
+
+	return $specific if defined $specific;
+	return $base;
+}
+
+sub command_with_cpuset
+{
+	my ($cpuset, @cmd) = @_;
+
+	return \@cmd unless defined $cpuset;
+	return [ 'taskset', '-c', $cpuset, @cmd ];
+}
+
+sub server_start_cmd
+{
+	my ($lane, $pg_ctl_bin, $data_dir, $server_log, $socket_dir) = @_;
+	my @cmd = (
+		$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
+		'-o', "-k $socket_dir",
+		'-w', 'start'
+	);
+
+	if (defined $lane->{server_env} && @{ $lane->{server_env} })
+	{
+		@cmd = ('env', @{ $lane->{server_env} }, @cmd);
+	}
+
+	return command_with_cpuset($lane->{server_cpuset}, @cmd);
 }
 
 sub append_config
@@ -1132,7 +1345,8 @@ sub run_workload
 		$protocol_park_memory_fh, $protocol_park_guc_memory_fh,
 		$protocol_park_context_memory_fh,
 		$protocol_park_catcache_memory_fh,
-		$protocol_park_relcache_memory_fh) = @_;
+		$protocol_park_relcache_memory_fh,
+		$protocol_park_timing_fh) = @_;
 
 	my $spec = $workload_specs{$workload};
 	my @args = @{ $spec->{args} };
@@ -1153,12 +1367,13 @@ sub run_workload
 		'-p', $port,
 		@args,
 	);
+	my $base_cmd = command_with_cpuset($client_cpuset, @base_cmd);
 
 	if ($warmup > 0)
 	{
 		my $warm = File::Spec->catfile($out_dir,
 			"$lane->{name}_${workload}.warm");
-		run_capture([ @base_cmd, '-T', $warmup, 'postgres' ], "$workload warmup",
+		run_capture([ @$base_cmd, '-T', $warmup, 'postgres' ], "$workload warmup",
 			"$warm.out", "$warm.err", undef, pgbench_timeout($warmup));
 	}
 
@@ -1167,7 +1382,7 @@ sub run_workload
 	  new_server_resource_sample($data_dir, $lane->{name}, $workload,
 		$run_index, $resource_samples_fh);
 	my $protocol_park_log_offset = -e $server_log ? (-s $server_log) : 0;
-	my $output = run_capture([ @base_cmd, '-T', $duration, 'postgres' ],
+	my $output = run_capture([ @$base_cmd, '-T', $duration, 'postgres' ],
 		"$lane->{name} $workload", $bench, "$bench.err", $resources,
 		pgbench_timeout($duration));
 
@@ -1178,6 +1393,9 @@ sub run_workload
 		$protocol_park_catcache_memory_fh,
 		$protocol_park_relcache_memory_fh)
 	  if $log_protocol_park_memory;
+	parse_threaded_protocol_park_log($server_log, $protocol_park_log_offset,
+		$lane->{name}, $workload, $run_index, $protocol_park_timing_fh)
+	  if $log_threaded_lifecycle_timing;
 
 	my ($tps) = $output =~ /^tps = ([0-9.]+) /m;
 	my ($latency) = $output =~ /^latency average = ([0-9.]+) ms/m;
@@ -1229,6 +1447,21 @@ sub median
 	}
 
 	return ($values[$count / 2 - 1] + $values[$count / 2]) / 2;
+}
+
+sub percentile_nearest_rank
+{
+	my ($percentile, @values) = @_;
+	my @sorted = sort { $a <=> $b } @values;
+	my $count = scalar @sorted;
+	my $rank;
+
+	die "cannot compute percentile of no samples\n" if $count == 0;
+
+	$rank = int(($percentile / 100.0) * $count + 0.999999);
+	$rank = 1 if $rank < 1;
+	$rank = $count if $rank > $count;
+	return $sorted[$rank - 1];
 }
 
 sub new_resource_summary
@@ -1887,6 +2120,44 @@ sub parse_protocol_park_memory_log
 			$sample_index,
 			map { defined $fields{$_} ? $fields{$_} : 'n/a' }
 			  @protocol_park_memory_fields), "\n";
+	}
+
+	close $log_fh;
+}
+
+sub parse_threaded_protocol_park_log
+{
+	my ($server_log, $offset, $lane, $workload, $run_index, $fh) = @_;
+	my $sample_index = 0;
+
+	return unless defined $fh;
+	return unless -e $server_log;
+
+	open my $log_fh, '<', $server_log
+	  or die "could not read $server_log: $!";
+	seek $log_fh, $offset, 0
+	  or die "could not seek $server_log: $!";
+
+	while (defined(my $line = <$log_fh>))
+	{
+		my %fields;
+		my $payload;
+
+		next unless $line =~ /threaded_protocol_park\s+(.*)$/;
+		$payload = $1;
+		while ($payload =~ /([A-Za-z0-9_]+)=([^\s]+)/g)
+		{
+			$fields{$1} = $2;
+		}
+
+		$sample_index++;
+		print $fh join("\t",
+			$lane,
+			$workload,
+			$run_index,
+			$sample_index,
+			map { defined $fields{$_} ? $fields{$_} : 'n/a' }
+			  @protocol_park_timing_fields), "\n";
 	}
 
 	close $log_fh;
@@ -2624,6 +2895,40 @@ sub append_protocol_park_context_memory_summary
 	}
 }
 
+sub append_protocol_park_timing_summary
+{
+	my ($fh, $dir) = @_;
+	my $path = File::Spec->catfile($dir, 'protocol_park_timing_summary.tsv');
+	my ($header, $rows) = read_tsv_rows($path);
+
+	return unless @$rows;
+
+	print $fh "\n## Protocol Park Timing\n\n";
+	print $fh "| Workload | Lane | Event | Detail | Samples | Total p50 us | Total p95 us | Wait p50 us | Detach p50 us | Queue p50 us | Attach p50 us | Poll p50 us |\n";
+	print $fh "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+	for my $row (@$rows)
+	{
+		my $result = tsv_row_value($row, $header, 'result');
+		my $reason = tsv_row_value($row, $header, 'reason');
+		my $outcome = tsv_row_value($row, $header, 'outcome');
+		my $detail = $outcome ne 'n/a' ? $outcome :
+		  ($reason ne 'n/a' ? $reason : $result);
+
+		print $fh "| `", tsv_row_value($row, $header, 'workload'), "` | `",
+		  tsv_row_value($row, $header, 'lane'), "` | `",
+		  tsv_row_value($row, $header, 'event'), "` | `",
+		  $detail, "` | ",
+		  tsv_row_value($row, $header, 'samples'), " | ",
+		  tsv_row_value($row, $header, 'total_us_median'), " | ",
+		  tsv_row_value($row, $header, 'total_us_p95'), " | ",
+		  tsv_row_value($row, $header, 'wait_us_median'), " | ",
+		  tsv_row_value($row, $header, 'detach_us_median'), " | ",
+		  tsv_row_value($row, $header, 'queue_us_median'), " | ",
+		  tsv_row_value($row, $header, 'attach_us_median'), " | ",
+		  tsv_row_value($row, $header, 'poll_us_median'), " |\n";
+	}
+}
+
 sub append_memory_detail_summary
 {
 	my ($fh, $dir) = @_;
@@ -3255,6 +3560,86 @@ sub write_protocol_park_relcache_memory_summary
 	close $fh;
 }
 
+sub write_protocol_park_timing_summary
+{
+	my ($dir, $raw_path) = @_;
+	my $path = File::Spec->catfile($dir, 'protocol_park_timing_summary.tsv');
+	my %field_index;
+	my %groups;
+
+	open my $raw_fh, '<', $raw_path or die "could not read $raw_path: $!";
+	my $header = <$raw_fh>;
+	chomp $header if defined $header;
+	my @header = defined $header ? split /\t/, $header : ();
+	for my $i (0 .. $#header)
+	{
+		$field_index{$header[$i]} = $i;
+	}
+
+	while (defined(my $line = <$raw_fh>))
+	{
+		chomp $line;
+		next if $line eq '';
+		my @cols = split /\t/, $line, -1;
+		my $lane = $cols[$field_index{lane}];
+		my $workload = $cols[$field_index{workload}];
+		my $event = $cols[$field_index{event}];
+		my $result = $cols[$field_index{result}];
+		my $reason = $cols[$field_index{reason}];
+		my $outcome = $cols[$field_index{outcome}];
+		my $key = join "\t", $lane, $workload, $event, $result, $reason,
+		  $outcome;
+
+		$groups{$key}{lane} = $lane;
+		$groups{$key}{workload} = $workload;
+		$groups{$key}{event} = $event;
+		$groups{$key}{result} = $result;
+		$groups{$key}{reason} = $reason;
+		$groups{$key}{outcome} = $outcome;
+		$groups{$key}{count}++;
+		for my $field (@protocol_park_timing_summary_fields)
+		{
+			next unless exists $field_index{$field};
+			my $value = $cols[$field_index{$field}];
+
+			next unless defined $value && $value =~ /^-?\d+(?:\.\d+)?$/;
+			push @{ $groups{$key}{values}{$field} }, $value + 0;
+		}
+	}
+	close $raw_fh;
+
+	open my $fh, '>', $path or die "could not write $path: $!";
+	print $fh join("\t",
+		qw(workload lane event result reason outcome samples),
+		map { ("${_}_median", "${_}_p95") }
+		  @protocol_park_timing_summary_fields),
+	  "\n";
+
+	for my $key (sort keys %groups)
+	{
+		my $group = $groups{$key};
+
+		print $fh join("\t",
+			$group->{workload},
+			$group->{lane},
+			$group->{event},
+			$group->{result},
+			$group->{reason},
+			$group->{outcome},
+			$group->{count},
+			map {
+				my $values = $group->{values}{$_};
+				defined $values && @$values
+				  ? (metric_value(median(@$values), 2),
+					metric_value(percentile_nearest_rank(95, @$values), 2))
+				  : ('n/a', 'n/a')
+			} @protocol_park_timing_summary_fields),
+		  "\n";
+	}
+
+	close $fh;
+}
+
 sub write_memory_detail_summaries
 {
 	my ($dir) = @_;
@@ -3785,6 +4170,9 @@ sub write_summary
 	print $fh "- duration: ${duration}s\n";
 	print $fh "- warmup: ${warmup}s\n";
 	print $fh "- runs: $runs\n";
+	print $fh "- interleave lanes: ",
+	  ($interleave_lanes ? 'yes' : 'no'), "\n"
+	  if $restart_per_workload;
 	print $fh "- clients: $clients\n";
 	print $fh "- threads: $threads\n";
 	print $fh "- max connections: $max_connections\n";
@@ -3799,7 +4187,18 @@ sub write_summary
 	print $fh "- scale: $scale\n";
 	print $fh "- branch install: `$branch_install`\n";
 	print $fh "- vanilla install: `$vanilla_install`\n";
-	print $fh "- client install: `$client_install`\n\n";
+	print $fh "- client install: `$client_install`\n";
+	print $fh "- socket root: `$socket_root`\n";
+	print $fh "- client cpuset: `$client_cpuset`\n" if defined $client_cpuset;
+	for my $lane (@$lane_specs)
+	{
+		print $fh "- $lane->{name} server cpuset: `$lane->{server_cpuset}`\n"
+		  if defined $lane->{server_cpuset};
+		print $fh "- $lane->{name} server env: `",
+		  join(' ', @{ $lane->{server_env} }), "`\n"
+		  if defined $lane->{server_env} && @{ $lane->{server_env} };
+	}
+	print $fh "\n";
 	print $fh "- ratio baseline: `$baseline_lane`\n\n";
 
 	print $fh "| Workload |";
@@ -3991,6 +4390,7 @@ sub write_summary
 	append_memory_detail_summary($fh, $dir);
 	append_protocol_park_memory_summary($fh, $dir);
 	append_protocol_park_context_memory_summary($fh, $dir);
+	append_protocol_park_timing_summary($fh, $dir);
 
 	close $fh;
 }

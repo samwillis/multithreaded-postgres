@@ -22,7 +22,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "test_custom_var_stats",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 #define TEST_CUSTOM_VAR_MAGIC_NUMBER (0xBEEFBEEF)
@@ -75,8 +76,14 @@ static FILE *fd_description = NULL;
 /* Current write offset in fd_description file */
 static pgoff_t fd_description_offset = 0;
 
-/* DSA area for storing variable-length description strings */
-static dsa_area *custom_stats_description_dsa = NULL;
+/*
+ * DSA area for storing variable-length description strings.
+ *
+ * Named DSA handles contain backend-local attachment state.  Thread-per-session
+ * backends share extension static storage, so each backend thread needs its
+ * own cached handle.
+ */
+static PG_THREAD_LOCAL dsa_area *custom_stats_description_dsa = NULL;
 
 /*--------------------------------------------------------------------------
  * Function prototypes

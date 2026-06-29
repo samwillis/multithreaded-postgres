@@ -20,6 +20,7 @@ $node->init;
 $node->append_conf('postgresql.conf',
 	"shared_preload_libraries = 'test_slru,injection_points'");
 $node->start;
+my $threaded = $node->safe_psql('postgres', 'SHOW multithreaded') eq 'on';
 $node->safe_psql('postgres', q(CREATE EXTENSION injection_points));
 $node->safe_psql('postgres', q(CREATE EXTENSION test_slru));
 
@@ -53,7 +54,14 @@ $node->safe_psql('postgres',
 my $multi2 = $node->safe_psql('postgres', q{SELECT test_create_multixact();});
 
 # All set and done, it's time for hard restart
-$node->stop('immediate');
+if ($threaded)
+{
+	$node->kill9();
+}
+else
+{
+	$node->stop('immediate');
+}
 $node->start;
 $bg_psql->{run}->finish;
 

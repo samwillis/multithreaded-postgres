@@ -30,6 +30,7 @@
 
 #include "access/relation.h"
 #include "access/xact.h"
+#include "fmgr.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
@@ -190,20 +191,22 @@ _PG_init(void)
 							NULL,
 							NULL);
 
+	/* can't define PGC_POSTMASTER variable after startup */
+	if (process_shared_preload_libraries_in_progress ||
+		dynamic_library_threaded_session_init_in_progress())
+		DefineCustomBoolVariable("pg_prewarm.autoprewarm",
+								 "Starts the autoprewarm worker.",
+								 NULL,
+								 &autoprewarm,
+								 true,
+								 PGC_POSTMASTER,
+								 0,
+								 NULL,
+								 NULL,
+								 NULL);
+
 	if (!process_shared_preload_libraries_in_progress)
 		return;
-
-	/* can't define PGC_POSTMASTER variable after startup */
-	DefineCustomBoolVariable("pg_prewarm.autoprewarm",
-							 "Starts the autoprewarm worker.",
-							 NULL,
-							 &autoprewarm,
-							 true,
-							 PGC_POSTMASTER,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
 
 	MarkGUCPrefixReserved("pg_prewarm");
 

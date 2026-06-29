@@ -504,6 +504,16 @@ typedef struct RetainDeadTuplesData
  * advancing oldest_nonremovable_xid.
  */
 #define last_flushpos (PgCurrentLogicalReplicationState()->last_flushpos)
+#define feedback_reply_message \
+	(PgCurrentLogicalReplicationState()->feedback_reply_message)
+#define feedback_send_time \
+	(PgCurrentLogicalReplicationState()->feedback_send_time)
+#define feedback_last_recvpos \
+	(PgCurrentLogicalReplicationState()->feedback_last_recvpos)
+#define feedback_last_writepos \
+	(PgCurrentLogicalReplicationState()->feedback_last_writepos)
+#define status_request_message \
+	(PgCurrentLogicalReplicationState()->status_request_message)
 
 /* Sub-transaction data for the current streaming transaction */
 #define subxact_data \
@@ -2301,7 +2311,7 @@ apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 		size_t		nbytes;
 		int			len;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		/* read length of the on-disk record */
 		nbytes = BufFileReadMaybeEOF(stream_fd, &len, sizeof(len), true);
@@ -4008,7 +4018,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		bool		endofstream = false;
 		long		wait_time;
 
-		CHECK_FOR_INTERRUPTS();
+		ProcessLogicalRepWorkerInterrupts();
 
 		MemoryContextSwitchTo(ApplyMessageContext);
 
@@ -4019,7 +4029,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			/* Loop to process all available data (without blocking). */
 			for (;;)
 			{
-				CHECK_FOR_INTERRUPTS();
+				ProcessLogicalRepWorkerInterrupts();
 
 				if (len == 0)
 				{
@@ -4191,7 +4201,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		if (rc & WL_LATCH_SET)
 		{
 			ResetLatch(MyLatch);
-			CHECK_FOR_INTERRUPTS();
+			ProcessLogicalRepWorkerInterrupts();
 		}
 
 		if (ConfigReloadPending)
@@ -4274,12 +4284,6 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 static void
 send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 {
-	static StringInfo reply_message = NULL;
-	static TimestampTz send_time = 0;
-
-	static XLogRecPtr last_recvpos = InvalidXLogRecPtr;
-	static XLogRecPtr last_writepos = InvalidXLogRecPtr;
-
 	XLogRecPtr	writepos;
 	XLogRecPtr	flushpos;
 	TimestampTz now;
@@ -4293,8 +4297,8 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 		return;
 
 	/* It's legal to not pass a recvpos */
-	if (recvpos < last_recvpos)
-		recvpos = last_recvpos;
+	if (recvpos < feedback_last_recvpos)
+		recvpos = feedback_last_recvpos;
 
 	get_flush_position(&writepos, &flushpos, &have_pending_txes);
 
@@ -4305,8 +4309,8 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 	if (!have_pending_txes)
 		flushpos = writepos = recvpos;
 
-	if (writepos < last_writepos)
-		writepos = last_writepos;
+	if (writepos < feedback_last_writepos)
+		writepos = feedback_last_writepos;
 
 	if (flushpos < last_flushpos)
 		flushpos = last_flushpos;
@@ -4315,29 +4319,29 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 
 	/* if we've already reported everything we're good */
 	if (!force &&
-		writepos == last_writepos &&
+		writepos == feedback_last_writepos &&
 		flushpos == last_flushpos &&
-		!TimestampDifferenceExceeds(send_time, now,
+		!TimestampDifferenceExceeds(feedback_send_time, now,
 									wal_receiver_status_interval * 1000))
 		return;
-	send_time = now;
+	feedback_send_time = now;
 
-	if (!reply_message)
+	if (!feedback_reply_message)
 	{
 		MemoryContext oldctx = MemoryContextSwitchTo(ApplyContext);
 
-		reply_message = makeStringInfo();
+		feedback_reply_message = makeStringInfo();
 		MemoryContextSwitchTo(oldctx);
 	}
 	else
-		resetStringInfo(reply_message);
+		resetStringInfo(feedback_reply_message);
 
-	pq_sendbyte(reply_message, PqReplMsg_StandbyStatusUpdate);
-	pq_sendint64(reply_message, recvpos);	/* write */
-	pq_sendint64(reply_message, flushpos);	/* flush */
-	pq_sendint64(reply_message, writepos);	/* apply */
-	pq_sendint64(reply_message, now);	/* sendTime */
-	pq_sendbyte(reply_message, requestReply);	/* replyRequested */
+	pq_sendbyte(feedback_reply_message, PqReplMsg_StandbyStatusUpdate);
+	pq_sendint64(feedback_reply_message, recvpos);	/* write */
+	pq_sendint64(feedback_reply_message, flushpos);	/* flush */
+	pq_sendint64(feedback_reply_message, writepos);	/* apply */
+	pq_sendint64(feedback_reply_message, now);	/* sendTime */
+	pq_sendbyte(feedback_reply_message, requestReply);	/* replyRequested */
 
 	elog(DEBUG2, "sending feedback (force %d) to recv %X/%08X, write %X/%08X, flush %X/%08X",
 		 force,
@@ -4346,12 +4350,12 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 		 LSN_FORMAT_ARGS(flushpos));
 
 	walrcv_send(LogRepWorkerWalRcvConn,
-				reply_message->data, reply_message->len);
+				feedback_reply_message->data, feedback_reply_message->len);
 
-	if (recvpos > last_recvpos)
-		last_recvpos = recvpos;
-	if (writepos > last_writepos)
-		last_writepos = writepos;
+	if (recvpos > feedback_last_recvpos)
+		feedback_last_recvpos = recvpos;
+	if (writepos > feedback_last_writepos)
+		feedback_last_writepos = writepos;
 	if (flushpos > last_flushpos)
 		last_flushpos = flushpos;
 }
@@ -4493,30 +4497,28 @@ get_candidate_xid(RetainDeadTuplesData *rdt_data)
 static void
 request_publisher_status(RetainDeadTuplesData *rdt_data)
 {
-	static StringInfo request_message = NULL;
-
-	if (!request_message)
+	if (!status_request_message)
 	{
 		MemoryContext oldctx = MemoryContextSwitchTo(ApplyContext);
 
-		request_message = makeStringInfo();
+		status_request_message = makeStringInfo();
 		MemoryContextSwitchTo(oldctx);
 	}
 	else
-		resetStringInfo(request_message);
+		resetStringInfo(status_request_message);
 
 	/*
 	 * Send the current time to update the remote walsender's latest reply
 	 * message received time.
 	 */
-	pq_sendbyte(request_message, PqReplMsg_PrimaryStatusRequest);
-	pq_sendint64(request_message, GetCurrentTimestamp());
+	pq_sendbyte(status_request_message, PqReplMsg_PrimaryStatusRequest);
+	pq_sendint64(status_request_message, GetCurrentTimestamp());
 
 	elog(DEBUG2, "sending publisher status request message");
 
 	/* Send a request for the publisher status */
 	walrcv_send(LogRepWorkerWalRcvConn,
-				request_message->data, request_message->len);
+				status_request_message->data, status_request_message->len);
 
 	rdt_data->phase = RDT_WAIT_FOR_PUBLISHER_STATUS;
 
@@ -4986,9 +4988,24 @@ static void
 ProcessLogicalRepConfigReload(void)
 {
 	ConfigReloadPending = false;
+	ProcessConfigReloadForCurrentWorker();
+}
 
-	if (!LogicalRepWorkerThreadedRuntime())
-		ProcessConfigFile(PGC_SIGHUP);
+void
+ProcessLogicalRepWorkerInterrupts(void)
+{
+	PgCurrentBackendApplyInterrupts();
+	CHECK_FOR_INTERRUPTS();
+
+	if (ShutdownRequestPending)
+	{
+		if (MySubscription != NULL)
+			ereport(LOG,
+					(errmsg("logical replication worker for subscription \"%s\" has finished",
+							MySubscription->name)));
+
+		PgBackendExit(0);
+	}
 }
 
 /*
@@ -6005,6 +6022,17 @@ DisableSubscriptionAndExit(void)
 	HOLD_INTERRUPTS();
 
 	EmitErrorReport();
+
+	/*
+	 * If a streamed transaction fails while replaying its spool file,
+	 * stream_fd can point to a BufFile owned by TopTransactionContext and
+	 * TopTransactionResourceOwner.  AbortOutOfAnyTransaction() will release
+	 * that storage and the underlying files, so do not leave a stale handle
+	 * for threaded backend closed-state cleanup to close a second time.
+	 */
+	stream_fd = NULL;
+	MemoryContextSwitchTo(TopMemoryContext);
+
 	AbortOutOfAnyTransaction();
 	FlushErrorState();
 

@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "backup/basebackup_target.h"
+#include "utils/backend_runtime.h"
 #include "utils/global_lifetime.h"
 #include "utils/memutils.h"
 
@@ -33,6 +34,7 @@ struct BaseBackupTargetHandle
 };
 
 static void initialize_target_list(void);
+static MemoryContext basebackup_target_memory_context(void);
 static bbsink *blackhole_get_sink(bbsink *next_sink, void *detail_arg);
 static bbsink *server_get_sink(bbsink *next_sink, void *detail_arg);
 static void *reject_target_detail(char *target, char *target_detail);
@@ -92,11 +94,11 @@ BaseBackupAddTarget(char *name,
 	}
 
 	/*
-	 * We use TopMemoryContext for allocations here to make sure that the data
-	 * we need doesn't vanish under us; that's also why we copy the target
-	 * name into a newly-allocated chunk of memory.
+	 * This registry is process-global. In a threaded postmaster, a backend's
+	 * TopMemoryContext is deleted when the backend thread exits, so keep the
+	 * list cells and extension target records in postmaster-lifetime storage.
 	 */
-	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	oldcontext = MemoryContextSwitchTo(basebackup_target_memory_context());
 	newtype = palloc_object(BaseBackupTargetType);
 	newtype->name = pstrdup(name);
 	newtype->check_detail = check_detail;
@@ -167,6 +169,15 @@ BaseBackupGetSink(BaseBackupTargetHandle *handle, bbsink *next_sink)
 }
 
 /*
+ * Choose storage for process-global target registry entries.
+ */
+static MemoryContext
+basebackup_target_memory_context(void)
+{
+	return PgCurrentRuntimeExtensionModuleMemoryContext();
+}
+
+/*
  * Load predefined target types into BaseBackupTargetTypeList.
  */
 static void
@@ -175,7 +186,7 @@ initialize_target_list(void)
 	BaseBackupTargetType *ttype = builtin_backup_targets;
 	MemoryContext oldcontext;
 
-	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	oldcontext = MemoryContextSwitchTo(basebackup_target_memory_context());
 	while (ttype->name != NULL)
 	{
 		BaseBackupTargetTypeList = lappend(BaseBackupTargetTypeList, ttype);

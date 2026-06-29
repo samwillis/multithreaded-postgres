@@ -39,6 +39,12 @@ test_backend_runtime_threaded = shared_module('test_backend_runtime_threaded',
 )
 test_install_libs += test_backend_runtime_threaded
 
+test_backend_runtime_threaded_initfail = shared_module('test_backend_runtime_threaded_initfail',
+  files('test_backend_runtime_threaded_initfail.c'),
+  kwargs: pg_test_mod_args,
+)
+test_install_libs += test_backend_runtime_threaded_initfail
+
 test_install_data += files(
   'test_backend_runtime.control',
   'test_backend_runtime--1.0.sql',
@@ -66,6 +72,15 @@ tests += {
       't/007_phase15_pooled_protocol_mode.pl',
       't/008_phase15_pooled_protocol_postmaster_death.pl',
       't/009_phase15_pooled_deep_waits_pinned.pl',
+      't/010_phase16_extension_failure_paths.pl',
+      't/011_phase16b_shell_pool_fallback.pl',
+      't/012_phase16b_reusable_session_validator.pl',
+      't/013_phase16b_shell_pool_state_isolation.pl',
+      't/014_phase16b_shell_pool_quarantine_destroy.pl',
+      't/015_phase16b_shell_pool_socket_fd_no_leak.pl',
+      't/016_phase16b_shell_pool_buffer_pin_reset.pl',
+      't/017_phase16b_shell_pool_same_key_guc_baseline.pl',
+      't/018_phase16b_shell_pool_failed_validation_no_leak.pl',
     ],
   },
 }

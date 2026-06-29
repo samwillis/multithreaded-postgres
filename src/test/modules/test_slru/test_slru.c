@@ -16,13 +16,18 @@
 
 #include "access/slru.h"
 #include "access/transam.h"
+#include "fmgr.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/shmem.h"
 #include "utils/builtins.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_slru",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 /*
  * SQL-callable entry points
@@ -216,10 +221,19 @@ void
 _PG_init(void)
 {
 	if (!process_shared_preload_libraries_in_progress)
+	{
+		/*
+		 * Threaded session replay only needs the already-registered shared
+		 * memory callback state; ordinary dynamic loads remain invalid.
+		 */
+		if (dynamic_library_threaded_session_init_in_progress())
+			return;
+
 		ereport(ERROR,
 				(errmsg("cannot load \"%s\" after startup", "test_slru"),
 				 errdetail("\"%s\" must be loaded with \"shared_preload_libraries\".",
 						   "test_slru")));
+	}
 
 	/*
 	 * Create the SLRU directory if it does not exist yet, from the root of

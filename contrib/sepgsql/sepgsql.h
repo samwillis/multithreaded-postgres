@@ -297,7 +297,7 @@ extern void sepgsql_avc_init(void);
  * label.c
  */
 extern char *sepgsql_get_client_label(void);
-extern void sepgsql_init_client_label(void);
+extern void sepgsql_init_client_label(bool install_hooks);
 extern char *sepgsql_get_label(Oid classId, Oid objectId, int32 subId);
 
 extern void sepgsql_object_relabel(const ObjectAddress *object,

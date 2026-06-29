@@ -74,7 +74,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "pg_stat_statements",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /* Location of permanent stats file (valid when database is shut down) */
@@ -291,8 +292,6 @@ typedef struct PgStatStatementsRuntimeState
 	ExecutorFinish_hook_type prev_ExecutorFinish;
 	ExecutorEnd_hook_type prev_ExecutorEnd;
 	ProcessUtility_hook_type prev_ProcessUtility;
-	pgssSharedState *shared_state;
-	HTAB	   *hash;
 } PgStatStatementsRuntimeState;
 
 typedef struct PgStatStatementsSessionState
@@ -385,11 +384,12 @@ static const struct config_enum_entry track_options[] =
 
 #define pgss_max (pgss_runtime_state()->max)
 #define pgss_save (pgss_runtime_state()->save)
-#define pgss (pgss_runtime_state()->shared_state)
-#define pgss_hash (pgss_runtime_state()->hash)
 #define pgss_track (pgss_session_state()->track)
 #define pgss_track_utility (pgss_session_state()->track_utility)
 #define pgss_track_planning (pgss_session_state()->track_planning)
+
+static PG_GLOBAL_SHMEM pgssSharedState *pgss = NULL;
+static PG_GLOBAL_SHMEM HTAB *pgss_hash = NULL;
 
 #define pgss_enabled(level) \
 	(!IsParallelWorker() && \
@@ -473,6 +473,12 @@ static char *generate_normalized_query(const JumbleState *jstate,
 void
 _PG_init(void)
 {
+	bool		threaded_session_init;
+	int			save_pgss_max;
+	bool		save_pgss_save;
+
+	threaded_session_init = dynamic_library_threaded_session_init_in_progress();
+
 	/*
 	 * In order to create our shared memory area, we have to be loaded via
 	 * shared_preload_libraries.  If not, fall out without hooking into any of
@@ -480,9 +486,17 @@ _PG_init(void)
 	 * allow the pg_stat_statements functions to be created even when the
 	 * module isn't active.  The functions must protect themselves against
 	 * being called then, however.)
+	 *
+	 * Threaded backends also replay _PG_init() for libraries already loaded by
+	 * the postmaster, so that session-local GUC descriptors and query-id state
+	 * exist in each logical session.  That replay must not re-register shared
+	 * memory callbacks or re-install global hooks.
 	 */
-	if (!process_shared_preload_libraries_in_progress)
+	if (!process_shared_preload_libraries_in_progress && !threaded_session_init)
 		return;
+
+	save_pgss_max = pgss_max;
+	save_pgss_save = pgss_save;
 
 	/*
 	 * Inform the postmaster that we want to enable query_id calculation if
@@ -550,6 +564,20 @@ _PG_init(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	/*
+	 * Threaded session replay creates per-session GUC descriptors, but these
+	 * extension variables are runtime-global.  Preserve the postmaster-owned
+	 * effective values across descriptor initialization; read_nondefault_variables()
+	 * will apply any session-relevant non-default settings immediately after
+	 * this replay.
+	 */
+	if (threaded_session_init)
+	{
+		pgss_max = save_pgss_max;
+		pgss_save = save_pgss_save;
+		return;
+	}
 
 	MarkGUCPrefixReserved("pg_stat_statements");
 

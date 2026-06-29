@@ -18,6 +18,7 @@
 
 #ifndef WIN32
 #include <dlfcn.h>
+#include <pthread.h>
 #endif							/* !WIN32 */
 
 #include "fmgr.h"
@@ -55,11 +56,18 @@ struct DynamicFileList
 #endif
 	void	   *handle;			/* a handle for pg_dl* functions */
 	const Pg_magic_struct *magic;	/* Location of module's magic block */
+	bool		replay_at_threaded_backend_start;
 	char		filename[FLEXIBLE_ARRAY_MEMBER];	/* Full pathname of file */
 };
 
 static PG_GLOBAL_RUNTIME DynamicFileList *file_list = NULL;
 static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
+static PG_GLOBAL_RUNTIME int replay_at_threaded_backend_start_count = 0;
+
+#ifndef WIN32
+static PG_GLOBAL_RUNTIME pthread_mutex_t DynamicFileManagerMutex = PTHREAD_MUTEX_INITIALIZER;
+#define DynamicFileManagerMutexDepth (*PgCurrentThreadedDynamicFileManagerMutexDepthRef())
+#endif
 
 /* stat() call under Win32 returns an st_ino field, but it has no meaning */
 #ifndef WIN32
@@ -69,7 +77,9 @@ static PG_GLOBAL_RUNTIME DynamicFileList *file_tail = NULL;
 #endif
 
 static void *internal_load_library(const char *libname);
+static void *internal_load_library_locked(const char *libname);
 static void call_module_init_function(DynamicFileList *file_scanner);
+static void call_module_threaded_session_init_function(DynamicFileList *file_scanner);
 static bool module_needs_session_init(DynamicFileList *file_scanner);
 static void remember_module_session_init(DynamicFileList *file_scanner);
 pg_noreturn static void incompatible_module_error(const char *libname,
@@ -91,6 +101,65 @@ static HTAB *create_rendezvous_hash(void);
 
 /* ABI values that module needs to match to be accepted */
 static const Pg_abi_values magic_data = PG_MODULE_ABI_DATA;
+
+
+bool
+LockDynamicFileManagerForThreadedReplay(void)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
+		CurrentPgCarrier == NULL ||
+		CurrentPgCarrier->kind != PG_CARRIER_THREAD)
+		return false;
+	if (DynamicFileManagerMutexDepth++ > 0)
+		return false;
+
+	HOLD_INTERRUPTS();
+	rc = pthread_mutex_lock(&DynamicFileManagerMutex);
+	if (rc != 0)
+	{
+		DynamicFileManagerMutexDepth--;
+		RESUME_INTERRUPTS();
+		errno = rc;
+		ereport(FATAL,
+				(errmsg("could not enter threaded dynamic file manager critical section: %m")));
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+void
+UnlockDynamicFileManagerForThreadedReplay(bool locked)
+{
+#ifndef WIN32
+	int			rc;
+
+	if (!locked && DynamicFileManagerMutexDepth == 0)
+		return;
+
+	Assert(DynamicFileManagerMutexDepth > 0);
+	DynamicFileManagerMutexDepth--;
+
+	if (!locked)
+		return;
+
+	rc = pthread_mutex_unlock(&DynamicFileManagerMutex);
+	if (InterruptHoldoffCount > 0)
+		RESUME_INTERRUPTS();
+	if (rc != 0)
+	{
+		errno = rc;
+		elog(FATAL, "could not leave threaded dynamic file manager critical section: %m");
+	}
+#else
+	(void) locked;
+#endif
+}
 
 
 /*
@@ -210,6 +279,26 @@ lookup_external_function(void *filehandle, const char *funcname)
  */
 static void *
 internal_load_library(const char *libname)
+{
+	void	   *handle = NULL;
+	bool		locked;
+
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
+	{
+		handle = internal_load_library_locked(libname);
+	}
+	PG_FINALLY();
+	{
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
+
+	return handle;
+}
+
+static void *
+internal_load_library_locked(const char *libname)
 {
 	DynamicFileList *file_scanner;
 	PGModuleMagicFunction magic_func;
@@ -348,6 +437,11 @@ internal_load_library(const char *libname)
 					 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
 		}
 
+		file_scanner->replay_at_threaded_backend_start =
+			process_shared_preload_libraries_in_progress;
+		if (file_scanner->replay_at_threaded_backend_start)
+			replay_at_threaded_backend_start_count++;
+
 		call_module_init_function(file_scanner);
 
 		/* OK to link it into list */
@@ -363,7 +457,7 @@ internal_load_library(const char *libname)
 								   file_scanner->magic,
 								   PgRuntimeGetExtensionBackendModel());
 		if (module_needs_session_init(file_scanner))
-			call_module_init_function(file_scanner);
+			call_module_threaded_session_init_function(file_scanner);
 	}
 
 	return file_scanner->handle;
@@ -382,6 +476,36 @@ call_module_init_function(DynamicFileList *file_scanner)
 		(*PG_init) ();
 
 	remember_module_session_init(file_scanner);
+}
+
+static void
+call_module_threaded_session_init_function(DynamicFileList *file_scanner)
+{
+	bool	   *session_init_in_progress;
+	bool		save_threaded_session_init_in_progress;
+
+	session_init_in_progress =
+		PgCurrentSessionDynamicLibrarySessionInitInProgressRef();
+	save_threaded_session_init_in_progress = *session_init_in_progress;
+	*session_init_in_progress = true;
+	PG_TRY();
+	{
+		call_module_init_function(file_scanner);
+	}
+	PG_FINALLY();
+	{
+		*session_init_in_progress = save_threaded_session_init_in_progress;
+	}
+	PG_END_TRY();
+}
+
+bool
+dynamic_library_threaded_session_init_in_progress(void)
+{
+	if (CurrentPgSession == NULL)
+		return false;
+
+	return *PgCurrentSessionDynamicLibrarySessionInitInProgressRef();
 }
 
 static bool
@@ -411,10 +535,65 @@ remember_module_session_init(DynamicFileList *file_scanner)
 	if (list_member_ptr(*dynamic_library_inits, file_scanner))
 		return;
 
-	oldcontext = MemoryContextSwitchTo(
-		PgSessionGetDynamicLibraryMemoryContext(CurrentPgSession));
+	/*
+	 * Keep this bookkeeping list independent from extension-owned session
+	 * state.  The list cells contain only process-lifetime DynamicFileList
+	 * pointers and are freed explicitly when the threaded session closes.
+	 */
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 	*dynamic_library_inits = lappend(*dynamic_library_inits, file_scanner);
 	MemoryContextSwitchTo(oldcontext);
+}
+
+/*
+ * Replay _PG_init() for libraries that should behave as though inherited by a
+ * new backend.  Without this, custom GUC descriptors defined by
+ * postmaster/worker-loaded libraries are absent from the session-local GUC
+ * hash, while their prefixes may already be reserved globally.  Libraries that
+ * entered the process through session/local preload or explicit LOAD are left
+ * for their normal load point so startup-packet option ordering matches a
+ * forked backend.
+ */
+void
+initialize_loaded_modules_for_threaded_session(void)
+{
+	DynamicFileList *file_scanner;
+	bool		locked;
+
+	if (!PgRuntimeIsThreadBacked(CurrentPgRuntime) ||
+		CurrentPgSession == NULL)
+		return;
+	if (replay_at_threaded_backend_start_count == 0)
+		return;
+
+	locked = LockDynamicFileManagerForThreadedReplay();
+	PG_TRY();
+	{
+		if (replay_at_threaded_backend_start_count == 0)
+			goto done;
+
+		file_scanner = file_list;
+		while (file_scanner != NULL)
+		{
+			DynamicFileList *next = file_scanner->next;
+
+			check_module_backend_model(file_scanner->filename,
+									   file_scanner->magic,
+									   PgRuntimeGetExtensionBackendModel());
+			if (file_scanner->replay_at_threaded_backend_start &&
+				module_needs_session_init(file_scanner))
+				call_module_threaded_session_init_function(file_scanner);
+
+			file_scanner = next;
+		}
+done:
+		;
+	}
+	PG_FINALLY();
+	{
+		UnlockDynamicFileManagerForThreadedReplay(locked);
+	}
+	PG_END_TRY();
 }
 
 /*

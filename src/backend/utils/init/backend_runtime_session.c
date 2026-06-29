@@ -169,6 +169,15 @@ static PgSessionUserIdentityState *PgCurrentSessionUserIdentityState(void);
 static char *PgSessionDefaultGUCString(const char *src);
 static PG_THREAD_LOCAL PG_GLOBAL_SESSION bool
 			use_static_guc_defaults_for_initialization = false;
+static PG_GLOBAL_IMMUTABLE char StaticDateStyleDefault[] = "ISO, MDY";
+static PG_GLOBAL_IMMUTABLE char StaticTimeZoneDefault[] = "GMT";
+static PG_GLOBAL_IMMUTABLE char StaticTextSearchDefault[] = "pg_catalog.simple";
+static PG_GLOBAL_IMMUTABLE char StaticSearchPathDefault[] = "\"$user\", public";
+static PG_GLOBAL_IMMUTABLE char StaticEmptyDefault[] = "";
+static PG_GLOBAL_IMMUTABLE char StaticExtensionControlPathDefault[] = "$system";
+static PG_GLOBAL_IMMUTABLE char StaticRoleDefault[] = "none";
+static PG_GLOBAL_IMMUTABLE char StaticJitProviderDefault[] = "llvmjit";
+static PG_GLOBAL_IMMUTABLE char StaticSqlAsciiDefault[] = "SQL_ASCII";
 static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 	.tablespace = {
 		.initialized = true,
@@ -201,9 +210,9 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 		.date_style = USE_ISO_DATES,
 		.date_order = DATEORDER_MDY,
 		.interval_style = INTSTYLE_POSTGRES,
-		.datestyle_string_value = "ISO, MDY",
-		.timezone_string_value = "GMT",
-		.log_timezone_string_value = "GMT",
+		.datestyle_string_value = StaticDateStyleDefault,
+		.timezone_string_value = StaticTimeZoneDefault,
+		.log_timezone_string_value = StaticTimeZoneDefault,
 		.timezone_abbreviations_string_value = NULL,
 		.session_timezone_value = NULL,
 		.log_timezone_value = NULL,
@@ -211,12 +220,12 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 	},
 	.text_search = {
 		.initialized = true,
-		.current_config_value = "pg_catalog.simple",
+		.current_config_value = StaticTextSearchDefault,
 		.current_config_cache = InvalidOid
 	},
 	.connection_guc = {
 		.initialized = true,
-		.application_name_value = "",
+		.application_name_value = StaticEmptyDefault,
 		.ssl_renegotiation_limit_value = 0,
 		.tcp_keepalives_idle_value = 0,
 		.tcp_keepalives_interval_value = 0,
@@ -225,7 +234,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 		.log_disconnections_value = false,
 		.log_statement_value = 0,
 		.post_auth_delay_seconds = 0,
-		.restrict_nonsystem_relation_kind_string_value = "",
+		.restrict_nonsystem_relation_kind_string_value = StaticEmptyDefault,
 		.restrict_nonsystem_relation_kind_value = 0
 	},
 	.parser = {
@@ -338,7 +347,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 		.session_preload_libraries_value = NULL,
 		.local_preload_libraries_value = NULL,
 		.dynamic_library_path_value = NULL,
-		.extension_control_path_value = "$system"
+		.extension_control_path_value = StaticExtensionControlPathDefault
 	},
 	.pgstat = {
 		.initialized = true,
@@ -362,7 +371,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 	.user_guc = {
 		.initialized = true,
 		.password_encryption_value = PASSWORD_TYPE_SCRAM_SHA_256,
-		.createrole_self_grant_value = "",
+		.createrole_self_grant_value = StaticEmptyDefault,
 		.createrole_self_grant_enabled = false,
 		.createrole_self_grant_options_specified = 0,
 		.createrole_self_grant_options_admin = false,
@@ -404,7 +413,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 		.current_role_is_superuser_value = false,
 		.temp_file_limit_kb = -1,
 		.num_temp_buffers_blocks = 1024,
-		.role_string_value = "none",
+		.role_string_value = StaticRoleDefault,
 		.lo_compat_privileges_value = false,
 		.extra_float_digits_value = 1,
 		.array_nulls_value = true,
@@ -440,7 +449,7 @@ static PG_THREAD_LOCAL PG_GLOBAL_SESSION PgSession early_session_fallback = {
 	.jit_guc = {
 		.initialized = true,
 		.jit_enabled_value = false,
-		.jit_provider_value = "llvmjit",
+		.jit_provider_value = StaticJitProviderDefault,
 		.jit_debugging_support_value = false,
 		.jit_dump_bitcode_value = false,
 		.jit_expressions_value = true,
@@ -662,6 +671,20 @@ PgSessionDefaultGUCString(const char *src)
 	return guc_strdup(FATAL, src);
 }
 
+bool
+PgSessionStringIsStaticGUCDefault(const char *strval)
+{
+	return strval == StaticDateStyleDefault ||
+		strval == StaticTimeZoneDefault ||
+		strval == StaticTextSearchDefault ||
+		strval == StaticSearchPathDefault ||
+		strval == StaticEmptyDefault ||
+		strval == StaticExtensionControlPathDefault ||
+		strval == StaticRoleDefault ||
+		strval == StaticJitProviderDefault ||
+		strval == StaticSqlAsciiDefault;
+}
+
 void
 PgSessionInitializeDateTimeState(PgSessionDateTimeState *datetime)
 {
@@ -672,9 +695,11 @@ PgSessionInitializeDateTimeState(PgSessionDateTimeState *datetime)
 	datetime->date_order = DATEORDER_MDY;
 	datetime->interval_style = INTSTYLE_POSTGRES;
 	datetime->datestyle_string_value =
-		PgSessionDefaultGUCString("ISO, MDY");
-	datetime->timezone_string_value = PgSessionDefaultGUCString("GMT");
-	datetime->log_timezone_string_value = PgSessionDefaultGUCString("GMT");
+		PgSessionDefaultGUCString(StaticDateStyleDefault);
+	datetime->timezone_string_value =
+		PgSessionDefaultGUCString(StaticTimeZoneDefault);
+	datetime->log_timezone_string_value =
+		PgSessionDefaultGUCString(StaticTimeZoneDefault);
 	datetime->timezone_abbreviations_string_value = NULL;
 	datetime->session_timezone_value = pg_tzset("GMT");
 	datetime->log_timezone_value = datetime->session_timezone_value;
@@ -730,7 +755,7 @@ PgSessionInitializeTextSearchState(PgSessionTextSearchState *text_search)
 	MemSet(text_search, 0, sizeof(*text_search));
 	text_search->initialized = true;
 	text_search->current_config_value =
-		PgSessionDefaultGUCString("pg_catalog.simple");
+		PgSessionDefaultGUCString(StaticTextSearchDefault);
 	text_search->current_config_cache = InvalidOid;
 }
 
@@ -757,7 +782,8 @@ PgSessionInitializeConnectionGUCState(PgSessionConnectionGUCState *connection_gu
 	Assert(connection_guc != NULL);
 
 	connection_guc->initialized = true;
-	connection_guc->application_name_value = PgSessionDefaultGUCString("");
+	connection_guc->application_name_value =
+		PgSessionDefaultGUCString(StaticEmptyDefault);
 	connection_guc->ssl_renegotiation_limit_value = 0;
 	connection_guc->tcp_keepalives_idle_value = 0;
 	connection_guc->tcp_keepalives_interval_value = 0;
@@ -767,7 +793,7 @@ PgSessionInitializeConnectionGUCState(PgSessionConnectionGUCState *connection_gu
 	connection_guc->log_statement_value = 0;
 	connection_guc->post_auth_delay_seconds = 0;
 	connection_guc->restrict_nonsystem_relation_kind_string_value =
-		PgSessionDefaultGUCString("");
+		PgSessionDefaultGUCString(StaticEmptyDefault);
 	connection_guc->restrict_nonsystem_relation_kind_value = 0;
 }
 
@@ -965,7 +991,7 @@ PgSessionInitializeMiscGUCState(PgSessionMiscGUCState *misc_guc)
 	misc_guc->session_preload_libraries_value = NULL;
 	misc_guc->local_preload_libraries_value = NULL;
 	misc_guc->dynamic_library_path_value = NULL;
-	misc_guc->extension_control_path_value = "$system";
+	misc_guc->extension_control_path_value = StaticExtensionControlPathDefault;
 	misc_guc->update_process_title_value = DEFAULT_UPDATE_PROCESS_TITLE;
 }
 
@@ -1062,7 +1088,7 @@ PgSessionInitializeUserGUCState(PgSessionUserGUCState *user_guc)
 
 	user_guc->initialized = true;
 	user_guc->password_encryption_value = PASSWORD_TYPE_SCRAM_SHA_256;
-	user_guc->createrole_self_grant_value = "";
+	user_guc->createrole_self_grant_value = StaticEmptyDefault;
 	user_guc->createrole_self_grant_enabled = false;
 	user_guc->createrole_self_grant_options_specified = 0;
 	user_guc->createrole_self_grant_options_admin = false;
@@ -1162,6 +1188,9 @@ PgSessionAdoptEarlyLogicalReplicationState(PgSession *session)
 	Assert(!early_session_logical_replication.pgoutput_publications_valid);
 	Assert(early_session_logical_replication.pgoutput_relation_sync_cache == NULL);
 	Assert(early_session_logical_replication.syncing_relations_state == 0);
+	Assert(!early_session_logical_replication.replication_origin_cleanup_registered);
+	Assert(!early_session_logical_replication.pgoutput_publication_callback_registered);
+	Assert(!early_session_logical_replication.pgoutput_relation_callbacks_registered);
 
 	PgSessionInitializeLogicalReplicationState(&session->logical_replication);
 	PgSessionInitializeLogicalReplicationState(&early_session_logical_replication);
@@ -1217,7 +1246,7 @@ PgSessionInitializeGeneralGUCState(PgSessionGeneralGUCState *general_guc)
 	general_guc->phony_random_seed_value = 0.0;
 	general_guc->temp_file_limit_kb = -1;
 	general_guc->num_temp_buffers_blocks = 1024;
-	general_guc->role_string_value = "none";
+	general_guc->role_string_value = StaticRoleDefault;
 	general_guc->session_authorization_string_value = NULL;
 	general_guc->lo_compat_privileges_value = false;
 	general_guc->extra_float_digits_value = 1;
@@ -1276,7 +1305,7 @@ PgSessionInitializeJitGUCState(PgSessionJitGUCState *jit_guc)
 
 	jit_guc->initialized = true;
 	jit_guc->jit_enabled_value = false;
-	jit_guc->jit_provider_value = "llvmjit";
+	jit_guc->jit_provider_value = StaticJitProviderDefault;
 	jit_guc->jit_debugging_support_value = false;
 	jit_guc->jit_dump_bitcode_value = false;
 	jit_guc->jit_expressions_value = true;
@@ -1459,6 +1488,9 @@ PgSessionInitializeExtensionModuleState(PgSessionExtensionModuleState *extension
 	Assert(extension_modules != NULL);
 
 	extension_modules->plpgsql_state = NULL;
+	extension_modules->plpython_interp_globals = NULL;
+	extension_modules->plpython_execution_contexts = NULL;
+	extension_modules->plpython_explicit_subtransactions = NIL;
 	extension_modules->plpython_procedure_cache = NULL;
 	extension_modules->plpython_memory_context = NULL;
 	extension_modules->plpython_reset_registered = false;
@@ -1641,6 +1673,7 @@ PgSessionInitializeBackupState(PgSessionBackupState *backup)
 	backup->tablespace_map = NULL;
 	backup->backup_context = NULL;
 	backup->session_backup_state = SESSION_BACKUP_NONE;
+	backup->abort_backup_handler_registered = false;
 }
 
 PG_RUNTIME_DEFINE_ADOPT_EARLY_WITH_INIT(PgSessionAdoptEarlyBackupState,
@@ -1717,8 +1750,8 @@ PgSessionInitializeEncodingState(PgSessionEncodingState *encoding)
 	encoding->to_server_conv_proc = NULL;
 	encoding->to_client_conv_proc = NULL;
 	encoding->utf8_to_server_conv_proc = NULL;
-	encoding->client_encoding_string_value = "SQL_ASCII";
-	encoding->server_encoding_string_value = "SQL_ASCII";
+	encoding->client_encoding_string_value = StaticSqlAsciiDefault;
+	encoding->server_encoding_string_value = StaticSqlAsciiDefault;
 	encoding->client_encoding = &pg_enc2name_tbl[PG_SQL_ASCII];
 	encoding->database_encoding = &pg_enc2name_tbl[PG_SQL_ASCII];
 	encoding->message_encoding = &pg_enc2name_tbl[PG_SQL_ASCII];
@@ -1838,7 +1871,8 @@ PgSessionInitializeNamespaceState(PgSessionNamespaceState *namespace_state)
 	namespace_state->my_temp_namespace = InvalidOid;
 	namespace_state->my_temp_toast_namespace = InvalidOid;
 	namespace_state->my_temp_namespace_subid = InvalidSubTransactionId;
-	namespace_state->namespace_search_path_value = NULL;
+	namespace_state->namespace_search_path_value =
+		PgSessionDefaultGUCString(StaticSearchPathDefault);
 	namespace_state->search_path_cache = NULL;
 	namespace_state->last_search_path_cache_entry = NULL;
 	namespace_state->initialized = true;
@@ -1848,10 +1882,12 @@ static void
 PgSessionAdoptEarlyNamespaceState(PgSession *session)
 {
 	char	   *namespace_search_path_value;
+	char	   *session_default_search_path_value;
 
 	Assert(session != NULL);
 
-	if (!early_session_namespace.initialized)
+	if (!early_session_namespace.initialized ||
+		early_session_namespace.namespace_search_path_value == NULL)
 		PgSessionInitializeNamespaceState(&early_session_namespace);
 
 	namespace_search_path_value = early_session_namespace.namespace_search_path_value;
@@ -1859,8 +1895,12 @@ PgSessionAdoptEarlyNamespaceState(PgSession *session)
 	PG_RUNTIME_DELETE_MEMORY_CONTEXT(
 		early_session_namespace.search_path_cache_context);
 	PgSessionInitializeNamespaceState(&session->namespace_state);
+	session_default_search_path_value =
+		session->namespace_state.namespace_search_path_value;
 	session->namespace_state.namespace_search_path_value =
 		namespace_search_path_value;
+	if (session_default_search_path_value != namespace_search_path_value)
+		guc_free_string(session_default_search_path_value);
 	PgSessionInitializeNamespaceState(&early_session_namespace);
 }
 
@@ -1996,6 +2036,14 @@ PgCurrentSessionDynamicLibraryInitsRef(void)
 	return &CurrentPgSession->dynamic_library_inits;
 }
 
+bool *
+PgCurrentSessionDynamicLibrarySessionInitInProgressRef(void)
+{
+	Assert(CurrentPgSession != NULL);
+
+	return &CurrentPgSession->dynamic_library_session_init_in_progress;
+}
+
 Session *
 PgSessionGetLegacySession(PgSession *session)
 {
@@ -2041,6 +2089,37 @@ PgCurrentLegacySessionRef(void)
 }
 
 
+static bool
+PgSessionExtensionModuleStateOwnsPointer(PgSessionExtensionModuleState *extension_modules,
+										 const void *ptr)
+{
+	uintptr_t	address;
+
+	Assert(extension_modules != NULL);
+
+	if (ptr == NULL)
+		return false;
+
+	address = (uintptr_t) ptr;
+
+	foreach_ptr(PgSessionExtensionPrivateState, private_state,
+				extension_modules->private_states)
+	{
+		uintptr_t	state_start;
+
+		if (private_state->state == NULL || private_state->size == 0)
+			continue;
+
+		state_start = (uintptr_t) private_state->state;
+
+		if (address >= state_start &&
+			address - state_start < private_state->size)
+			return true;
+	}
+
+	return false;
+}
+
 bool
 PgCurrentSessionOwnsPointer(const void *ptr)
 {
@@ -2055,7 +2134,9 @@ PgCurrentSessionOwnsPointer(const void *ptr)
 	session_start = (uintptr_t) CurrentPgSession;
 	session_end = session_start + sizeof(PgSession);
 
-	return address >= session_start && address < session_end;
+	return (address >= session_start && address < session_end) ||
+		PgSessionExtensionModuleStateOwnsPointer(
+			&CurrentPgSession->extension_modules, ptr);
 }
 
 bool
@@ -2074,7 +2155,9 @@ PgCurrentOrEarlySessionOwnsPointer(const void *ptr)
 	session_start = (uintptr_t) &early_session_fallback;
 	session_end = session_start + sizeof(PgSession);
 
-	return address >= session_start && address < session_end;
+	return (address >= session_start && address < session_end) ||
+		PgSessionExtensionModuleStateOwnsPointer(
+			&early_session_extension_modules, ptr);
 }
 
 
@@ -2519,6 +2602,7 @@ PgSessionEnsureExtensionPrivateState(const char *key, Size size,
 	private_state = palloc_object(PgSessionExtensionPrivateState);
 	private_state->key = key;
 	private_state->state = palloc0(size);
+	private_state->size = size;
 	private_state->cleanup = cleanup;
 	extension_modules->private_states =
 		lappend(extension_modules->private_states, private_state);
@@ -2706,17 +2790,21 @@ PgSessionNamespaceState *
 PgCurrentSessionNamespaceState(void)
 {
 	PgSessionNamespaceState *namespace_state;
-
-	if (likely(CurrentPgSessionNamespaceRuntimeState != NULL &&
-			   CurrentPgSessionNamespaceRuntimeState->initialized))
-		return CurrentPgSessionNamespaceRuntimeState;
+	PgSessionNamespaceState *fast_namespace_state;
 
 	if (CurrentPgSession == NULL)
 		namespace_state = &early_session_namespace;
 	else
 		namespace_state = &CurrentPgSession->namespace_state;
 
-	if (!namespace_state->initialized)
+	fast_namespace_state = CurrentPgSessionNamespaceRuntimeState;
+	if (likely(fast_namespace_state == namespace_state &&
+			   fast_namespace_state->initialized &&
+			   fast_namespace_state->namespace_search_path_value != NULL))
+		return fast_namespace_state;
+
+	if (!namespace_state->initialized ||
+		namespace_state->namespace_search_path_value == NULL)
 		PgSessionInitializeNamespaceState(namespace_state);
 
 	return namespace_state;
@@ -2750,7 +2838,7 @@ PgCurrentNamespaceState(void)
 char **
 PgCurrentNamespaceSearchPathRef(void)
 {
-	return &PG_RUNTIME_FAST_INITIALIZED_BUCKET_ACCESSOR(CurrentPgSessionNamespaceRuntimeState, PgCurrentSessionNamespaceState)->namespace_search_path_value;
+	return &PgCurrentSessionNamespaceState()->namespace_search_path_value;
 }
 
 PgSessionLocaleState *
@@ -3056,6 +3144,24 @@ void **
 PgCurrentPLpgSQLSessionStateRef(void)
 {
 	return &PgCurrentSessionExtensionModuleState()->plpgsql_state;
+}
+
+void **
+PgCurrentPLpythonInterpGlobalsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_interp_globals;
+}
+
+void **
+PgCurrentPLpythonExecutionContextsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_execution_contexts;
+}
+
+List **
+PgCurrentPLpythonExplicitSubtransactionsRef(void)
+{
+	return &PgCurrentSessionExtensionModuleState()->plpython_explicit_subtransactions;
 }
 
 void **

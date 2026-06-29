@@ -57,9 +57,9 @@ pg_trgm_session_state(void)
 											 NULL);
 	if (!state->initialized)
 	{
-		state->similarity_threshold_value = 0.3;
-		state->word_similarity_threshold_value = 0.6;
-		state->strict_word_similarity_threshold_value = 0.5;
+		state->similarity_threshold_value = 0.3f;
+		state->word_similarity_threshold_value = 0.6f;
+		state->strict_word_similarity_threshold_value = 0.5f;
 		state->initialized = true;
 	}
 

@@ -561,6 +561,7 @@ extern const char *GetConfigOption(const char *name, bool missing_ok,
 extern const char *GetConfigOptionResetString(const char *name);
 extern int	GetConfigOptionFlags(const char *name, bool missing_ok);
 extern void ProcessConfigFile(GucContext context);
+extern void ProcessConfigFileAndWriteNondefaultVariables(GucContext context);
 extern char *convert_GUC_name_for_parameter_acl(const char *name);
 extern void check_GUC_name_for_parameter_acl(const char *name);
 extern void InitializeGUCOptions(void);
@@ -614,10 +615,12 @@ extern void *guc_malloc(int elevel, size_t size);
 pg_nodiscard extern void *guc_realloc(int elevel, void *old, size_t size);
 extern char *guc_strdup(int elevel, const char *src);
 extern void guc_free(void *ptr);
+extern void guc_free_string(char *strval);
 
 extern void write_nondefault_variables(GucContext context);
 extern void read_nondefault_variables(void);
 extern void ResetGUCStateAtBackendExit(void);
+extern bool GUCStateMatchesResetBaseline(void);
 
 /* GUC serialization */
 extern Size EstimateGUCStateSpace(void);

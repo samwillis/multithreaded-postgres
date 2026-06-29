@@ -61,6 +61,7 @@ typedef struct PgPlanAdviceSessionState
 	bool		feedback_warnings;
 	bool		trace_mask;
 	int			generate_advice;
+	int			planner_extension_id;
 } PgPlanAdviceSessionState;
 
 extern PgPlanAdviceSessionState *pg_plan_advice_session_state(void);

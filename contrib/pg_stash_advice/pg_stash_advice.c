@@ -19,6 +19,7 @@
 #include "pg_stash_advice.h"
 #include "postmaster/bgworker.h"
 #include "storage/dsm_registry.h"
+#include "storage/ipc.h"
 #include "utils/backend_runtime.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -40,6 +41,8 @@ static char *pgsa_advisor(PlannerGlobal *glob,
 						  int cursorOptions,
 						  ExplainState *es);
 static void pg_stash_advice_backend_state_cleanup(void *arg);
+static void pg_stash_advice_backend_state_before_shmem_exit(int code,
+															Datum arg);
 static bool pgsa_check_stash_name_guc(char **newval, void **extra,
 									  GucSource source);
 static void pgsa_init_shared_state(void *ptr, void *arg);
@@ -59,10 +62,20 @@ static bool pgsa_is_identifier(char *str);
 PgStashAdviceBackendState *
 pg_stash_advice_backend_state(void)
 {
-	return (PgStashAdviceBackendState *)
+	PgStashAdviceBackendState *state;
+
+	state = (PgStashAdviceBackendState *)
 		PgBackendEnsureExtensionPrivateState(PG_STASH_ADVICE_BACKEND_STATE_KEY,
 											 sizeof(PgStashAdviceBackendState),
 											 pg_stash_advice_backend_state_cleanup);
+	if (!state->cleanup_registered)
+	{
+		before_shmem_exit(pg_stash_advice_backend_state_before_shmem_exit,
+						  PointerGetDatum(state));
+		state->cleanup_registered = true;
+	}
+
+	return state;
 }
 
 static void
@@ -71,13 +84,34 @@ pg_stash_advice_backend_state_cleanup(void *arg)
 	PgStashAdviceBackendState *state = (PgStashAdviceBackendState *) arg;
 
 	if (state->entry_dshash != NULL)
+	{
 		dshash_detach(state->entry_dshash);
+		state->entry_dshash = NULL;
+	}
 	if (state->stash_dshash != NULL)
+	{
 		dshash_detach(state->stash_dshash);
+		state->stash_dshash = NULL;
+	}
 	if (state->dsa_area != NULL)
+	{
 		dsa_detach(state->dsa_area);
+		state->dsa_area = NULL;
+	}
 	if (state->context != NULL)
+	{
 		MemoryContextDelete(state->context);
+		state->context = NULL;
+	}
+	state->state = NULL;
+	state->cleanup_registered = false;
+}
+
+static void
+pg_stash_advice_backend_state_before_shmem_exit(int code, Datum arg)
+{
+	(void) code;
+	pg_stash_advice_backend_state_cleanup(DatumGetPointer(arg));
 }
 
 /*
@@ -87,12 +121,15 @@ void
 _PG_init(void)
 {
 	void		(*add_advisor_fn) (pg_plan_advice_advisor_hook hook);
+	bool		threaded_session_init;
+
+	threaded_session_init = dynamic_library_threaded_session_init_in_progress();
 
 	/* If compute_query_id = 'auto', we would like query IDs. */
 	EnableQueryId();
 
 	/* Define our GUCs. */
-	if (process_shared_preload_libraries_in_progress)
+	if (process_shared_preload_libraries_in_progress || threaded_session_init)
 		DefineCustomBoolVariable("pg_stash_advice.persist",
 								 "Save and restore advice stash contents across restarts.",
 								 NULL,
@@ -133,14 +170,22 @@ _PG_init(void)
 	MarkGUCPrefixReserved("pg_stash_advice");
 
 	/* Start the background worker for persistence, if enabled. */
-	if (pg_stash_advice_persist)
+	if (process_shared_preload_libraries_in_progress &&
+		pg_stash_advice_persist)
 		pgsa_start_worker();
 
-	/* Tell pg_plan_advice that we want to provide advice strings. */
-	add_advisor_fn =
-		load_external_function("pg_plan_advice", "pg_plan_advice_add_advisor",
-							   true, NULL);
-	(*add_advisor_fn) (pgsa_advisor);
+	/*
+	 * Tell pg_plan_advice that we want to provide advice strings. This is
+	 * runtime-wide state, so threaded session replay only needs the GUC setup
+	 * above.
+	 */
+	if (!threaded_session_init)
+	{
+		add_advisor_fn =
+			load_external_function("pg_plan_advice", "pg_plan_advice_add_advisor",
+								   true, NULL);
+		(*add_advisor_fn) (pgsa_advisor);
+	}
 }
 
 /*
@@ -155,12 +200,14 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	pgsa_entry_key key;
 	pgsa_entry *entry;
 	char	   *advice_string;
+	char	   *stash_name;
 	uint64		stash_id;
 
 	/*
 	 * Exit quickly if the stash name is empty or there's no query ID.
 	 */
-	if (pg_stash_advice_stash_name[0] == '\0' || parse->queryId == 0)
+	stash_name = pg_stash_advice_stash_name;
+	if (stash_name == NULL || stash_name[0] == '\0' || parse->queryId == 0)
 		return NULL;
 
 	/* Attach to dynamic shared memory if not already done. */
@@ -177,7 +224,7 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	 * pgsa_check_stash_name_guc() has already validated the advice stash
 	 * name, so we don't need to call pgsa_check_stash_name() here.
 	 */
-	stash_id = pgsa_lookup_stash_id(pg_stash_advice_stash_name);
+	stash_id = pgsa_lookup_stash_id(stash_name);
 	if (stash_id == 0)
 		return NULL;
 
@@ -205,7 +252,7 @@ pgsa_advisor(PlannerGlobal *glob, Query *parse,
 	/* If we found an advice string, emit a debug message. */
 	if (advice_string != NULL)
 		elog(DEBUG2, "supplying automatic advice for stash \"%s\", query ID %" PRId64 ": %s",
-			 pg_stash_advice_stash_name, key.queryId, advice_string);
+			 stash_name, key.queryId, advice_string);
 
 	return advice_string;
 }

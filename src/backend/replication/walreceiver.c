@@ -151,6 +151,7 @@ static void XLogWalRcvSendHSFeedback(bool immed);
 static void ProcessWalSndrMessage(XLogRecPtr walEnd, TimestampTz sendTime);
 static void WalRcvComputeNextWakeup(WalRcvWakeupReason reason, TimestampTz now);
 static bool WalRcvShutdownRequested(void);
+pg_noreturn static void WalRcvExitOnShutdownRequest(int code);
 
 
 /* Main entry point for walreceiver process */
@@ -465,7 +466,7 @@ WalReceiverMain(const void *startup_data, size_t startup_data_len)
 				PgCurrentBackendApplyInterrupts();
 				CHECK_FOR_INTERRUPTS();
 				if (WalRcvShutdownRequested())
-					proc_exit(1);
+					WalRcvExitOnShutdownRequest(1);
 
 				if (ConfigReloadPending)
 				{
@@ -565,7 +566,7 @@ WalReceiverMain(const void *startup_data, size_t startup_data_len)
 					PgCurrentBackendApplyInterrupts();
 					CHECK_FOR_INTERRUPTS();
 					if (WalRcvShutdownRequested())
-						proc_exit(1);
+						WalRcvExitOnShutdownRequest(1);
 
 					if (walrcv->apply_reply_requested)
 					{
@@ -694,7 +695,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 	{
 		SpinLockRelease(&walrcv->mutex);
 		if (state == WALRCV_STOPPING)
-			proc_exit(0);
+			WalRcvExitOnShutdownRequest(0);
 		else
 			elog(FATAL, "unexpected walreceiver state");
 	}
@@ -717,7 +718,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 		PgCurrentBackendApplyInterrupts();
 		CHECK_FOR_INTERRUPTS();
 		if (WalRcvShutdownRequested())
-			proc_exit(1);
+			WalRcvExitOnShutdownRequest(1);
 
 		SpinLockAcquire(&walrcv->mutex);
 		Assert(walrcv->walRcvState == WALRCV_RESTARTING ||
@@ -743,7 +744,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 			 * to die, but might as well check it here too.
 			 */
 			SpinLockRelease(&walrcv->mutex);
-			proc_exit(1);
+			WalRcvExitOnShutdownRequest(1);
 		}
 		SpinLockRelease(&walrcv->mutex);
 
@@ -872,6 +873,23 @@ WalRcvShutdownRequested(void)
 	SpinLockRelease(&walrcv->mutex);
 
 	return shutdown_requested;
+}
+
+pg_noreturn static void
+WalRcvExitOnShutdownRequest(int code)
+{
+	/*
+	 * In process mode, ShutdownWalRcv() sends SIGTERM and the die handler
+	 * reports the normal administrative-shutdown FATAL in ProcessInterrupts().
+	 * Thread-backed WAL receivers cannot receive that process signal, so the
+	 * shared-memory STOPPING request is their equivalent shutdown path.
+	 */
+	if (PgRuntimeIsThreadBacked(CurrentPgRuntime))
+		ereport(FATAL,
+				(errcode(ERRCODE_ADMIN_SHUTDOWN),
+				 errmsg("terminating walreceiver process due to administrator command")));
+
+	proc_exit(code);
 }
 
 /*

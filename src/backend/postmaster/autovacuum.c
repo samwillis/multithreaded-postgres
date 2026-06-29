@@ -837,9 +837,7 @@ ProcessAutoVacLauncherInterrupts(void)
 		int			autovacuum_max_workers_prev = autovacuum_max_workers;
 
 		ConfigReloadPending = false;
-		if (CurrentPgRuntime == NULL ||
-			CurrentPgRuntime->kind == PG_RUNTIME_PROCESS)
-			ProcessConfigFile(PGC_SIGHUP);
+		ProcessConfigReloadForCurrentWorker();
 
 		/* shutdown requested in config file? */
 		if (!AutoVacuumingActive())
@@ -2445,7 +2443,7 @@ do_autovacuum(void)
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 
 			/*
 			 * You might be tempted to bail out if we see autovacuum is now
@@ -2694,7 +2692,7 @@ deleted:
 		if (ConfigReloadPending)
 		{
 			ConfigReloadPending = false;
-			ProcessConfigFile(PGC_SIGHUP);
+			ProcessConfigReloadForCurrentWorker();
 			VacuumUpdateCosts();
 		}
 

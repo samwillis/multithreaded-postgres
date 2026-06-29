@@ -30,7 +30,8 @@
 
 PG_MODULE_MAGIC_EXT(
 					.name = "auto_explain",
-					.version = PG_VERSION
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
 );
 
 /*
@@ -61,6 +62,7 @@ typedef struct auto_explain_extension_options
 
 typedef struct AutoExplainRuntimeState
 {
+	bool		hooks_installed;
 	ExecutorStart_hook_type prev_ExecutorStart;
 	ExecutorRun_hook_type prev_ExecutorRun;
 	ExecutorFinish_hook_type prev_ExecutorFinish;
@@ -235,6 +237,8 @@ static int	auto_explain_split_options(char *rawstring,
 void
 _PG_init(void)
 {
+	AutoExplainRuntimeState *state;
+
 	/* Define custom GUC variables. */
 	DefineCustomIntVariable("auto_explain.log_min_duration",
 							"Sets the minimum execution time above which plans will be logged.",
@@ -410,14 +414,19 @@ _PG_init(void)
 	MarkGUCPrefixReserved("auto_explain");
 
 	/* Install hooks. */
-	prev_ExecutorStart = ExecutorStart_hook;
-	ExecutorStart_hook = explain_ExecutorStart;
-	prev_ExecutorRun = ExecutorRun_hook;
-	ExecutorRun_hook = explain_ExecutorRun;
-	prev_ExecutorFinish = ExecutorFinish_hook;
-	ExecutorFinish_hook = explain_ExecutorFinish;
-	prev_ExecutorEnd = ExecutorEnd_hook;
-	ExecutorEnd_hook = explain_ExecutorEnd;
+	state = auto_explain_runtime_state();
+	if (!state->hooks_installed)
+	{
+		prev_ExecutorStart = ExecutorStart_hook;
+		ExecutorStart_hook = explain_ExecutorStart;
+		prev_ExecutorRun = ExecutorRun_hook;
+		ExecutorRun_hook = explain_ExecutorRun;
+		prev_ExecutorFinish = ExecutorFinish_hook;
+		ExecutorFinish_hook = explain_ExecutorFinish;
+		prev_ExecutorEnd = ExecutorEnd_hook;
+		ExecutorEnd_hook = explain_ExecutorEnd;
+		state->hooks_installed = true;
+	}
 }
 
 /*

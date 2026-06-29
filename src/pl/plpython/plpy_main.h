@@ -6,9 +6,9 @@
 #define PLPY_MAIN_H
 
 #include "plpy_procedure.h"
+#include "utils/backend_runtime.h"
 
-/* the interpreter's globals dict */
-extern PyObject *PLy_interp_globals;
+#define PLy_interp_globals (*(PyObject **) PgCurrentPLpythonInterpGlobalsRef())
 
 /*
  * A stack of PL/Python execution contexts. Each time user-defined Python code
@@ -27,5 +27,8 @@ extern PLyExecutionContext *PLy_current_execution_context(void);
 
 /* Get the scratch memory context for specified execution context */
 extern MemoryContext PLy_get_scratch_context(PLyExecutionContext *context);
+
+/* Reset session-owned PL/Python interpreter state.  Caller must hold the GIL. */
+extern void PLy_reset_session_state(void);
 
 #endif							/* PLPY_MAIN_H */

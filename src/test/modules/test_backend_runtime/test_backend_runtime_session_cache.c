@@ -11,6 +11,7 @@
  * -------------------------------------------------------------------------
  */
 #include "test_backend_runtime.h"
+#include "storage/buf_internals.h"
 
 static void
 test_backend_runtime_syscache_callback(Datum arg, SysCacheIdentifier cacheid,
@@ -39,6 +40,498 @@ test_backend_runtime_subxact_callback(SubXactEvent event,
 									  SubTransactionId parentSubid,
 									  void *arg)
 {
+}
+
+static void
+test_reusable_session_validator_init_clean(PgBackend *backend,
+										   PgSession *session,
+										   PgConnection *connection,
+										   PgExecution *execution)
+{
+	MemSet(backend, 0, sizeof(*backend));
+	MemSet(session, 0, sizeof(*session));
+	MemSet(connection, 0, sizeof(*connection));
+	MemSet(execution, 0, sizeof(*execution));
+
+	PgBackendInitializeInterrupts(backend);
+	backend->session = session;
+	backend->connection = connection;
+	backend->execution = execution;
+	backend->my_proc_number = INVALID_PROC_NUMBER;
+	backend->parallel_leader_proc_number = INVALID_PROC_NUMBER;
+	dlist_init(&backend->dsm_segment_list);
+	dlist_init(&backend->pgstat_pending.pending);
+	backend->buffers.reserved_ref_count_slot = -1;
+	backend->buffers.private_ref_count_entry_last = -1;
+	dlist_init(&backend->storage.smgr_unpinned_relations);
+
+	session->backend = backend;
+	session->connection = connection;
+	session->execution = execution;
+	session->guc.initialized = true;
+	dlist_init(&session->guc.nondef_list);
+	slist_init(&session->guc.stack_list);
+	slist_init(&session->guc.report_list);
+	session->temp_file.initialized = true;
+	session->temp_file.num_temp_table_spaces = -1;
+	session->plan_cache.initialized = true;
+	dlist_init(&session->plan_cache.saved_plan_list);
+	dlist_init(&session->plan_cache.cached_expression_list);
+	session->namespace_state.my_temp_namespace = InvalidOid;
+	session->namespace_state.my_temp_toast_namespace = InvalidOid;
+	session->namespace_state.my_temp_namespace_subid = InvalidSubTransactionId;
+
+	connection->backend = backend;
+	connection->session = session;
+
+	execution->backend = backend;
+	execution->session = session;
+}
+
+static HTAB *
+test_reusable_session_validator_create_locallock_hash(bool with_entry)
+{
+	HASHCTL		info;
+	HTAB	   *hash;
+
+	MemSet(&info, 0, sizeof(info));
+	info.keysize = sizeof(LOCALLOCKTAG);
+	info.entrysize = sizeof(LOCALLOCK);
+
+	hash = hash_create("test reusable session LOCALLOCK hash",
+					   16,
+					   &info,
+					   HASH_ELEM | HASH_BLOBS);
+	if (with_entry)
+	{
+		LOCALLOCKTAG localtag;
+		bool		found;
+
+		MemSet(&localtag, 0, sizeof(localtag));
+		localtag.lock.locktag_lockmethodid = DEFAULT_LOCKMETHOD;
+		localtag.mode = AccessShareLock;
+
+		(void) hash_search(hash, &localtag, HASH_ENTER, &found);
+	}
+
+	return hash;
+}
+
+static void
+test_reusable_session_validator_expect(PgReusableSessionValidationReason expected,
+									   PgBackend *backend,
+									   PgSession *session,
+									   PgConnection *connection,
+									   PgExecution *execution,
+									   const char *label)
+{
+	PgReusableSessionValidationReason reason;
+
+	reason = PgValidateReusableSessionState(backend, session, connection,
+											execution, false);
+	if (reason != expected)
+		elog(ERROR,
+			 "reusable session validator returned %s for %s, expected %s",
+			 PgReusableSessionValidationReasonName(reason),
+			 label,
+			 PgReusableSessionValidationReasonName(expected));
+}
+
+PG_FUNCTION_INFO_V1(test_reusable_session_validator_reasons);
+Datum
+test_reusable_session_validator_reasons(PG_FUNCTION_ARGS)
+{
+	PgBackend	backend;
+	PgSession	session;
+	PgConnection connection;
+	PgExecution execution;
+	Buffer		private_ref_count_array_keys[REFCOUNT_ARRAY_ENTRIES];
+	PrivateRefCountEntry private_ref_count_array[REFCOUNT_ARRAY_ENTRIES];
+	int			fast_path_local_use_counts[FP_LOCK_GROUPS_PER_BACKEND_MAX];
+	dlist_node	dsm_node;
+	dlist_node	storage_node;
+	dlist_node	plan_cache_node;
+	HTAB	   *lock_hash;
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_VALID,
+										   &backend, &session, &connection,
+										   &execution, "clean runtime state");
+
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_NULL_OBJECT,
+										   NULL, &session, &connection,
+										   &execution, "missing backend");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.my_proc = (PGPROC *) &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "attached PGPROC");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.my_proc_number = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROC_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "attached proc number");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.my_beentry = (PgBackendStatus *) &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE,
+										   &backend, &session, &connection,
+										   &execution, "attached pgstat entry");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.pgstat_pending.local = (PgStat_LocalState *) &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PGSTAT_STATE,
+										   &backend, &session, &connection,
+										   &execution, "pending pgstat local state");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.ipc.proc_signal_slot = &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+										   &backend, &session, &connection,
+										   &execution, "attached proc signal slot");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.ipc.shared_invalidation_messages = &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "shared invalidation messages");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	pg_atomic_write_u32(&backend.interrupts.pending_mask,
+						PG_BACKEND_INTERRUPT_MASK(PG_BACKEND_INTERRUPT_PROC_SIGNAL_BARRIER));
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "pending backend interrupt");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.interrupts.proc_die_sender_pid = 123;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_IPC_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "proc die sender identity");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.ipc.dsm_registry_table = &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS,
+										   &backend, &session, &connection,
+										   &execution, "dsm registry table");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.ipc.next_local_transaction_id = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "next local transaction id");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.transaction.procarray_cached_xid_not_in_progress =
+		FirstNormalTransactionId;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "cached completed transaction id");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.transaction.compute_xid_horizons_result_last_xmin =
+		FirstNormalTransactionId;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "cached procarray xmin horizon");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.transaction.global_vis_data_rels.maybe_needed =
+		FirstNormalFullTransactionId;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PROCARRAY_STATE,
+										   &backend, &session, &connection,
+										   &execution,
+										   "global visibility horizon");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.startup.client_socket = (ClientSocket *) &connection;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "attached client socket");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.identity.port = (struct Port *) &connection;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "connection identity port");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.identity.cancel_key[0] = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "connection cancel key");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.socket_io.send_buffer = (char *) &connection;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "socket send buffer");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.protocol.fe_be_wait_set = (WaitEventSet *) &connection;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "frontend/backend wait set");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.client_connection_info.authn_id = "authn";
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "client auth identity");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	connection.security.gss_send_buffer = (char *) &connection;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SOCKET_ATTACHED,
+										   &backend, &session, &connection,
+										   &execution, "GSS send buffer");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.prepared_statement.prepared_queries = (HTAB *) &session;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PREPARED_STATEMENTS,
+										   &backend, &session, &connection,
+										   &execution, "prepared statement cache");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.portal_manager.portal_hash_table = (HTAB *) &session;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PORTALS,
+										   &backend, &session, &connection,
+										   &execution, "portal hash");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.async.registered_listener = true;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_LISTEN,
+										   &backend, &session, &connection,
+										   &execution, "registered listener");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.namespace_state.my_temp_namespace = (Oid) 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_TEMP_NAMESPACE,
+										   &backend, &session, &connection,
+										   &execution, "temp namespace");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.extension_modules.private_states = (List *) &session;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_EXTENSION_STATE,
+										   &backend, &session, &connection,
+										   &execution, "session extension private state");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	dlist_push_head(&backend.dsm_segment_list, &dsm_node);
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_DSM_SEGMENTS,
+										   &backend, &session, &connection,
+										   &execution, "dsm segment list");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.resource_owners.current_owner =
+		(ResourceOwner) &execution;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_RESOURCE_OWNER,
+										   &backend, &session, &connection,
+										   &execution, "resource owner");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.memory_contexts.top_context = CurrentMemoryContext;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_MEMORY_CONTEXTS,
+										   &backend, &session, &connection,
+										   &execution, "memory context");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.timeout.num_active_timeouts = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_ACTIVE_TIMEOUTS,
+										   &backend, &session, &connection,
+										   &execution, "active timeout");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.locks.num_held_lwlocks = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_LOCKS,
+										   &backend, &session, &connection,
+										   &execution, "held lwlock");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	lock_hash = test_reusable_session_validator_create_locallock_hash(false);
+	backend.locks.lock_method_local_hash = lock_hash;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_VALID,
+										   &backend, &session, &connection,
+										   &execution, "empty local lock hash");
+	hash_destroy(lock_hash);
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	lock_hash = test_reusable_session_validator_create_locallock_hash(true);
+	backend.locks.lock_method_local_hash = lock_hash;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_LOCKS,
+										   &backend, &session, &connection,
+										   &execution, "local lock hash entry");
+	hash_destroy(lock_hash);
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	MemSet(fast_path_local_use_counts, 0,
+		   sizeof(fast_path_local_use_counts));
+	fast_path_local_use_counts[0] = 1;
+	backend.locks.fast_path_local_use_counts =
+		fast_path_local_use_counts;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_LOCKS,
+										   &backend, &session, &connection,
+										   &execution, "fast path lock count");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.buffers.n_local_pinned_buffers = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_BUFFER_PINS,
+										   &backend, &session, &connection,
+										   &execution, "local buffer pin");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	MemSet(private_ref_count_array_keys, 0,
+		   sizeof(private_ref_count_array_keys));
+	MemSet(private_ref_count_array, 0,
+		   sizeof(private_ref_count_array));
+	backend.buffers.private_ref_count_array_keys =
+		private_ref_count_array_keys;
+	backend.buffers.private_ref_count_array =
+		private_ref_count_array;
+	private_ref_count_array_keys[0] = (Buffer) 1;
+	private_ref_count_array[0].buffer = (Buffer) 1;
+	private_ref_count_array[0].data.refcount = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_BUFFER_PINS,
+										   &backend, &session, &connection,
+										   &execution,
+										   "resident private buffer refcount");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.storage.num_external_fds = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+										   &backend, &session, &connection,
+										   &execution, "external file descriptor");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.storage.nfile = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+										   &backend, &session, &connection,
+										   &execution, "open virtual file");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.storage.num_allocated_descs = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+										   &backend, &session, &connection,
+										   &execution, "allocated descriptor");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	backend.storage.sync_pending_ops = (HTAB *) &backend;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+										   &backend, &session, &connection,
+										   &execution, "pending sync ops");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	dlist_push_head(&backend.storage.smgr_unpinned_relations, &storage_node);
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_STORAGE_STATE,
+										   &backend, &session, &connection,
+										   &execution, "unpinned smgr relation list");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.temp_file.temporary_files_size = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_TEMP_FILES,
+										   &backend, &session, &connection,
+										   &execution, "temporary file bytes");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.guc.nest_level = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_GUC_STATE,
+										   &backend, &session, &connection,
+										   &execution, "guc nesting");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	dlist_push_head(&session.plan_cache.saved_plan_list, &plan_cache_node);
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_PLAN_CACHE,
+										   &backend, &session, &connection,
+										   &execution, "saved plan cache list");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	session.invalidation_callbacks.relcache_callback_count = 1;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_INVALIDATIONS,
+										   &backend, &session, &connection,
+										   &execution, "relcache callback");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.snapshot.first_snapshot_set = true;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_SNAPSHOTS,
+										   &backend, &session, &connection,
+										   &execution, "first snapshot");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.invalidation.trans_info =
+		(struct TransInvalidationInfo *) &execution;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_INVALIDATIONS,
+										   &backend, &session, &connection,
+										   &execution, "transaction invalidation state");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.xloginsert.begininsert_called = true;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_XLOG_INSERT_STATE,
+										   &backend, &session, &connection,
+										   &execution, "xlog insert in progress");
+
+	test_reusable_session_validator_init_clean(&backend, &session,
+											   &connection, &execution);
+	execution.async.pending_actions = (struct ActionList *) &execution;
+	test_reusable_session_validator_expect(PG_REUSABLE_SESSION_INVALID_ASYNC_ACTIONS,
+										   &backend, &session, &connection,
+										   &execution, "pending async action");
+
+	PG_RETURN_BOOL(true);
 }
 
 static void

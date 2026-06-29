@@ -73,7 +73,8 @@ test_thread_install_adopts_backend_fallback_state(PG_FUNCTION_ARGS)
 			state.logical.backend.interrupt_holdoffs.interrupt_holdoff_count == 109;
 
 		ok = ok && !PgCurrentWalSenderState()->is_walsender;
-		ok = ok && PgCurrentReplicationState()->sync_rep_wait_mode == -1;
+		ok = ok && PgCurrentReplicationState()->sync_rep_wait_mode ==
+			SYNC_REP_WAIT_FLUSH;
 		ok = ok && PgCurrentLogicalReplicationState()->slotsync_sleep_ms ==
 			PG_BACKEND_SLOTSYNC_INITIAL_SLEEP_MS;
 		ok = ok && dlist_is_empty(&PgCurrentLogicalReplicationState()->lsn_mapping);

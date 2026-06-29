@@ -22,7 +22,11 @@
 #include "storage/shmem.h"
 
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "test_shmem",
+					.version = PG_VERSION,
+					PG_MODULE_MAGIC_BACKEND_MODEL_THREAD_PER_SESSION
+);
 
 typedef struct TestShmemData
 {
@@ -33,7 +37,7 @@ typedef struct TestShmemData
 
 static TestShmemData *TestShmem;
 
-static bool attached_or_initialized = false;
+static PG_THREAD_LOCAL bool attached_or_initialized = false;
 
 static void test_shmem_request(void *arg);
 static void test_shmem_init(void *arg);
