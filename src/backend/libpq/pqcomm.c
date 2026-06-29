@@ -1474,22 +1474,10 @@ pq_probe_message_type(PgConnection *connection, PgProtocolByteProbe *probe,
 	Assert(connection != NULL);
 
 	io = &connection->socket_io;
-	if (probe != NULL)
-		MemSet(probe, 0, sizeof(*probe));
-
 	if (io->comm_reading_msg)
 		ereport(FATAL,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("terminating connection because protocol synchronization was lost")));
-
-	buffered_input = pq_connection_transport_buffered_input(connection);
-	wait_events = pq_connection_transport_wait_events(connection);
-	if (probe != NULL)
-	{
-		probe->transport_wait_events = wait_events;
-		probe->transport_buffered_input = buffered_input;
-		probe->transport_generation = io->transport_generation;
-	}
 
 	if (io->recv_pointer < io->recv_length)
 	{
@@ -1504,6 +1492,15 @@ pq_probe_message_type(PgConnection *connection, PgProtocolByteProbe *probe,
 			probe->transport_generation = io->transport_generation;
 		}
 		return PG_PROTOCOL_BYTE_AVAILABLE;
+	}
+
+	buffered_input = pq_connection_transport_buffered_input(connection);
+	wait_events = pq_connection_transport_wait_events(connection);
+	if (probe != NULL)
+	{
+		probe->transport_wait_events = wait_events;
+		probe->transport_buffered_input = buffered_input;
+		probe->transport_generation = io->transport_generation;
 	}
 
 	port = connection->identity.port;

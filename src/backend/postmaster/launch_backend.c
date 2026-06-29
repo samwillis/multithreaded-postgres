@@ -76,6 +76,10 @@
 #include "utils/pgstat_internal.h"
 #include "utils/timestamp.h"
 
+#define POOLED_PROTOCOL_PARKED_POLL_WAIT_MS		10L
+#define POOLED_PROTOCOL_PARKED_IDLE_WAIT_US		10000L
+#define POOLED_PROTOCOL_EMPTY_IDLE_WAIT_US		100000L
+
 #ifdef EXEC_BACKEND
 #include "nodes/queryjumble.h"
 #include "portability/instr_time.h"
@@ -348,7 +352,7 @@ static int	backend_thread_exitstatus(int code);
 static bool backend_pooled_protocol_start_pool(void);
 static bool backend_pooled_protocol_start_one_carrier(void);
 static void backend_pooled_protocol_maybe_start_carrier_for_work(void);
-static void backend_pooled_protocol_maybe_start_carriers_for_ready_work(int nready);
+static void backend_pooled_protocol_maybe_start_carriers_for_ready_work(int ready_for_other_carriers);
 static int	backend_pooled_protocol_carrier_limit(void);
 static bool backend_pooled_protocol_mode_enabled(void);
 static bool backend_shell_pool_try_reserve_logical(void);
@@ -974,22 +978,26 @@ backend_pooled_protocol_maybe_start_carrier_for_work(void)
 }
 
 static void
-backend_pooled_protocol_maybe_start_carriers_for_ready_work(int nready)
+backend_pooled_protocol_maybe_start_carriers_for_ready_work(int ready_for_other_carriers)
 {
 	uint32		idle_carriers;
+	uint32		other_idle_carriers;
 	int			needed_carriers;
 
 	if (!pooled_protocol_pool_started ||
 		!backend_pooled_protocol_mode_enabled() ||
-		nready <= 1)
+		ready_for_other_carriers <= 0)
 		return;
 
 	/*
-	 * The polling carrier will loop and lease one runnable backend itself.
-	 * Existing idle carriers can cover the rest after they are signalled.
+	 * The caller keeps one ready backend local to the polling carrier.  Since
+	 * the scheduler counts that carrier as idle while it is between backends,
+	 * discount it before deciding whether the remaining ready backends need
+	 * additional carriers.
 	 */
 	idle_carriers = backend_pooled_protocol_idle_carrier_count();
-	needed_carriers = nready - (int) idle_carriers - 1;
+	other_idle_carriers = idle_carriers > 0 ? idle_carriers - 1 : 0;
+	needed_carriers = ready_for_other_carriers - (int) other_idle_carriers;
 	while (needed_carriers-- > 0)
 	{
 		if (pooled_protocol_carrier_count >=
@@ -1276,7 +1284,9 @@ backend_pooled_protocol_wait_for_work(long timeout_us)
 		elog(FATAL, "could not lock pooled protocol queue: %m");
 	}
 
-	if (pooled_protocol_queue_length == 0)
+	if (pooled_protocol_queue_length == 0 &&
+		(!backend_pooled_protocol_mode_enabled() ||
+		 PgRuntimePooledProtocolRunnableCount() == 0))
 	{
 		if (!backend_pooled_protocol_mode_enabled())
 			backend_shell_pool_count(&shell_pool_stats.idle_carrier_waits);
@@ -1409,16 +1419,33 @@ backend_pooled_protocol_carrier_entry(void *arg)
 															   scratch,
 															   poll_scratch,
 															   max_scratch_backends,
-															   10L);
+															   POOLED_PROTOCOL_PARKED_POLL_WAIT_MS);
 			if (nready > 0)
 			{
-				backend_pooled_protocol_maybe_start_carriers_for_ready_work(nready);
-				backend_pooled_protocol_signal_ready_work(nready);
+				int			ready_for_other_carriers = nready - 1;
+
+				/*
+				 * This carrier just paid to poll the parked sockets and is
+				 * about to loop back to the runnable queue.  Keep one ready
+				 * backend local and wake extra carriers only for additional
+				 * ready work; otherwise a newly woken carrier can steal the
+				 * just-discovered session before this carrier resumes it.
+				 */
+				if (ready_for_other_carriers > 0)
+				{
+					backend_pooled_protocol_maybe_start_carriers_for_ready_work(ready_for_other_carriers);
+					backend_pooled_protocol_signal_ready_work(ready_for_other_carriers);
+				}
 				continue;
 			}
 		}
 
-		backend_pooled_protocol_wait_for_work(10000L);
+		if (carrier_start->protocol_scheduler_enabled &&
+			PgRuntimePooledProtocolRunnableCount() == 0 &&
+			PgRuntimePooledProtocolParkedCount() == 0)
+			backend_pooled_protocol_wait_for_work(POOLED_PROTOCOL_EMPTY_IDLE_WAIT_US);
+		else
+			backend_pooled_protocol_wait_for_work(POOLED_PROTOCOL_PARKED_IDLE_WAIT_US);
 	}
 }
 

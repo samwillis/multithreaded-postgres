@@ -90,6 +90,7 @@ PG_GLOBAL_RUNTIME int threaded_session_pool = THREADED_SESSION_POOL_OFF;
 PG_GLOBAL_RUNTIME int threaded_session_pool_max = 0;
 PG_GLOBAL_RUNTIME bool log_protocol_park_memory = false;
 PG_GLOBAL_RUNTIME bool log_threaded_lifecycle_timing = false;
+PG_GLOBAL_RUNTIME bool log_threaded_hot_loop_timing = false;
 PG_GLOBAL_RUNTIME bool debug_threaded_session_pool_force_validation_failure = false;
 
 /* configurable SLRU buffer sizes */

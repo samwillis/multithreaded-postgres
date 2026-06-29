@@ -2055,6 +2055,14 @@
   max => 'INT_MAX',
 },
 
+{ name => 'log_threaded_hot_loop_timing', type => 'bool', context => 'PGC_POSTMASTER', group => 'DEVELOPER_OPTIONS',
+  short_desc => 'Logs threaded backend hot-loop timing diagnostics.',
+  long_desc => 'This experimental setting is only for Phase 16B scheduler hot-path measurement.',
+  flags => 'GUC_NOT_IN_SAMPLE',
+  variable => 'log_threaded_hot_loop_timing',
+  boot_val => 'false',
+},
+
 { name => 'log_threaded_lifecycle_timing', type => 'bool', context => 'PGC_POSTMASTER', group => 'DEVELOPER_OPTIONS',
   short_desc => 'Logs threaded backend lifecycle timing diagnostics.',
   long_desc => 'This experimental setting is only for Phase 16B startup, cleanup, and scheduler measurement.',

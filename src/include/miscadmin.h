@@ -326,6 +326,7 @@ extern PGDLLIMPORT PG_GLOBAL_RUNTIME int threaded_session_pool;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME int threaded_session_pool_max;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool log_protocol_park_memory;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool log_threaded_lifecycle_timing;
+extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool log_threaded_hot_loop_timing;
 extern PGDLLIMPORT PG_GLOBAL_RUNTIME bool debug_threaded_session_pool_force_validation_failure;
 
 #define POOLED_PROTOCOL_IDLE_MEMORY_COMPACTION_OFF	0

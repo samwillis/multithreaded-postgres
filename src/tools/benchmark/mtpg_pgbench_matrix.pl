@@ -19,6 +19,7 @@ my $branch_install = File::Spec->catdir($repo_root, 'tmp_install');
 my $client_install = $vanilla_install;
 my $out_dir = File::Spec->catdir('/tmp',
 	sprintf('mtpg_pgbench_matrix_%s', strftime('%Y%m%d_%H%M%S', localtime)));
+my $socket_root = '/tmp';
 my $duration = 35;
 my $warmup = 5;
 my $clients = 8;
@@ -33,6 +34,7 @@ my $workloads =
 my $lanes = 'vanilla,branch_process,branch_threaded,branch_pool';
 my $reuse = 0;
 my $restart_per_workload = 0;
+my $interleave_lanes = 0;
 my $sample_server_resources = 0;
 my $sample_memory_detail = 0;
 my $resource_sample_interval_ms = 100;
@@ -43,6 +45,13 @@ my $help = 0;
 my $socket_seq = 0;
 my $default_max_files_per_process = 1000;
 my @branch_extra_config;
+my @branch_server_env;
+my @branch_threaded_server_env;
+my @branch_pooled_server_env;
+my $client_cpuset;
+my $branch_server_cpuset;
+my $branch_threaded_server_cpuset;
+my $branch_pooled_server_cpuset;
 
 my @protocol_park_memory_fields = qw(
   pid backend_id generation
@@ -132,15 +141,15 @@ my @protocol_park_timing_fields = qw(
   pid backend_id model event result reason outcome
   total_us timeout_ms wait_us release_us memory_log_us commit_us detach_us
   queue_us lease_us immediate_us scan_us poll_us mark_us repark_us pop_us
-  attach_us accounting_us nbackends registered_sockets nready wait_timeout_ms
-  wake_events
+  attach_us accounting_us queue_wait_us nbackends registered_sockets nready
+  wait_timeout_ms wake_events
 );
 
 my @protocol_park_timing_summary_fields = qw(
   total_us timeout_ms wait_us release_us memory_log_us commit_us detach_us
   queue_us lease_us immediate_us scan_us poll_us mark_us repark_us pop_us
-  attach_us accounting_us nbackends registered_sockets nready wait_timeout_ms
-  wake_events
+  attach_us accounting_us queue_wait_us nbackends registered_sockets nready
+  wait_timeout_ms wake_events
 );
 
 GetOptions(
@@ -161,7 +170,16 @@ GetOptions(
 	'lanes=s'           => \$lanes,
 	'reuse'             => \$reuse,
 	'restart-per-workload' => \$restart_per_workload,
+	'interleave-lanes'  => \$interleave_lanes,
 	'branch-config=s@' => \@branch_extra_config,
+	'branch-server-env=s@' => \@branch_server_env,
+	'branch-threaded-server-env=s@' => \@branch_threaded_server_env,
+	'branch-pooled-server-env=s@' => \@branch_pooled_server_env,
+	'client-cpuset=s' => \$client_cpuset,
+	'branch-server-cpuset=s' => \$branch_server_cpuset,
+	'branch-threaded-server-cpuset=s' => \$branch_threaded_server_cpuset,
+	'branch-pooled-server-cpuset=s' => \$branch_pooled_server_cpuset,
+	'socket-root=s' => \$socket_root,
 	'sample-server-resources!' => \$sample_server_resources,
 	'sample-memory-detail!' => \$sample_memory_detail,
 	'resource-sample-interval-ms=i' => \$resource_sample_interval_ms,
@@ -185,6 +203,8 @@ die "--scale must be positive\n" if $scale <= 0;
 die "--max-connections must exceed --clients\n"
   if $max_connections <= $clients;
 die "--runs must be positive\n" if $runs <= 0;
+die "--interleave-lanes requires --restart-per-workload\n"
+  if $interleave_lanes && !$restart_per_workload;
 die "--resource-sample-interval-ms must be positive\n"
   if $resource_sample_interval_ms <= 0;
 die "--resource-baseline-samples must be non-negative\n"
@@ -203,6 +223,21 @@ for my $size (@pool_sizes)
 my @requested_workloads = grep { length($_) } split /,/, $workloads;
 my @requested_lanes = grep { length($_) } split /,/, $lanes;
 my @branch_diagnostic_config;
+
+validate_server_env_options('--branch-server-env', \@branch_server_env);
+validate_server_env_options('--branch-threaded-server-env',
+	\@branch_threaded_server_env);
+validate_server_env_options('--branch-pooled-server-env',
+	\@branch_pooled_server_env);
+validate_cpuset_option('--client-cpuset', $client_cpuset);
+validate_cpuset_option('--branch-server-cpuset', $branch_server_cpuset);
+validate_cpuset_option('--branch-threaded-server-cpuset',
+	$branch_threaded_server_cpuset);
+validate_cpuset_option('--branch-pooled-server-cpuset',
+	$branch_pooled_server_cpuset);
+die "--socket-root must be an absolute path, got: $socket_root\n"
+  unless File::Spec->file_name_is_absolute($socket_root);
+make_path($socket_root);
 
 my %workload_specs = (
 	builtin_select_simple => {
@@ -324,6 +359,8 @@ for my $lane (@requested_lanes)
 			name => 'vanilla',
 			install => $vanilla_install,
 			config => [],
+			server_env => [],
+			server_cpuset => undef,
 			branch => 0,
 		};
 	}
@@ -333,6 +370,8 @@ for my $lane (@requested_lanes)
 			name => 'branch_process',
 			install => $branch_install,
 			config => [ @branch_extra_config, @branch_diagnostic_config ],
+			server_env => [ @branch_server_env ],
+			server_cpuset => $branch_server_cpuset,
 			branch => 1,
 		};
 	}
@@ -347,6 +386,12 @@ for my $lane (@requested_lanes)
 				@branch_extra_config,
 				@branch_diagnostic_config,
 			],
+			server_env => [
+				@branch_server_env,
+				@branch_threaded_server_env,
+			],
+			server_cpuset => selected_cpuset($branch_server_cpuset,
+				$branch_threaded_server_cpuset),
 			branch => 1,
 		};
 	}
@@ -363,6 +408,12 @@ for my $lane (@requested_lanes)
 					@branch_extra_config,
 					@branch_diagnostic_config,
 				],
+				server_env => [
+					@branch_server_env,
+					@branch_pooled_server_env,
+				],
+				server_cpuset => selected_cpuset($branch_server_cpuset,
+					$branch_pooled_server_cpuset),
 				branch => 1,
 			};
 		}
@@ -382,6 +433,12 @@ for my $lane (@requested_lanes)
 					@branch_extra_config,
 					@branch_diagnostic_config,
 				],
+				server_env => [
+					@branch_server_env,
+					@branch_pooled_server_env,
+				],
+				server_cpuset => selected_cpuset($branch_server_cpuset,
+					$branch_pooled_server_cpuset),
 				branch => 1,
 			};
 		}
@@ -558,18 +615,38 @@ print $protocol_park_timing_fh
 my %results;
 if ($restart_per_workload)
 {
-	for my $lane (@lane_specs)
+	if ($interleave_lanes)
 	{
 		for my $workload (@requested_workloads)
 		{
-			run_lane($lane, [ $workload ], $script_dir, $tps_fh,
-				$samples_fh, $resources_fh, $resource_samples_fh,
-				$resource_baselines_fh, $protocol_park_memory_fh,
-				$protocol_park_guc_memory_fh,
-				$protocol_park_context_memory_fh,
-				$protocol_park_catcache_memory_fh,
-				$protocol_park_relcache_memory_fh,
-				$protocol_park_timing_fh, \%results, $workload);
+			for my $lane (@lane_specs)
+			{
+				run_lane($lane, [ $workload ], $script_dir, $tps_fh,
+					$samples_fh, $resources_fh, $resource_samples_fh,
+					$resource_baselines_fh, $protocol_park_memory_fh,
+					$protocol_park_guc_memory_fh,
+					$protocol_park_context_memory_fh,
+					$protocol_park_catcache_memory_fh,
+					$protocol_park_relcache_memory_fh,
+					$protocol_park_timing_fh, \%results, $workload);
+			}
+		}
+	}
+	else
+	{
+		for my $lane (@lane_specs)
+		{
+			for my $workload (@requested_workloads)
+			{
+				run_lane($lane, [ $workload ], $script_dir, $tps_fh,
+					$samples_fh, $resources_fh, $resource_samples_fh,
+					$resource_baselines_fh, $protocol_park_memory_fh,
+					$protocol_park_guc_memory_fh,
+					$protocol_park_context_memory_fh,
+					$protocol_park_catcache_memory_fh,
+					$protocol_park_relcache_memory_fh,
+					$protocol_park_timing_fh, \%results, $workload);
+			}
 		}
 	}
 }
@@ -682,8 +759,33 @@ Key options:
                           branch_shell
   --workloads=LIST        workload names to run
   --restart-per-workload  restart each lane for each workload
+  --interleave-lanes      with --restart-per-workload, run every requested lane
+                          for one workload before moving to the next workload
   --branch-config=LINE    append a postgresql.conf line to branch lanes;
                            may be specified more than once
+  --branch-server-env=NAME=VALUE
+                           add an environment variable to every branch server
+                           start; may be specified more than once
+  --branch-threaded-server-env=NAME=VALUE
+                           add an environment variable only to branch_threaded
+                           server starts; may be specified more than once
+  --branch-pooled-server-env=NAME=VALUE
+                           add an environment variable only to branch_pool and
+                           branch_shell server starts; may be specified more
+                           than once
+  --client-cpuset=LIST
+                           run measured pgbench clients with taskset -c LIST
+  --branch-server-cpuset=LIST
+                           run every branch server with taskset -c LIST
+  --branch-threaded-server-cpuset=LIST
+                           run branch_threaded servers with taskset -c LIST
+                           instead of --branch-server-cpuset
+  --branch-pooled-server-cpuset=LIST
+                           run branch_pool and branch_shell servers with
+                           taskset -c LIST instead of --branch-server-cpuset
+  --socket-root=DIR
+                           create temporary Unix socket directories below DIR,
+                           default /tmp
   --sample-server-resources
                            sample server process/thread counts while measuring
   --sample-memory-detail
@@ -956,7 +1058,7 @@ sub run_lane
 		"$lane->{name}_$lane_dir_suffix" : $lane->{name};
 	my $lane_dir = File::Spec->catdir($out_dir, $lane_dir_name);
 	my $data_dir = File::Spec->catdir($lane_dir, 'data');
-	my $socket_dir = File::Spec->catdir('/tmp',
+	my $socket_dir = File::Spec->catdir($socket_root,
 		sprintf('mtpg_sock_%d_%d', $$, ++$socket_seq));
 	my $server_log = File::Spec->catfile($lane_dir, 'server.log');
 	my $port = pick_free_port();
@@ -979,11 +1081,8 @@ sub run_lane
 
 	my $started = 0;
 	eval {
-		run_cmd([
-				$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
-				'-o', "-k $socket_dir",
-				'-w', 'start'
-			],
+		run_cmd(server_start_cmd($lane, $pg_ctl_bin, $data_dir,
+				$server_log, $socket_dir),
 			"$lane->{name} start");
 		$started = 1;
 
@@ -1014,11 +1113,8 @@ sub run_lane
 			append_postmaster_config($data_dir,
 				'log_threaded_lifecycle_timing = on')
 			  if $log_threaded_lifecycle_timing;
-			run_cmd([
-					$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
-					'-o', "-k $socket_dir",
-					'-w', 'start'
-				],
+			run_cmd(server_start_cmd($lane, $pg_ctl_bin, $data_dir,
+					$server_log, $socket_dir),
 				"$lane->{name} restart with diagnostic logging");
 			$started = 1;
 		}
@@ -1102,6 +1198,59 @@ sub run_lane
 	remove_tree($socket_dir) if -e $socket_dir;
 
 	die $err if $err;
+}
+
+sub validate_server_env_options
+{
+	my ($option, $entries) = @_;
+
+	for my $entry (@$entries)
+	{
+		die "$option must use NAME=VALUE, got: $entry\n"
+		  unless $entry =~ /^[A-Za-z_][A-Za-z0-9_]*=/;
+	}
+}
+
+sub validate_cpuset_option
+{
+	my ($option, $cpuset) = @_;
+
+	return unless defined $cpuset;
+	die "$option must use taskset CPU list syntax, got: $cpuset\n"
+	  unless $cpuset =~ /^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$/;
+}
+
+sub selected_cpuset
+{
+	my ($base, $specific) = @_;
+
+	return $specific if defined $specific;
+	return $base;
+}
+
+sub command_with_cpuset
+{
+	my ($cpuset, @cmd) = @_;
+
+	return \@cmd unless defined $cpuset;
+	return [ 'taskset', '-c', $cpuset, @cmd ];
+}
+
+sub server_start_cmd
+{
+	my ($lane, $pg_ctl_bin, $data_dir, $server_log, $socket_dir) = @_;
+	my @cmd = (
+		$pg_ctl_bin, '-D', $data_dir, '-l', $server_log,
+		'-o', "-k $socket_dir",
+		'-w', 'start'
+	);
+
+	if (defined $lane->{server_env} && @{ $lane->{server_env} })
+	{
+		@cmd = ('env', @{ $lane->{server_env} }, @cmd);
+	}
+
+	return command_with_cpuset($lane->{server_cpuset}, @cmd);
 }
 
 sub append_config
@@ -1218,12 +1367,13 @@ sub run_workload
 		'-p', $port,
 		@args,
 	);
+	my $base_cmd = command_with_cpuset($client_cpuset, @base_cmd);
 
 	if ($warmup > 0)
 	{
 		my $warm = File::Spec->catfile($out_dir,
 			"$lane->{name}_${workload}.warm");
-		run_capture([ @base_cmd, '-T', $warmup, 'postgres' ], "$workload warmup",
+		run_capture([ @$base_cmd, '-T', $warmup, 'postgres' ], "$workload warmup",
 			"$warm.out", "$warm.err", undef, pgbench_timeout($warmup));
 	}
 
@@ -1232,7 +1382,7 @@ sub run_workload
 	  new_server_resource_sample($data_dir, $lane->{name}, $workload,
 		$run_index, $resource_samples_fh);
 	my $protocol_park_log_offset = -e $server_log ? (-s $server_log) : 0;
-	my $output = run_capture([ @base_cmd, '-T', $duration, 'postgres' ],
+	my $output = run_capture([ @$base_cmd, '-T', $duration, 'postgres' ],
 		"$lane->{name} $workload", $bench, "$bench.err", $resources,
 		pgbench_timeout($duration));
 
@@ -4020,6 +4170,9 @@ sub write_summary
 	print $fh "- duration: ${duration}s\n";
 	print $fh "- warmup: ${warmup}s\n";
 	print $fh "- runs: $runs\n";
+	print $fh "- interleave lanes: ",
+	  ($interleave_lanes ? 'yes' : 'no'), "\n"
+	  if $restart_per_workload;
 	print $fh "- clients: $clients\n";
 	print $fh "- threads: $threads\n";
 	print $fh "- max connections: $max_connections\n";
@@ -4034,7 +4187,18 @@ sub write_summary
 	print $fh "- scale: $scale\n";
 	print $fh "- branch install: `$branch_install`\n";
 	print $fh "- vanilla install: `$vanilla_install`\n";
-	print $fh "- client install: `$client_install`\n\n";
+	print $fh "- client install: `$client_install`\n";
+	print $fh "- socket root: `$socket_root`\n";
+	print $fh "- client cpuset: `$client_cpuset`\n" if defined $client_cpuset;
+	for my $lane (@$lane_specs)
+	{
+		print $fh "- $lane->{name} server cpuset: `$lane->{server_cpuset}`\n"
+		  if defined $lane->{server_cpuset};
+		print $fh "- $lane->{name} server env: `",
+		  join(' ', @{ $lane->{server_env} }), "`\n"
+		  if defined $lane->{server_env} && @{ $lane->{server_env} };
+	}
+	print $fh "\n";
 	print $fh "- ratio baseline: `$baseline_lane`\n\n";
 
 	print $fh "| Workload |";

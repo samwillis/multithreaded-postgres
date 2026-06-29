@@ -270,6 +270,15 @@ static short PgProtocolParkPollEvents(uint32 wait_events);
 static uint32 PgProtocolParkPollWakeEvents(uint32 wait_events, short revents);
 static void PgSessionLoopStateInit(PgSessionLoopState *state);
 static void PgSessionRecoverError(PgSession *session);
+static pg_attribute_always_inline bool PgSessionHotLoopTimingEnabled(void);
+static void PgSessionRecordHotLoopTiming(PgSession *session, int firstchar,
+										 bool parked, uint64 ready_us,
+										 uint64 read_us,
+										 TimestampTz execute_start,
+										 TimestampTz execute_end,
+										 TimestampTz total_start,
+										 TimestampTz total_end);
+static void PgSessionLogHotLoopTiming(PgSession *session, const char *event);
 static pg_attribute_always_inline PgStepResult PgSessionStepUnprotected(PgSession *session,
 																		int max_messages,
 																		bool protocol_park_enabled,
@@ -561,14 +570,13 @@ SocketBackendProtocolPark(PgSession *session, StringInfo inBuf)
 	Assert(session != NULL);
 	query_cancel_holdoff_count = SocketBackendQueryCancelHoldoffRef(session);
 
-	PgSessionServiceProtocolReadWake(session);
-
 	probe_result = PgConnectionProbeBufferedMessageType(session->connection,
 														&probe);
 	if (probe_result == PG_PROTOCOL_BYTE_NONE)
 	{
 		PgProtocolParkSpec park_spec;
 
+		PgSessionServiceProtocolReadWake(session);
 		probe_result = SocketBackendStickyIdleWait(session, &probe);
 		if (probe_result == PG_PROTOCOL_BYTE_AVAILABLE)
 		{
@@ -619,6 +627,8 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 	WaitEvent	events[FeBeWaitSetNEvents];
 	long		timeout_ms = 0;
 	uint32		wait_events;
+	uint32		runnable_count;
+	uint32		idle_carrier_count;
 	int			rc;
 	TimestampTz timeout_wake_at;
 	uint64		timeout_generation;
@@ -662,6 +672,18 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 	}
 
 	timeout_ms = pooled_protocol_sticky_idle_ms;
+	/*
+	 * Do not let sticky idle waits monopolize protocol carriers while ready
+	 * parked sessions are waiting for a carrier.  If idle carriers can cover
+	 * the ready work, preserve same-carrier stickiness for this session.
+	 */
+	runnable_count = PgRuntimePooledProtocolRunnableCount();
+	idle_carrier_count = PgRuntimePooledProtocolIdleCarrierCount();
+	if (runnable_count > idle_carrier_count)
+		timeout_ms = 0;
+	else if (timeout_ms > 1 &&
+			 PgRuntimePooledProtocolParkedCount() > idle_carrier_count)
+		timeout_ms = 1;
 	if (PgBackendLogicalTimeoutNextWake(session->backend, &timeout_wake_at,
 										&timeout_generation))
 	{
@@ -704,7 +726,6 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 					(errcode_for_socket_access(),
 					 errmsg("could not poll client socket: %m")));
 
-		PgSessionServiceProtocolReadWake(session);
 		if (poll_rc > 0 && poll_fd.revents != 0)
 		{
 			int			qtype;
@@ -725,6 +746,7 @@ SocketBackendStickyIdleWait(PgSession *session, PgProtocolByteProbe *probe)
 			reason = "poll_available";
 			goto done;
 		}
+		PgSessionServiceProtocolReadWake(session);
 		result = PgConnectionProbeMessageType(connection, probe);
 		reason = "poll_timeout";
 		goto done;
@@ -4874,6 +4896,134 @@ PgSessionRecoverError(PgSession *session)
 	RESUME_INTERRUPTS();
 }
 
+static pg_attribute_always_inline bool
+PgSessionHotLoopTimingEnabled(void)
+{
+	if (likely(!log_threaded_hot_loop_timing))
+		return false;
+
+	return
+		IsExternalConnectionBackend(MyBackendType) &&
+		CurrentPgRuntime != NULL &&
+		PgRuntimeIsThreadBacked(CurrentPgRuntime);
+}
+
+static void
+PgSessionRecordHotLoopTiming(PgSession *session, int firstchar, bool parked,
+							 uint64 ready_us, uint64 read_us,
+							 TimestampTz execute_start,
+							 TimestampTz execute_end,
+							 TimestampTz total_start,
+							 TimestampTz total_end)
+{
+	PgSessionLoopState *state;
+	uint64		execute_us;
+	uint64		total_us;
+
+	Assert(session != NULL);
+	state = &session->loop_state;
+
+	execute_us = PgBackendLifecycleTimingElapsed(execute_start, execute_end);
+	total_us = PgBackendLifecycleTimingElapsed(total_start, total_end);
+
+	state->hot_loop_count++;
+	state->hot_ready_us += ready_us;
+	state->hot_read_us += read_us;
+	state->hot_execute_us += execute_us;
+	state->hot_total_us += total_us;
+	if (parked)
+	{
+		state->hot_park_count++;
+		return;
+	}
+
+	switch (firstchar)
+	{
+		case PqMsg_Query:
+			state->hot_query_count++;
+			break;
+		case PqMsg_Parse:
+			state->hot_parse_count++;
+			break;
+		case PqMsg_Bind:
+			state->hot_bind_count++;
+			break;
+		case PqMsg_Execute:
+			state->hot_execute_count++;
+			break;
+		case PqMsg_Describe:
+			state->hot_describe_count++;
+			break;
+		case PqMsg_Sync:
+			state->hot_sync_count++;
+			break;
+		case PqMsg_Flush:
+			state->hot_flush_count++;
+			break;
+		case PqMsg_Close:
+			state->hot_close_count++;
+			break;
+		case PqMsg_Terminate:
+		case EOF:
+			state->hot_terminate_count++;
+			break;
+		default:
+			state->hot_other_count++;
+			break;
+	}
+}
+
+static void
+PgSessionLogHotLoopTiming(PgSession *session, const char *event)
+{
+	PgSessionLoopState *state;
+	PgBackend  *backend;
+	uint64		accounted_us;
+	uint64		other_us;
+
+	if (!PgSessionHotLoopTimingEnabled() || session == NULL)
+		return;
+
+	state = &session->loop_state;
+	if (state->hot_loop_count == 0)
+		return;
+
+	backend = session->backend;
+	accounted_us = state->hot_ready_us + state->hot_read_us +
+		state->hot_execute_us;
+	other_us = state->hot_total_us > accounted_us ?
+		state->hot_total_us - accounted_us : 0;
+
+	ereport(LOG_SERVER_ONLY,
+			(errhidestmt(true),
+			 errhidecontext(true),
+			 errmsg_internal("threaded_protocol_hot pid=%d backend_id=%u model=%s event=%s "
+							 "loops=%llu parks=%llu ready_us=%llu read_us=%llu execute_us=%llu other_us=%llu total_us=%llu "
+							 "query_messages=%llu parse_messages=%llu bind_messages=%llu execute_messages=%llu describe_messages=%llu "
+							 "sync_messages=%llu flush_messages=%llu close_messages=%llu terminate_messages=%llu other_messages=%llu",
+							 backend != NULL ? PgBackendGetSignalPid(backend) : MyProcPid,
+							 backend != NULL ? (unsigned int) backend->id : 0,
+							 PgBackendLifecycleTimingModel(),
+							 event != NULL ? event : "summary",
+							 (unsigned long long) state->hot_loop_count,
+							 (unsigned long long) state->hot_park_count,
+							 (unsigned long long) state->hot_ready_us,
+							 (unsigned long long) state->hot_read_us,
+							 (unsigned long long) state->hot_execute_us,
+							 (unsigned long long) other_us,
+							 (unsigned long long) state->hot_total_us,
+							 (unsigned long long) state->hot_query_count,
+							 (unsigned long long) state->hot_parse_count,
+							 (unsigned long long) state->hot_bind_count,
+							 (unsigned long long) state->hot_execute_count,
+							 (unsigned long long) state->hot_describe_count,
+							 (unsigned long long) state->hot_sync_count,
+							 (unsigned long long) state->hot_flush_count,
+							 (unsigned long long) state->hot_close_count,
+							 (unsigned long long) state->hot_terminate_count,
+							 (unsigned long long) state->hot_other_count)));
+}
+
 static pg_attribute_always_inline PgStepResult
 PgSessionStepUnprotected(PgSession *session, int max_messages,
 						 bool protocol_park_enabled,
@@ -4884,12 +5034,26 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 	int			firstchar;
 	StringInfoData input_message;
 	char		input_message_data[PG_INPUT_MESSAGE_STACK_BUFFER_SIZE];
+	bool		hot_timing;
+	TimestampTz hot_total_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_total_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_ready_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_ready_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_read_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_read_end = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_execute_start = TIMESTAMP_MINUS_INFINITY;
+	TimestampTz hot_execute_end = TIMESTAMP_MINUS_INFINITY;
+	uint64		hot_ready_us = 0;
+	uint64		hot_read_us = 0;
 
 	Assert(session != NULL);
 	Assert(max_messages >= 0);
 	state = &session->loop_state;
 	Assert(state->step_error_boundary_active);
 	message_context = session->execution->memory_contexts.message_context;
+	hot_timing = PgSessionHotLoopTimingEnabled();
+	if (hot_timing)
+		hot_total_start = GetCurrentTimestamp();
 
 	/*
 	 * At top of loop, reset extended-query-message flag, so that any errors
@@ -4937,6 +5101,9 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 	 */
 	if (state->send_ready_for_query)
 	{
+		if (hot_timing)
+			hot_ready_start = GetCurrentTimestamp();
+
 		if (IsAbortedTransactionBlockState())
 		{
 			set_ps_display("idle in transaction (aborted)");
@@ -5060,6 +5227,12 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 
 		ReadyForQuery(whereToSendOutput);
 		state->send_ready_for_query = false;
+		if (hot_timing)
+		{
+			hot_ready_end = GetCurrentTimestamp();
+			hot_ready_us = PgBackendLifecycleTimingElapsed(hot_ready_start,
+														   hot_ready_end);
+		}
 	}
 
 	/*
@@ -5074,14 +5247,33 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 	 * (3) read a command (loop blocks here)
 	 */
 	MemoryContextSwitchTo(message_context);
+	if (hot_timing)
+		hot_read_start = GetCurrentTimestamp();
 	if (unlikely(protocol_park_enabled))
 		firstchar = ReadCommandProtocolPark(session, &input_message);
 	else
 		firstchar = ReadCommand(session, &input_message);
+	if (hot_timing)
+	{
+		hot_read_end = GetCurrentTimestamp();
+		hot_read_us = PgBackendLifecycleTimingElapsed(hot_read_start,
+													  hot_read_end);
+	}
 
 	if (unlikely(protocol_park_enabled &&
 				 firstchar == PG_READ_COMMAND_PROTOCOL_PARK))
+	{
+		if (hot_timing)
+		{
+			hot_total_end = GetCurrentTimestamp();
+			PgSessionRecordHotLoopTiming(session, firstchar, true,
+										 hot_ready_us, hot_read_us,
+										 TIMESTAMP_MINUS_INFINITY,
+										 TIMESTAMP_MINUS_INFINITY,
+										 hot_total_start, hot_total_end);
+		}
 		return PG_STEP_PARK_PROTOCOL_READ;
+	}
 
 	/*
 	 * (4) turn off the idle-in-transaction and idle-session timeouts if
@@ -5127,7 +5319,21 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 	 * (7) process the command.  But ignore it if we're skipping till Sync.
 	 */
 	if (state->ignore_till_sync && firstchar != EOF)
+	{
+		if (hot_timing)
+		{
+			hot_total_end = GetCurrentTimestamp();
+			PgSessionRecordHotLoopTiming(session, firstchar, false,
+										 hot_ready_us, hot_read_us,
+										 TIMESTAMP_MINUS_INFINITY,
+										 TIMESTAMP_MINUS_INFINITY,
+										 hot_total_start, hot_total_end);
+		}
 		return PG_STEP_CONTINUE;
+	}
+
+	if (hot_timing)
+		hot_execute_start = GetCurrentTimestamp();
 
 	switch (firstchar)
 	{
@@ -5374,6 +5580,19 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 			if (whereToSendOutput == DestRemote)
 				whereToSendOutput = DestNone;
 
+			if (hot_timing)
+			{
+				hot_execute_end = GetCurrentTimestamp();
+				hot_total_end = hot_execute_end;
+				PgSessionRecordHotLoopTiming(session, firstchar, false,
+											 hot_ready_us, hot_read_us,
+											 hot_execute_start,
+											 hot_execute_end,
+											 hot_total_start,
+											 hot_total_end);
+				PgSessionLogHotLoopTiming(session, "disconnect");
+			}
+
 			if (return_logical_exits)
 				return PG_STEP_DONE;
 
@@ -5401,6 +5620,16 @@ PgSessionStepUnprotected(PgSession *session, int max_messages,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
 					 errmsg("invalid frontend message type %d",
 							firstchar)));
+	}
+
+	if (hot_timing)
+	{
+		hot_execute_end = GetCurrentTimestamp();
+		hot_total_end = hot_execute_end;
+		PgSessionRecordHotLoopTiming(session, firstchar, false,
+									 hot_ready_us, hot_read_us,
+									 hot_execute_start, hot_execute_end,
+									 hot_total_start, hot_total_end);
 	}
 
 	return PG_STEP_CONTINUE;
@@ -7018,7 +7247,8 @@ PgSessionStagingWaitAndResumeProtocolRead(PgSession *session,
 	if (log_threaded_lifecycle_timing)
 		lease_end = GetCurrentTimestamp();
 
-	PgCarrierAttachBackend(carrier, backend, session, connection, execution);
+	PgCarrierAttachBackendPreserveSessionGUCs(carrier, backend, session,
+											  connection, execution);
 	if (log_threaded_lifecycle_timing)
 		attach_end = GetCurrentTimestamp();
 	pgstat_ensure_shmem_attached();
@@ -7090,11 +7320,16 @@ PgSessionRunProtocolSchedulerUntilBoundary(PgSession *session)
 				break;
 
 			case PG_STEP_PARK_PROTOCOL_READ:
-				*exception_stack_ref = save_exception_stack;
-				*context_stack_ref = save_context_stack;
-				state->step_error_boundary_active = false;
-				PgSessionCommitCurrentProtocolReadPark(session);
-				return PG_STEP_PARK_PROTOCOL_READ;
+				{
+					Assert(session->backend != NULL);
+					Assert(session->backend->protocol_park.state ==
+						   PG_PROTOCOL_PARK_PREPARED);
+					PgSessionCommitCurrentProtocolReadPark(session);
+					*exception_stack_ref = save_exception_stack;
+					*context_stack_ref = save_context_stack;
+					state->step_error_boundary_active = false;
+					return PG_STEP_PARK_PROTOCOL_READ;
+				}
 
 			case PG_STEP_DONE:
 			case PG_STEP_FATAL_EXIT:

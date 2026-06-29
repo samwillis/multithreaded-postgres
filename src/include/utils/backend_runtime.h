@@ -256,12 +256,15 @@ typedef struct PgProtocolSchedulerState
 	dlist_head	runnable_queue;
 	dlist_head	parked_protocol_queue;
 	uint32		runnable_count;
+	pg_atomic_uint32 runnable_count_atomic;
 	uint32		parked_protocol_count;
+	pg_atomic_uint32 parked_protocol_count_atomic;
 	uint64		runnable_enqueue_count;
 	uint64		parked_protocol_enqueue_count;
 	uint32		carrier_limit;
 	uint32		registered_carrier_count;
 	uint32		idle_carrier_count;
+	pg_atomic_uint32 idle_carrier_count_atomic;
 	uint32		active_carrier_count;
 	uint64		carrier_register_count;
 	uint64		carrier_reject_count;
@@ -322,6 +325,7 @@ typedef struct PgBackendProtocolParkState
 	uint64		deferred_notify_park_generation;
 	uint32		deferred_notify_reasons;
 	TimestampTz committed_at;
+	TimestampTz scheduler_runnable_at;
 	bool		last_park_duration_valid;
 	long		last_park_duration_ms;
 	bool		hibernated;
@@ -2348,6 +2352,22 @@ typedef struct PgSessionLoopState
 	bool		step_error_boundary_active;
 	bool		doing_command_read;
 	bool		transaction_started;
+	uint64		hot_loop_count;
+	uint64		hot_park_count;
+	uint64		hot_ready_us;
+	uint64		hot_read_us;
+	uint64		hot_execute_us;
+	uint64		hot_total_us;
+	uint64		hot_query_count;
+	uint64		hot_parse_count;
+	uint64		hot_bind_count;
+	uint64		hot_execute_count;
+	uint64		hot_describe_count;
+	uint64		hot_sync_count;
+	uint64		hot_flush_count;
+	uint64		hot_close_count;
+	uint64		hot_terminate_count;
+	uint64		hot_other_count;
 } PgSessionLoopState;
 
 typedef struct PgSessionTcopState
@@ -3265,6 +3285,11 @@ extern void PgCarrierAttachBackend(PgCarrier *carrier, PgBackend *backend,
 								   PgSession *session,
 								   PgConnection *connection,
 								   PgExecution *execution);
+extern void PgCarrierAttachBackendPreserveSessionGUCs(PgCarrier *carrier,
+													  PgBackend *backend,
+													  PgSession *session,
+													  PgConnection *connection,
+													  PgExecution *execution);
 extern void PgCarrierDetachBackend(PgCarrier *carrier, PgBackend *backend);
 extern void PgRuntimeReportBridgeFallbackStats(void);
 extern bool PgCurrentSessionOwnsPointer(const void *ptr);
@@ -3466,6 +3491,8 @@ extern bool PgRuntimeIsPooledProtocol(PgRuntime *runtime);
 extern bool PgRuntimePooledProtocolRequested(void);
 extern int	PgRuntimePooledProtocolCarrierLimit(void);
 extern uint32 PgRuntimePooledProtocolIdleCarrierCount(void);
+extern uint32 PgRuntimePooledProtocolRunnableCount(void);
+extern uint32 PgRuntimePooledProtocolParkedCount(void);
 extern bool PgRuntimeThreadedSessionPoolShellRequested(void);
 extern int	PgRuntimeThreadedSessionPoolCarrierLimit(void);
 extern PgReusableSessionValidationReason PgValidateReusableSessionState(PgBackend *backend,
@@ -3519,7 +3546,7 @@ extern PgBackend *PgRuntimeProtocolSchedulerLeaseParkedBackend(PgRuntime *runtim
 extern bool PgRuntimeProtocolSchedulerReparkBackend(PgRuntime *runtime,
 													PgBackend *backend);
 extern bool PgRuntimeProtocolSchedulerReparkBackendIfPolling(PgRuntime *runtime,
-															 PgBackend *backend);
+															PgBackend *backend);
 extern PgBackend *PgRuntimeProtocolSchedulerPopRunnable(PgRuntime *runtime);
 extern int	PgRuntimeProtocolSchedulerCollectParked(PgRuntime *runtime,
 													PgBackend **backends,
